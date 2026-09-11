@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import asyncio
 import zipfile
+from unittest.mock import AsyncMock
 from datetime import UTC, datetime
 
 from app.config import Settings
 from app.engine import JobManager
 from app.repository import JobRepository
 from app.schemas import JobRecord, JobState
+from PIL import Image
 
 
 def make_manager(tmp_path):
@@ -85,3 +87,39 @@ def test_finalize_abandoned_keeps_completed_images_downloadable(tmp_path) -> Non
     assert updated.completed_total == 1
     assert updated.download_ready is True
     assert (repository.job_dir(record.id) / "download.zip").is_file()
+
+
+def test_all_black_batch_preserves_prepared_pixels_without_comfy(tmp_path):
+    manager, repository = make_manager(tmp_path)
+    record = make_record()
+    record.workflows = ['flux2klein_lanpaint', 'firered', 'qwen2511_lanpaint']
+    record.total_runs = 6
+    repository.write(record)
+    root = repository.job_dir(record.id)
+    for stem, color in [('01', (233, 188, 120)), ('02', (25, 40, 80))]:
+        (root / 'uploads/pair').mkdir(parents=True, exist_ok=True)
+        (root / 'uploads/pair_mask').mkdir(parents=True, exist_ok=True)
+        Image.new('RGB', (12, 17), color).save(root / 'uploads/pair' / f'{stem}.png')
+        Image.new('L', (12, 17), 0).save(root / 'uploads/pair_mask' / f'{stem}.png')
+    manager._wait_comfy = AsyncMock(side_effect=AssertionError('must not contact ComfyUI'))
+    asyncio.run(manager._run_job(record.id))
+    final = repository.read(record.id)
+    assert final.state == JobState.completed and final.completed_total == 6
+    manager._wait_comfy.assert_not_called()
+    with zipfile.ZipFile(root / 'download.zip') as archive:
+        assert len([name for name in archive.namelist() if name.endswith('.png')]) == 6
+        assert not any(name.endswith('.pdf') for name in archive.namelist())
+    for workflow in record.workflows:
+        with Image.open(root / 'inpaint_workflows' / workflow / '01.png') as result:
+            assert result.getpixel((0, 0)) == (233, 188, 120)
+
+
+def test_gpu_reservation_cannot_be_released_by_another_task():
+    from app.resources import ResourceGate
+    gate = ResourceGate()
+    assert gate.claim('detect')
+    assert not gate.claim('repair')
+    gate.release('repair')
+    assert gate.owner == 'detect'
+    gate.release('detect')
+    assert gate.claim('repair')

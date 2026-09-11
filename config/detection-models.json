@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "device": "cuda:0",
+  "minimum_free_vram_mb": 4096,
+  "rf": {
+    "path": "/root/autodl-tmp/models/koharu-layout-rfdetr-seg-2xl-1152/model.safetensors",
+    "path_env": "COMIC_RF_MODEL",
+    "source": "https://huggingface.co/mayocream/koharu-layout-rfdetr-seg-2xl-1152",
+    "sha256": "9bf6d2cbd7793c956d8c857bb1672a396eb7f100eb0682f86830d05e31168efb",
+    "resolution": 1152,
+    "num_select": 160,
+    "mask_dilate": 2,
+    "class_thresholds": {"text": 0.25, "onomatopoeia": 0.20, "bubble": 0.50, "panel": 0.50}
+  },
+  "mangalens": {
+    "path": "/root/autodl-tmp/models/mangalens.pt",
+    "path_env": "COMIC_MANGALENS_MODEL",
+    "source": "https://www.modelscope.cn/models/hgmzhn/manga-translator-ui/resolve/master/mangalens.pt",
+    "sha256": "4028152940f7c910f40192f46ede3b3f6c7129e5c76849c324d3564f8ac50198",
+    "image_size": 1600,
+    "confidence": 0.25,
+    "iou": 0.7,
+    "shrink_ratio": 0.02
+  }
+}

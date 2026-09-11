@@ -20,18 +20,26 @@ from .engine import JobManager
 from .repository import JobRepository, now_iso
 from .schemas import HealthResponse, JobRecord, WorkflowId
 from .storage import save_uploads, validate_pairs
+from .projects import ProjectStore
+from .project_api import create_project_router, project_download
+from .composition import build_composition_router
+from .detection import DetectionManager, create_detection_router
 
 
 repository = JobRepository(settings.jobs_root)
 manager = JobManager(settings, repository)
+project_store = ProjectStore(settings.data_root / "projects")
+detection_manager = DetectionManager(settings, project_store, manager.gpu_gate)
 
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     settings.jobs_root.mkdir(parents=True, exist_ok=True)
+    await detection_manager.start()
     await manager.start()
     yield
     await manager.stop()
+    await detection_manager.stop()
 
 
 app = FastAPI(title="漫畫去字工作台", version="0.1.0", lifespan=lifespan)
@@ -112,6 +120,7 @@ def health() -> HealthResponse:
         gpu_memory_used_mib=gpu_used,
         gpu_memory_total_mib=gpu_total,
         gpu_utilization_percent=gpu_utilization,
+        gpu_owner=manager.gpu_gate.owner,
     )
 
 
@@ -140,6 +149,8 @@ async def create_job(
         raise HTTPException(409, "已有任務正在處理，請先等待完成或放棄目前任務")
     selected = parse_workflows(workflows)
     job_id = str(uuid.uuid4())
+    if not manager.gpu_gate.claim(job_id):
+        raise HTTPException(409, "GPU 已被其他偵測或修復任務使用")
     job_dir = repository.job_dir(job_id)
     max_bytes = settings.max_upload_mb * 1024 * 1024
     try:
@@ -150,7 +161,12 @@ async def create_job(
         stems, black_masks = validate_pairs(sources, masks)
     except ValueError as exc:
         shutil.rmtree(job_dir, ignore_errors=True)
+        manager.gpu_gate.release(job_id)
         raise HTTPException(400, str(exc)) from exc
+    except BaseException:
+        shutil.rmtree(job_dir, ignore_errors=True)
+        manager.gpu_gate.release(job_id)
+        raise
 
     timestamp = now_iso()
     record = JobRecord(
@@ -163,8 +179,13 @@ async def create_job(
         created_at=timestamp,
         updated_at=timestamp,
     )
-    repository.write(record)
-    await manager.enqueue(job_id)
+    try:
+        repository.write(record)
+        await manager.enqueue(job_id)
+    except BaseException:
+        manager.gpu_gate.release(job_id)
+        shutil.rmtree(job_dir, ignore_errors=True)
+        raise
     return present_job(record)
 
 
@@ -181,6 +202,11 @@ async def abandon_job(job_id: str) -> JobRecord:
 @app.get("/api/jobs/{job_id}/download-current")
 def download_current_job(job_id: str) -> FileResponse:
     try:
+        job = repository.read(job_id)
+        if job.project_id:
+            with project_store.lock(job.project_id):
+                record, archive = manager.build_current_archive(job_id)
+                return project_download(project_store, job.project_id, archive, f"{record.name}-目前結果.zip")
         record, archive = manager.build_current_archive(job_id)
     except KeyError as exc:
         raise HTTPException(404, "任務不存在") from exc
@@ -192,11 +218,22 @@ def download_current_job(job_id: str) -> FileResponse:
 @app.get("/api/jobs/{job_id}/download")
 def download_job(job_id: str) -> FileResponse:
     record = get_job(job_id)
+    if record.project_id:
+        with project_store.lock(record.project_id):
+            record = get_job(job_id)
+            archive = repository.job_dir(job_id) / "download.zip"
+            if not record.download_ready or not archive.is_file():
+                raise HTTPException(409, "結果尚未完成")
+            return project_download(project_store, record.project_id, archive, f"{record.name}.zip")
     archive = repository.job_dir(job_id) / "download.zip"
     if not record.download_ready or not archive.is_file():
         raise HTTPException(409, "結果尚未完成")
     return FileResponse(archive, media_type="application/zip", filename=f"{record.name}.zip")
 
+
+app.include_router(create_project_router(settings, repository, manager, project_store))
+app.include_router(build_composition_router(project_store, repository))
+app.include_router(create_detection_router(detection_manager))
 
 frontend_dist = settings.app_root / "frontend" / "dist"
 if frontend_dist.is_dir():

@@ -39,6 +39,8 @@ class JobRecord(BaseModel):
     results: dict[str, list[str]] = Field(default_factory=dict)
     result_directory: str | None = None
     archive_path: str | None = None
+    project_id: str | None = None
+    snapshot_id: str | None = None
 
 
 class HealthResponse(BaseModel):
@@ -50,3 +52,4 @@ class HealthResponse(BaseModel):
     gpu_memory_used_mib: int | None = None
     gpu_memory_total_mib: int | None = None
     gpu_utilization_percent: int | None = None
+    gpu_owner: str | None = None

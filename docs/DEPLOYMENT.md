@@ -1,5 +1,9 @@
 # AutoDL 部署與重建手冊
 
+**2026-09-12 狀態：**新的項目工作台、第一／第三部分畫布及封存功能已完成本機實作整合，尚未部署到 AutoDL、未建立新 Tag／鏡像；RF＋MangaLens CUDA 與切換顯存仍待真實 GPU 驗收。不要把下面保留的三工作流歷史基線，或本機 CPU 測試，視為新偵測環境已可發布。
+
+目前程式和資料契約見 [ARCHITECTURE.md](ARCHITECTURE.md)，需求基線見 [PROJECT_WORKBENCH_PLAN.md](PROJECT_WORKBENCH_PLAN.md)，偵測配置及已知依賴例外見 [DETECTION_MODELS.md](DETECTION_MODELS.md)。
+
 這份文件同時服務兩種情境，請先確認自己走哪一條路：
 
 - **一般使用者：使用已發佈鏡像。** 鏡像內已包含 ComfyUI、三套正式工作流、依賴與 Web 應用；開機後直接打開 Web 頁面，不需要從零安裝。
@@ -7,7 +11,19 @@
 
 兩者不要混在一起。一般使用者不應執行從零安裝、拉取最新節點或改動模型連結。
 
-## A. 已發佈鏡像：一般使用者啟動即用
+## 新項目工作台：更新後的使用入口
+
+本節描述本次程式更新後的介面，**不是既有遠端鏡像已更新的聲明**。6008 首頁是項目列表；每個項目必須先有原圖，可同時匯入 Mask。從項目進入「準備與編輯／批量修復／比較合成」，亦可由首頁「舊版批次與歷史」使用下節保留的原三步向導。
+
+- 已有同名 Mask：建立項目後直接進第二部分，不要求先裝偵測模型。提交以不可變底圖＋Mask 快照執行，後續編輯不改變已提交輸入。
+- 準備與編輯：筆刷／矩形、純色填充、待修補範圍、擦除、縮放／平移、撤銷／重做和自動保存；可單獨下載配對。RF＋MangaLens 需維護者另外配置權重與獨立 Python。
+- 比較合成：只讀本項目完成任務的候選；同步比較、局部或整組採用、恢復底圖、保存來源分配與逐頁確認。羽化以保存後的伺服器預覽及導出為準。只需候選時，可跳過此步下載原第二部分結果。
+- 導出項目：穩定保存點打包原圖、編輯、快照、候選及合成記錄；重新匯入分配新 ID，不覆蓋原項目、不恢復 GPU 任務。只導出成品則僅含確認後的 PNG。
+- 刪除：先顯示名稱及用量並確認；活動任務／下載期間不能刪除。僅移除該項目和它擁有的 jobs，不影響舊版獨立任務或模型。
+
+項目保存在 `<COMIC_DATA_ROOT>/projects/`，修復任務仍在 `jobs/`。關閉網頁不會刪掉保存內容。全黑 Mask 頁沿用提交底圖；整批全黑不等待 ComfyUI，不載入修復模型，也不建立空比較 PDF。無卡模式可以使用項目管理、畫布、已有候選的合成，以及全黑整批直通；不能執行 RF／MangaLens 或非空修補 GPU 推理。
+
+## A. 既有批次版鏡像：一般使用者啟動即用
 
 ### 1. 選擇機型並開機
 
@@ -22,7 +38,7 @@ AutoDL 的無卡模式只適合查看文件、安裝 Web 依賴、核對磁碟�
 - ComfyUI：`0.0.0.0:6006`，保留為 AutoDL `WebUI-6006` 原生調試入口；後端仍在本機用 `127.0.0.1:6006` 連接；
 - 漫畫去字工作台：`0.0.0.0:6008`，作為 AutoDL 自定義服務對外入口。
 
-在 AutoDL 控制台打開映射到 6008 的服務地址。健康狀態必須顯示 Web 應用與 ComfyUI 均已就緒，才可提交批次。
+在 AutoDL 控制台打開映射到 6008 的服務地址。非全黑的修復批次需要 Web 與 ComfyUI 均就緒；新版工作台的項目編輯和整批全黑直通不依賴 ComfyUI 可用。
 
 若需要手動管理服務，使用倉庫的統一入口：
 
@@ -32,7 +48,7 @@ cd /root/comic-inpaint
 ./deploy/health-check.sh
 ```
 
-無卡模式若只想預覽 6008 網站，不啟動 ComfyUI，可單獨執行 `./deploy/start-web.sh`；頁面會顯示「等待推理引擎」，此時不能提交 GPU 任務。正式有卡使用執行 `start.sh`，它會依序啟動 6006 與 6008。
+無卡模式若只想預覽 6008 網站，不啟動 ComfyUI，可單獨執行 `./deploy/start-web.sh`；舊版頁面會顯示「等待推理引擎」，此時不能執行 GPU 推理；新版工作台仍可操作項目與 CPU 畫布。正式有卡使用執行 `start.sh`，它會依序啟動 6006 與 6008。
 
 在 AutoDL 實例的「設定開機命令」中保存以下命令，之後由該實例製作的發行鏡像便可在有卡開機後自動啟動兩個入口：
 
@@ -51,7 +67,7 @@ cd /root/comic-inpaint
 ./deploy/stop.sh
 ```
 
-### 3. 提交批次
+### 3. 提交批次（新版首頁的「舊版批次與歷史」入口）
 
 1. 在第一步選擇原圖與黑白 Mask。兩邊均可選整個文件夾，或一次多選若干圖片。
 2. 確認頁數配對無誤，再進入第二步選擇工作流；預設只選 Flux2 Klein，三套全選時會生成比較 PDF。實際串行順序為 Flux、FireRed、Qwen。
@@ -74,7 +90,7 @@ inpaint_workflows/<批次名>-三工作流對比.pdf
 logs/
 ```
 
-全黑 Mask 對應頁面會原圖直通，結果文件數仍完整，但比較 PDF 不包含該頁。
+全黑 Mask 對應頁面會沿用當次底圖（舊版直接提交時為該次原圖），結果文件數仍完整，但比較 PDF 不包含該頁；新版整批全黑不生成空 PDF。
 
 成功與已放棄但有結果的任務會保留在網站列表以及 `/root/autodl-tmp/comic-inpaint/jobs/<job-id>/`。6008 與 JupyterLab 都經過瀏覽器代理，大文件下載可能很慢；優先從 AutoDL 控制台取得 SSH 地址與端口，使用 `scp`、FileZilla 或 WinSCP 走 SFTP 下載網站顯示的 `download.zip` 完整路徑。2026-09-11 在參考實例上，同一張約 4 MB 圖片的 SSH 實測約為 1.44 MB/s，而當時瀏覽器代理只有十幾 KB/s；此數字只反映當次線路。JupyterLab 文件欄下載保留為備用方式。
 
@@ -151,8 +167,11 @@ logs/
 ```text
 /root/ComfyUI/                         # ComfyUI 與 custom nodes
 /root/comic-inpaint/                   # 本倉庫發行內容
-/root/autodl-tmp/comic-inpaint/jobs/   # 使用者任務、結果與日誌
+/root/autodl-tmp/comic-inpaint/jobs/   # 使用者修復任務、候選與日誌
+/root/autodl-tmp/comic-inpaint/projects/ # 原圖、編輯修訂、快照、合成及封存
 ```
+
+更新程式時只傳送已建置的前端、後端、配置與發行腳本；不要直接複製含 `var/`、`projects/`、`jobs/`、封存或使用者圖片的整個開發目錄。保留現有 `COMIC_DATA_ROOT`，不要用程式同步覆蓋伺服器資料。新資料結構依 project/job ID 分開保存，不要求遷移既有獨立 jobs。
 
 部署前檢查系統盤與資料盤可用空間。2026-09-11 參考實例在無卡模式下的 `/root/ComfyUI` 所在環境顯示約 30 GB、已用 6.6 GB、可用 23 GB；這只是當時快照，不是最低硬盤需求。公共模型庫或其他掛載的佔用方式可能不同，應以當前實例的實際掛載與模型文件大小重新計算。
 
@@ -220,6 +239,28 @@ cd /root/comic-inpaint
 - 建立後另以最終解析路徑、文件大小及已知校驗值驗證；工具會核對設定中的測試文件大小，已提供 SHA256 的文件再由 `verify.py` 核對；
 - 目前只有 FireRed Lightning LoRA 在設定中記錄了已知 SHA256；其他文件沒有可靠 SHA256 時必須明確顯示「未提供」，不能偽造成功校驗。
 
+### 6a. 可選 RF／MangaLens 偵測環境
+
+本步新增第一部分偵測能力，不替代前節的三工作流模型準備。權重由使用者或維護者上傳；應用不下載。`config/detection-models.json` 記錄兩個模型的來源、預設路徑與參考 SHA-256；可用 `COMIC_RF_MODEL` 和 `COMIC_MANGALENS_MODEL` 覆寫路径。預設目標如下：
+
+```text
+/root/autodl-tmp/models/koharu-layout-rfdetr-seg-2xl-1152/model.safetensors
+/root/autodl-tmp/models/mangalens.pt
+```
+
+另建偵測專用 Python 3.12 環境，按 [DETECTION_MODELS.md](DETECTION_MODELS.md) 的候選依賴及明示例外安裝，再把 `COMIC_DETECTION_PYTHON` 設為其 Python 絕對路徑。`requirements-detection.txt` 不是已通過 CUDA 驗證的完整鎖定檔：RF-DETR 與 supervision 的 pyDeprecate metadata 存在已知衝突，文件記錄了參考環境採用的獨立 `--no-deps` RF 安裝方式。不要把這套依賴裝進 ComfyUI 或 Web 的 `.venv`，也不要無聲更改原三流程環境。
+
+例如，完成獨立環境準備後，可在啟動配置中設定：
+
+```bash
+COMIC_DETECTION_PYTHON=/root/comic-detection-venv/bin/python
+COMIC_DETECTION_CONFIG=/root/comic-inpaint/config/detection-models.json
+```
+
+未設 Python、缺權重或配置不符時，`GET /api/detection/availability` 顯示原因；只有偵測按鈕不可用。此端點的 `available` 只代表基本檔案準備，不代表 CUDA 已驗證；真正工作進程還要核對權重雜湊、全部頁面輸入、CUDA 及可用顯存。
+
+偵測和修復共用 GPU gate。偵測開始前檢查 ComfyUI 無外部工作並卸載閒置模型，然後依次運行全批 RF、全批 MangaLens、CPU 分類。不要在偵測保留期間手工向 6006 提交工作，也不要為清顯存重啟 ComfyUI。偵測的取消會等待子進程退出；重啟後仍有舊程序時會阻擋新 GPU 任務，待程序退出後使用恢復操作。
+
 ### 7. 靜態預檢（無卡可做）
 
 在啟動 GPU 前執行部署檢查：
@@ -238,7 +279,7 @@ cd /root/comic-inpaint
 
 節點 Python 依賴、ComfyUI input/output 可寫性、端口占用、Git dirty 狀態與敏感資料掃描目前不在 `verify.py` 的自動範圍，維護者仍需按本手冊逐項人工核對。
 
-靜態預檢通過只表示「文件準備完整」，不表示三套模型能成功推理。
+靜態預檢通過只表示相應的原第二部分文件準備完整，不表示三套模型能成功推理，也不驗證 RF／MangaLens CUDA 環境。新偵測環境另按前節與偵測模型文件檢查。
 
 ### 8. GPU 回歸測試
 
@@ -256,11 +297,21 @@ cd /root/comic-inpaint
 
 已驗證基線的兩頁結果是 2/2、2/2、2/2 成功，三套監控時段合計 303.223 秒，無 OOM。新的回歸結果應另建帶日期的記錄，不覆寫舊基線。
 
+新增工作台還須完成以下針對性驗收；不因原第二部分曾經成功，就跳過新增輸入及排程邊界：
+
+- 權重到位後，先一頁 RF＋MangaLens CUDA smoke test，再小批次確認原尺寸文字／氣泡分割、分類與人工 edited 保護。
+- 核對全批模型順序、子進程退出、載入／推理耗時與顯存；確認偵測→ComfyUI 修復，以及修復→偵測切換不並行佔卡。
+- 從項目 Mask 直入及第一部分輸出各建立快照，按受影響流程測試配對與 Qwen Alpha 規則；全黑整批應在 ComfyUI 未啟動時仍完整輸出。
+- 以完成候選驗收第三部分局部來源、尺寸拒絕、羽化伺服器預覽與成品一致；確認未確認／缺頁不被標為完整成品。
+- 封存移到另一資料目錄再匯入，重開編輯及合成；測試活動任務／下載時刪除受阻，以及舊版 jobs 仍可讀取下載。
+
+上述新工作台的目標 GPU 與遠端集成驗收在本次本機實作階段尚未完成。
+
 ### 9. 比較 PDF 與交付驗證
 
 三套工作流全部完成後，在遠端主機直接生成比較 PDF，並與圖片、日誌一起打成單一下載包。PDF 欄位順序固定為原圖 + Mask、Flux、FireRed、Qwen；全黑 Mask 頁面省略。
 
-交付包只包含：
+原第二部分的候選結果交付包只包含：
 
 - 實際選中的 `inpaint_workflows/<workflow>/`；
 - 三套全選時的比較 PDF；
@@ -268,9 +319,11 @@ cd /root/comic-inpaint
 
 不要把 `raw_*`、ComfyUI 臨時輸入或任務中間工作流混入結果目錄。
 
+完整項目封存和最終成品 ZIP 是另外兩種下載：完整項目可包含原圖、修訂、快照、候選與合成來源；只導出成品只含全部已確認 PNG。不要用原候選包的清单限制完整項目封存，也不要把候選 ZIP 說成最終人工成品。
+
 ### 10. 發佈前清理與保存鏡像
 
-先停止兩個應用服務，再查看清理計畫：
+先確認沒有活動修復／偵測／下載，且必要項目和結果已另存，再停止兩個應用服務並查看清理計畫：
 
 ```bash
 cd /root/comic-inpaint
@@ -278,7 +331,7 @@ cd /root/comic-inpaint
 ./deploy/prepublish-clean.sh
 ```
 
-目前清理工具只列出本應用的 jobs／logs／run 目錄、`web_*` ComfyUI 暫存和 Qwen RGBA 暫存。確認列出的每個目標都屬於本次測試後，再明確套用：
+新版清理計畫必須涵蓋本應用的 **projects／jobs／logs／run**、`web_*` ComfyUI 暫存和 Qwen RGBA 暫存。projects 內含原圖、人工編輯、快照、偵測快取、候選引用、合成與封存；不能只清 jobs 就保存公開鏡像。先核對實際清單及資料根目錄，確認必要資料已取回、列出的目標確實可刪，再明確套用：
 
 ```bash
 ./deploy/prepublish-clean.sh --apply
@@ -287,9 +340,9 @@ cd /root/comic-inpaint
 清理完成後再次執行靜態預檢，並確認：
 
 - 沒有 AutoDL Token、SSH 密鑰、密碼或 API Key；
-- 沒有使用者圖片、結果、比較 PDF、顯存／ComfyUI 日誌；
+- 沒有使用者項目、原圖、人工編輯、快照、偵測快取、成品／候選、完整封存、比較 PDF、顯存／ComfyUI 日誌；
 - 沒有 macOS `._*` 文件；
-- 正式工作流、批次器、前端構建、後端依賴與模型連結仍完整；
+- 正式工作流、批次器、前端構建、後端依賴與模型連結仍完整；若發布第一部分偵測，另確認獨立偵測環境及上傳權重仍完整；
 - 啟動腳本保持 6006 為原生 ComfyUI、6008 為批量網站；
 - 實例處於乾淨、停止服務的狀態，再在 AutoDL 控制台保存鏡像。
 
@@ -299,6 +352,7 @@ cd /root/comic-inpaint
 
 - 每個發佈版本記錄鏡像 ID、日期、硬件、ComfyUI／Python／PyTorch、custom node 精確版本、模型校驗和與回歸批次。
 - 版本升級在新實例中完成，不直接破壞唯一的已驗證鏡像。
-- 若只修改 Web UI 且不影響輸入與批次器，可做 API／介面回歸；若觸及工作流、節點、模型或格式轉換，必須重新做三工作流 GPU 測試。
+- 更新前以 `/api/health` 確認 `active_job_id` 與 `gpu_owner` 都為空，並核對沒有活動項目操作；只更新 Web 程式時先完成 lint／build／後端測試，再同步已建置 `frontend/dist` 和確定 commit 的程式，以 `deploy/restart-web.sh` 只重啟 6008，確認 6006 PID 未改變。
+- 若只修改 Web UI 且不影響輸入與批次器，可做 API／介面回歸；若觸及工作流、節點、模型或格式轉換，按受影響邊界做真實 GPU 回歸。新增 RF／MangaLens 不能沿用三修復模型的歷史結論，須独立驗收並測試共享 GPU 切換。
 - 若 AutoDL 公共庫路徑失效，先更新來源映射並驗證實際文件，再建立新鏡像版本；不要在使用者啟動時臨時下載數十 GB 模型。
 - 保留每次成功基線的測試報告，速度比較始終分開記錄冷載入與暖機推理。

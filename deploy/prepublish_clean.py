@@ -29,7 +29,7 @@ def main() -> int:
     data_root = validate_root(args.data_root)
     comfy_root = args.comfy_root.resolve()
     targets: list[Path] = []
-    targets.extend(path for path in (data_root / "jobs", data_root / "logs", data_root / "run") if path.exists())
+    targets.extend(path for path in (data_root / "projects", data_root / "jobs", data_root / "logs", data_root / "run") if path.exists())
     for pattern in ("web_*", "qwenlanpaint_rgba_*.png"):
         targets.extend((comfy_root / "input").glob(pattern))
     targets.extend((comfy_root / "output").glob("web_*.png"))

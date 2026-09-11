@@ -11,9 +11,13 @@ import zipfile
 from contextlib import suppress
 from pathlib import Path
 
+from PIL import Image
+
 from .config import Settings
 from .repository import JobRepository
 from .schemas import JobRecord, JobState, WorkflowId
+from .resources import ResourceGate
+from .storage import validate_pairs
 
 
 WORKFLOW_META: dict[WorkflowId, dict[str, str]] = {
@@ -45,12 +49,14 @@ class JobManager:
         self.active_job_id: str | None = None
         self.active_process: asyncio.subprocess.Process | None = None
         self.abandon_requested: set[str] = set()
+        self.gpu_gate = ResourceGate()
 
     async def start(self) -> None:
         if self.worker_task is None or self.worker_task.done():
             self.queue = asyncio.Queue()
             self.worker_task = asyncio.create_task(self._worker(), name="single-gpu-worker")
-        for record in reversed(self.repository.list(limit=200)):
+        reserved = False
+        for record in reversed(self.repository.list(limit=None)):
             if record.state == JobState.abandoning:
                 self._finalize_abandoned(record.id)
             elif record.state in {JobState.queued, JobState.validating, JobState.running, JobState.packaging}:
@@ -58,6 +64,9 @@ class JobManager:
                 record.message = "服務重啟，等待續跑"
                 record.error = None
                 self.repository.write(record)
+                if not reserved:
+                    self.gpu_gate.claim(record.id)
+                    reserved = True
                 await self.queue.put(record.id)
 
     async def stop(self) -> None:
@@ -106,10 +115,13 @@ class JobManager:
         queue = self.queue
         while True:
             job_id = await queue.get()
+            while not self.gpu_gate.claim(job_id):
+                await asyncio.sleep(0.2)
             self.active_job_id = job_id
             try:
                 await self._run_job(job_id)
             except asyncio.CancelledError:
+                await self._terminate_active_process()
                 raise
             except JobAbandoned:
                 self._finalize_abandoned(job_id)
@@ -126,6 +138,7 @@ class JobManager:
                 self.abandon_requested.discard(job_id)
                 self.active_process = None
                 self.active_job_id = None
+                self.gpu_gate.release(job_id)
                 queue.task_done()
 
     def _raise_if_abandoned(self, job_id: str) -> None:
@@ -202,8 +215,34 @@ class JobManager:
         self._raise_if_abandoned(job_id)
         record = self.repository.read(job_id)
         record.state = JobState.validating
-        record.message = "等待 ComfyUI"
+        record.message = "檢查圖片與 Mask"
         self.repository.write(record)
+        job_dir = self.repository.job_dir(job_id)
+        source_dir = job_dir / "uploads" / "pair"
+        mask_dir = job_dir / "uploads" / "pair_mask"
+        sources = {path.stem: path for path in source_dir.iterdir() if path.is_file()}
+        masks = {path.stem: path for path in mask_dir.iterdir() if path.is_file()}
+        stems, black_masks = validate_pairs(sources, masks)
+        if len(black_masks) == len(stems):
+            for workflow in record.workflows:
+                target = job_dir / "inpaint_workflows" / workflow
+                target.mkdir(parents=True, exist_ok=True)
+                for stem in stems:
+                    self._raise_if_abandoned(job_id)
+                    with Image.open(sources[stem]) as source:
+                        source.convert("RGB").save(target / f"{stem}.png")
+                record.results[workflow] = [f"{stem}.png" for stem in stems]
+            logs = job_dir / "logs"
+            logs.mkdir(parents=True, exist_ok=True)
+            (logs / "passthrough.json").write_text(json.dumps({"stems": stems, "reason": "all_masks_black"}), encoding="utf-8")
+            record.state = JobState.completed
+            record.completed_total = record.total_runs
+            record.completed_in_current = len(stems)
+            record.download_ready = True
+            record.message = f"全部完成；{len(stems)} 頁無需推理，直接沿用底圖"
+            self._write_archive(job_dir, job_dir / "download.zip")
+            self.repository.write(record)
+            return
         await self._wait_comfy()
         self._raise_if_abandoned(job_id)
         batch_name, stems = self._prepare_comfy_input(record)

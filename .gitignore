@@ -11,4 +11,7 @@ frontend/dist/
 frontend/vite.config.js
 frontend/vite.config.d.ts
 var/
+var-test/
+models/
+.venv-detection/
 *.log

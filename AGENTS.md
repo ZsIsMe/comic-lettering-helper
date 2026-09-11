@@ -8,6 +8,23 @@
 
 ## 架构与端口
 
+### 项目工作台扩展（2026-09-12）
+
+以下为新项目入口的约定；本文件后文原有三步上传向导、右栏历史描述仍适用于保留的旧版批次入口。
+
+- 主要入口为 `frontend/src/ProjectWorkbench.tsx`；`App.tsx` 保留旧版批次和历史下载。`RasterEditor.tsx` 为第一、第三部分共用画布。
+- 项目必须有原图；可选上传完整同 stem Mask，直接进入既有第二部分。第一部分 RF-DETR + MangaLens 均使用 GPU，不可静默降级 CPU。缺少偵測模型不阻止服务启动、手工编辑和第二部分。
+- 新后端为 `projects.py` / `project_api.py`、`composition.py`、`detection.py`；纯影像和偵測运行器在 `backend/imaging/`，不得依赖母工程路径或 Qt。
+- `<COMIC_DATA_ROOT>/projects/<id>` 保存原图、逐页修订、输入快照和合成；既有 `jobs/<id>` 不搬迁。新 job 通过 `project_id`、`snapshot_id` 引用项目及固定输入；旧 job 字段默认空，继续可读下载。
+- `export_pair` 底图是原图叠加填色；直接传入 Mask 且没有填色时就是原图。运行中/已完成的快照不可覆盖。全黑 Mask 按当次底图直通，维持全部页数；整批全黑不联系 ComfyUI。
+- 第三部分只从已完成的第二部分 run 进入，使用同 run 快照底图和候选。差异 Mask 仅供人工采用，不作输出质量拒收。保存原尺寸 uint16 来源分配，正式预览/导出共用合成核心。
+- 编輯保存有预期修订号；原子写入图层后更新 manifest。项目/快照/任务状态相互独立；导航前完成保存，人工修改不可被重新偵測抹掉。
+- 偵測和修复共用 `manager.gpu_gate`，在异步上传/准备前预留，在子进程退出后释放；同一时间仍只有一个 GPU job。重启优先保留仍存活偵測进程占用，不能盲目重跑。
+- 项目删除、编辑、封存与下载共用项目锁/reader 引用；不能删除仍在推理、保存或下载的项目。只删除明确归属的 job，不删除模型或其他项目。
+- 完整项目封存包含可续编辑资产和相对引用，重新匯入分配新项目及 job ID；只导出结果是已确认的完整成品集合。权重和环境不进封存或 Git。
+- RF/MangaLens 来源和隔离环境见 `docs/DETECTION_MODELS.md`；权重由用户上传，CUDA、依赖组合与显存切换仍需目标 GPU 验证，不能把 CPU/本地测试描述为 GPU 通过。
+- 整体计划见 `docs/PROJECT_WORKBENCH_PLAN.md`；模型未上传时可完成非 GPU 开发，但不得声称已完成目标镜像验收。
+
 - `frontend/`：React 19 + TypeScript + Vite + Ant Design。生产环境构建为静态文件，不运行独立 Node 服务。
 - `backend/`：FastAPI，同时提供 `/api/*` 和 `frontend/dist/` 静态页面。
 - `backend/app/engine.py`：单 GPU 任务队列、批次器调用、进度同步、显存记录、结果整理和打包。
