@@ -1,0 +1,18 @@
+{
+  "app_name": "漫畫去字工作台",
+  "app_version": "0.1.0",
+  "target_vram_gib": 32,
+  "web_port": 6008,
+  "comfy_port": 6006,
+  "workflow_order": ["firered", "qwen2511_lanpaint", "flux2klein_lanpaint"],
+  "max_upload_mb": 2048,
+  "allowed_extensions": [".png", ".jpg", ".jpeg"],
+  "custom_nodes": [
+    "ComfyUI-Inpaint-CropAndStitch",
+    "LanPaint",
+    "ComfyUI-KJNodes",
+    "rgthree-comfy",
+    "ComfyUI-Easy-Use",
+    "ComfyUI_LayerStyle"
+  ]
+}

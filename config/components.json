@@ -1,0 +1,56 @@
+{
+  "captured_from": "pro-788873e1ad26",
+  "captured_at": "2026-09-11",
+  "runtime": {
+    "comfyui": "0.34.0",
+    "python": "3.12.3",
+    "torch": "2.8.0+cu128",
+    "comfy_cli": "1.20.0"
+  },
+  "custom_nodes": [
+    {
+      "directory": "ComfyUI-Inpaint-CropAndStitch",
+      "version": "3.0.14",
+      "source": "https://github.com/lquesada/ComfyUI-Inpaint-CropAndStitch.git",
+      "install_kind": "archive_in_tested_image",
+      "tree_sha256": "c2310f2a9e767df9136f4910d48fb671fb6630f0663448593ce03ffa6a7cb6c4"
+    },
+    {
+      "directory": "LanPaint",
+      "version": "2.1.0",
+      "source": "LanPaint-2.1.0.zip",
+      "install_kind": "local_archive",
+      "tree_sha256": "32cf83aa33b031779498020ca75abbe121d9cd5299a54175701f030846a674d8"
+    },
+    {
+      "directory": "ComfyUI-KJNodes",
+      "source": "https://github.com/kijai/ComfyUI-KJNodes.git",
+      "install_kind": "git",
+      "commit": "6c996e1877db08c7de020ee14421dd28d7574ec2"
+    },
+    {
+      "directory": "rgthree-comfy",
+      "source": "https://github.com/rgthree/rgthree-comfy.git",
+      "install_kind": "git",
+      "commit": "2c5342a8cb0eaecaabf61435a5f37dd594c510ba"
+    },
+    {
+      "directory": "ComfyUI-Easy-Use",
+      "version": "1.4.1",
+      "source": "https://github.com/yolain/ComfyUI-Easy-Use.git",
+      "install_kind": "archive_in_tested_image",
+      "tree_sha256": "f782962754f74dab5d498a606b29ad9c327670edeac5340bb5fc1b29724374f1"
+    },
+    {
+      "directory": "ComfyUI_LayerStyle",
+      "source": "https://gitee.com/baoze-baby/ComfyUI_LayerStyle.git",
+      "install_kind": "git",
+      "commit": "b1b7a6ce985d5cdea57e755be53a418b3e96472b"
+    }
+  ],
+  "workflow_sha256": {
+    "FireRed-v12-newprompt-latent-mask-FP8Mixed-FP8Text.json": "d3fdd65f2b777489c897e81363f53747d70e3f8046b217ba4b63184e7f28bcc2",
+    "Qwen-Image-Edit-2511-LanPaint-V2-4Steps-manga.json": "e44e30ea6fadad4c8231d34f8c675977922369367882ba2aaec67b61c8f2b8bf",
+    "Flux2-Klein-9B-FP8-Manga-Mask-LanPaint-4step.json": "1e283b898ca77071ee8fdd9f45973fbcf9ab8837d2e034f00b90acfbf8d182dd"
+  }
+}

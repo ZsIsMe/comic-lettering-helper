@@ -1,0 +1,86 @@
+{
+  "models": [
+    {
+      "id": "firered_fp8",
+      "target": "diffusion_models/FireRed-Image-Edit-1.1_fp8mixed_comfy.safetensors",
+      "required": true,
+      "size_bytes": 21439550735,
+      "source_candidates": [
+        "/.autodl/a6/a7/24/a6a724193fe7b147338509ae945ebb8c"
+      ]
+    },
+    {
+      "id": "firered_lightning_lora",
+      "target": "loras/FireRed-Image-Edit-1.1-Lightning-8steps-v1.2.safetensors",
+      "required": true,
+      "size_bytes": 849542776,
+      "source_candidates": [
+        "/root/model-assets/FireRed-Image-Edit-1.1-Lightning-8steps-v1.2.safetensors"
+      ],
+      "sha256": "e8089300fd0b76c0bb3441ff64509258e95b483cc7c5a6f955add907d6c8177d"
+    },
+    {
+      "id": "qwen2511_fp8",
+      "target": "diffusion_models/qwen_image_edit_2511_fp8mixed.safetensors",
+      "required": true,
+      "size_bytes": 20533762817,
+      "source_candidates": [
+        "/.autodl/31/8d/36/318d36574a2cd26aa3efa25cc86c8527"
+      ]
+    },
+    {
+      "id": "qwen2511_lightning_lora",
+      "target": "loras/Qwen-Image-Edit-2511-Lightning-4steps-V1.0-bf16.safetensors",
+      "required": true,
+      "size_bytes": 849608296,
+      "source_candidates": [
+        "/.autodl/lightx2v/Qwen-Image-Edit-2511-Lightning/Qwen-Image-Edit-2511-Lightning-4steps-V1.0-bf16.safetensors"
+      ]
+    },
+    {
+      "id": "qwen25_text_encoder",
+      "target": "text_encoders/qwen_2.5_vl_7b_fp8_scaled.safetensors",
+      "required": true,
+      "size_bytes": 9384670680,
+      "source_candidates": [
+        "/.autodl/b8/98/22/b89822a44279e6d83c06a5061d7b1ca6"
+      ]
+    },
+    {
+      "id": "qwen_image_vae",
+      "target": "vae/qwen_image_vae.safetensors",
+      "required": true,
+      "size_bytes": 253806246,
+      "source_candidates": [
+        "/.autodl/circlestone-labs/Anima/split_files/vae/qwen_image_vae.safetensors"
+      ]
+    },
+    {
+      "id": "flux2_klein_9b_fp8",
+      "target": "diffusion_models/flux-2-klein-9b-fp8.safetensors",
+      "required": true,
+      "size_bytes": 9433061528,
+      "source_candidates": [
+        "/.autodl/7c/5f/15/7c5f15e30b24f3f24ac97adda21c1e8c"
+      ]
+    },
+    {
+      "id": "qwen3_text_encoder",
+      "target": "text_encoders/qwen_3_8b_fp8mixed.safetensors",
+      "required": true,
+      "size_bytes": 8664848742,
+      "source_candidates": [
+        "/.autodl/12/b4/15/12b4156a3b0db375b222cb8c291e2b34"
+      ]
+    },
+    {
+      "id": "flux2_vae",
+      "target": "vae/flux2-vae.safetensors",
+      "required": true,
+      "size_bytes": 336213556,
+      "source_candidates": [
+        "/.autodl/1f/01/ec/1f01ec904ab02e44c0b4d04c83dc856d"
+      ]
+    }
+  ]
+}
