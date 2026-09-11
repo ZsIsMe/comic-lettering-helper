@@ -143,7 +143,7 @@ make verify-local
 
 只修改 Web UI、文案或不影响输入契约的 API 时，lint、build 和后端测试足够。只要修改了工作流、custom node、模型依赖、输入转换、Mask 方向或批次器，就必须在目标 GPU 上做真实回归；环境发生变化时先用一组非全黑 Mask 做 smoke test，已经固定且未变化的生产环境运行正式批次时不需要每次 smoke test。
 
-行为或部署方式发生变化时，同时更新 `README.md`、`docs/ARCHITECTURE.md` 和 `docs/DEPLOYMENT.md` 中相关内容。
+行为或部署方式发生变化时，同时更新 `README.md`、`docs/ARCHITECTURE.md`、`docs/DEPLOYMENT.md` 和 `docs/RELEASE.md` 中相关内容。代码 Tag 使用不带 `v` 的语义版本；Tag 与 AutoDL 镜像不要求一一对应，具体发布条件和检查清单以 `docs/RELEASE.md` 为准。
 
 ## 远端部署安全
 
@@ -186,4 +186,5 @@ make verify-local
 - 删除远端输入、输出、任务或镜像前必须明确核对范围。不要对 `/root`、`/root/ComfyUI` 或数据盘根目录执行宽泛递归删除。
 - 不因诊断问题就自动修改服务；仅回答或分析时保持只读。
 - 除非用户明确要求，不要自行提交、推送、开关机、发送外部通知或发布镜像。
+- 不要让公开镜像在开机时自动拉取 GitHub `main` 或 `latest`。部署和镜像必须能够追溯到明确 commit 或 Git Tag。
 - 完成修改后回报：改动文件、验证结果、是否部署、服务状态，以及仍需用户决定的事项。

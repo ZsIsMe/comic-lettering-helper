@@ -39,3 +39,5 @@ COMIC_APP_ROOT="$PWD" COMIC_DATA_ROOT="$PWD/var" \
 部署與從零重建記錄見 [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md)。
 
 系統邊界、輸入契約、任務生命週期與顯存基線見 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)。
+
+Git Tag、遠端測試與 AutoDL 鏡像的版本關係見 [docs/RELEASE.md](docs/RELEASE.md)。
