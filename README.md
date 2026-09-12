@@ -168,3 +168,7 @@ F1 純色填充與 F2 待修補以常駐按鈕切換，記住上次選擇。工�
 新增「Flux手塗去字」、「FireRed手塗去字」、「Qwen手塗去字」，使用 ComfyUI 原生遮罩編輯器。原三套生產工作流及網頁批次配置保持不變；使用與部署方式見[手塗工作流說明](workflows/handpaint/README.md)。目前完成結構檢查，GPU 推理驗收待有卡環境執行。
 
 預排版首頁及編輯工具列提供「配套PS腳本」按鈕，可下載 [LabelPlus PS Script ZS 1.8.0](frontend/public/downloads/LabelPlus_Ps_Script_ZS-1.8.0.zip)。此 ZIP 隨前端靜態資產部署，無需 GPU。
+
+
+<!-- comparison-view-review -->
+比較合成交互更新：第一張為唯一成品預覽，成功顯示即確認；切頁保留視圖設定，候選面板直接選取採用。所有頁面已確認才可輸出，匯出不代替瀏覽確認。詳細行為見 `docs/COMPARISON_PARITY.md`。本輪僅本地構建與測試，尚未部署遠端。

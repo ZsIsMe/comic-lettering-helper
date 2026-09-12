@@ -3,12 +3,12 @@ import { Alert, Button, Card, Checkbox, Empty, Input, InputNumber, List, Modal, 
 import LegacyBatch from './App'
 import { ImagePicker } from './ImagePicker'
 import { DetectionSettings } from './DetectionSettings'
-import { RasterEditor, type RasterHandle, type RasterSave } from './RasterEditor'
+import { RasterEditor, type RasterHandle, type ComposeView, type RasterSave } from './RasterEditor'
 import { active, api, assetUrl, defaultDetectionOptions, json, projectUrl, workflowOptions, type Composition, type DetectionOptions, type Project, type Run, type Workflow } from './workbench-api'
 
 const { Title, Text } = Typography
 const remember = 'comic-workbench-project'
-type Detection = { state: string; message?: string; error?: string; progress?: { stage: string; completed: number; total: number } }
+type Detection = { state: string; created_at?: string; updated_at?: string; total?: number; message?: string; error?: string; progress?: { stage: string; completed: number; total: number } }
 const detectionLabels: Record<string, string> = { queued: '等待檢測', check: '準備檢測', checking: '準備檢測', rf: '識別文字區域', mangalens: '識別文字範圍', classify: '整理檢測結果', saving: '保存檢測結果', cancelling: '正在停止檢測', recovery_required: '檢查上次檢測狀態' }
 const detectionActive = (state: string) => ['queued', 'checking', 'rf', 'mangalens', 'classify', 'saving', 'cancelling', 'recovery_required'].includes(state)
 function bytes(value = 0) { return value > 1024 ** 3 ? `${(value / 1024 ** 3).toFixed(1)} GB` : `${(value / 1024 ** 2).toFixed(1)} MB` }
@@ -139,11 +139,16 @@ function ProjectWorkspace({ initial, gpuOwner, onExit, onReadyToLeave }: { initi
   const [busy, setBusy] = useState(false); const [error, setError] = useState(''); const [dirty, setDirty] = useState(false)
   const [editorKey, setEditorKey] = useState(0)
   const [availability, setAvailability] = useState<{ available?: boolean; ready?: boolean; available_without_bubbles?: boolean; defaults?: DetectionOptions; errors?: string[]; message?: string } | null>(null)
+  const [clock, setClock] = useState(Date.now())
+  const [liveRepair, setLiveRepair] = useState<Record<string, boolean>>({})
+  useEffect(() => { const timer = setInterval(() => setClock(Date.now()), 1000); return () => clearInterval(timer) }, [])
   const [detection, setDetection] = useState<Detection | null>(null)
   const [detectConfirmOpen, setDetectConfirmOpen] = useState(false)
   const [detectError, setDetectError] = useState('')
   const [detectionOptions, setDetectionOptions] = useState<DetectionOptions>(initial.detection_options || defaultDetectionOptions)
   const [feather, setFeather] = useState(1)
+  const composeView = useRef<ComposeView>({})
+  const editView = useRef<ComposeView>({})
   const editor = useRef<RasterHandle>(null)
   const editRevision = useRef(initial.pages[0].edit_revision)
   const compositionRevision = useRef(0)
@@ -203,7 +208,7 @@ function ProjectWorkspace({ initial, gpuOwner, onExit, onReadyToLeave }: { initi
         const p = await api<Project>(url)
         if (live) {
           editRevision.current = p.pages.find(item => item.id === currentPageId.current)!.edit_revision
-          setProject(p); setEditorKey(k => k + 1)
+          setProject(p); setLiveRepair({}); setEditorKey(k => k + 1)
         }
       }
       wasDetecting.current = nowActive
@@ -213,7 +218,7 @@ function ProjectWorkspace({ initial, gpuOwner, onExit, onReadyToLeave }: { initi
   }, [url])
   useEffect(() => {
     if (step !== 2 || !runId) return
-    let live = true; setAssignment(null)
+    let live = true
     void (async () => {
       await loadComposition()
       const a = await api<{ revision: number; assignment_rle: number[][] }>(`${compUrl}/pages/${page.id}/assignment`)
@@ -227,6 +232,10 @@ function ProjectWorkspace({ initial, gpuOwner, onExit, onReadyToLeave }: { initi
     if (nextStep === 2 && run?.state !== 'completed') { message.info('修復完成後即可比較合成'); return }
     const p = await reloadProject()
     editRevision.current = p.pages[nextPage].edit_revision
+    if (nextStep === 2) {
+      const a = await api<{ revision: number; assignment_rle: number[][] }>(`${compUrl}/pages/${p.pages[nextPage].id}/assignment`)
+      compositionRevision.current = a.revision; setAssignment(a.assignment_rle)
+    }
     setPageIndex(nextPage); setStep(nextStep); setDirty(false); setEditorKey(k => k + 1)
   }
   async function saveEdit(data: RasterSave) {
@@ -239,7 +248,7 @@ function ProjectWorkspace({ initial, gpuOwner, onExit, onReadyToLeave }: { initi
     const c = await api<Composition>(`${compUrl}/pages/${page.id}`, json('PUT', {
       revision: compositionRevision.current, assignment_rle: data.assignment_rle, confirmed: false, settings: { ...composition!.settings, feather_px: feather },
     }))
-    compositionRevision.current = c.revision; setComposition(c)
+    compositionRevision.current = c.revision; setComposition(c); setAssignment(data.assignment_rle)
   }
   async function detect() {
     await execute(async () => {
@@ -262,25 +271,18 @@ function ProjectWorkspace({ initial, gpuOwner, onExit, onReadyToLeave }: { initi
       setRun(next); setRunId(next.id); setStep(1); await reloadProject()
     })
   }
-  async function confirmPage(all = false) {
-    await execute(async () => {
-      if (!await flush()) return
-      let c: Composition
-      if (all) c = await api<Composition>(`${compUrl}/confirm`, json('POST', { revision: compositionRevision.current }))
-      else {
-        const a = await api<{ assignment_rle: number[][] }>(`${compUrl}/pages/${page.id}/assignment`)
-        c = await api<Composition>(`${compUrl}/pages/${page.id}`, json('PUT', { revision: compositionRevision.current, assignment_rle: a.assignment_rle, confirmed: true, settings: { ...composition!.settings, feather_px: feather } }))
-      }
-      compositionRevision.current = c.revision; setComposition(c)
-    })
+  async function confirmDisplayedPage() {
+    if (!composition || composition.pages.find(p => p.page_id === page.id)?.confirmed) return
+    const c = await api<Composition>(`${compUrl}/pages/${page.id}`, json('PUT', { revision: compositionRevision.current, assignment_rle: assignment, confirmed: true, settings: composition.settings }))
+    compositionRevision.current = c.revision; setComposition(c)
   }
-  async function saveFeather(value: number) {
+  async function saveFeather(value: number, changes: Record<string, number> = {}) {
     await execute(async () => {
       if (!await flush() || !composition) return
       const a = await api<{ assignment_rle: number[][] }>(`${compUrl}/pages/${page.id}/assignment`)
       const c = await api<Composition>(`${compUrl}/pages/${page.id}`, json('PUT', { revision: compositionRevision.current,
-        assignment_rle: a.assignment_rle, confirmed: false, settings: { ...composition.settings, feather_px: value } }))
-      compositionRevision.current = c.revision; setComposition(c); setFeather(value)
+        assignment_rle: a.assignment_rle, confirmed: false, settings: { ...composition.settings, feather_px: value, ...changes } }))
+      compositionRevision.current = c.revision; setComposition(c); setFeather(value); setEditorKey(k => k + 1)
     })
   }
   async function download(path: string) {
@@ -290,7 +292,7 @@ function ProjectWorkspace({ initial, gpuOwner, onExit, onReadyToLeave }: { initi
   const cp = composition?.pages.find(item => item.page_id === page.id)
   const candidateOptions = cp?.candidates.filter(item => item.available).map(item => ({ code: item.code,
     label: workflowOptions.find(w => w.value === item.workflow)!.label,
-    url: `${compUrl}/pages/${page.id}/image?source=${item.workflow}`, diffUrl: `${compUrl}/pages/${page.id}/image?source=diff:${item.workflow}`,
+    url: `${compUrl}/pages/${page.id}/image?source=${item.workflow}`, diffUrl: `${compUrl}/pages/${page.id}/image?source=diff:${item.workflow}&revision=${composition?.revision}`,
   })) || []
   return <main className="app-shell project-workspace">
     {modalHolder}
@@ -311,8 +313,8 @@ function ProjectWorkspace({ initial, gpuOwner, onExit, onReadyToLeave }: { initi
     {error && <Alert type="error" showIcon closable onClose={() => setError('')} message={error} />}
     <Steps current={step} onChange={value => void execute(() => navigate(value))} items={[{ title: '準備與編輯' }, { title: '批量修復' }, { title: '比較合成', disabled: run?.state !== 'completed' }]} />
     <div className="project-body"><aside className="page-list">
-      <List dataSource={project.pages} renderItem={(item, index) => <List.Item className={index === pageIndex ? 'selected' : ''} onClick={() => void execute(() => navigate(step, index))}>
-        <img src={assetUrl(project.id, item.thumbnail || item.source)} alt="" loading="lazy" /><div><strong>{item.filename}</strong><small>{item.mask_ready ? 'Mask 已備妥' : '待偵測／編輯'}</small></div>
+      <div className="page-status-legend"><span className="page-untouched">{step === 2 ? '待確認' : '未處理'}</span> · <span className="page-complete">{step === 2 ? '已確認' : '完成'}</span>{step !== 2 && <> · <span className="page-needs-repair">待修補</span></>}</div><List dataSource={project.pages} renderItem={(item, index) => <List.Item className={index === pageIndex ? 'selected' : ''} onClick={() => void execute(() => navigate(step, index))}>
+        <strong className={step === 2 ? (composition?.pages.find(p => p.page_id === item.id)?.confirmed ? 'page-complete' : 'page-untouched') : (liveRepair[item.id] !== undefined || item.mask_ready) ? ((liveRepair[item.id] ?? item.has_repair_mask) ? 'page-needs-repair' : 'page-complete') : 'page-untouched'} title={(liveRepair[item.id] !== undefined || item.mask_ready) ? ((liveRepair[item.id] ?? item.has_repair_mask) ? '仍有待修補區域' : '已完成塗白，無待修補區域') : '尚未處理'}>{item.filename}</strong>
       </List.Item>} />
     </aside><section className="project-content">
       {step === 0 && <>
@@ -321,10 +323,12 @@ function ProjectWorkspace({ initial, gpuOwner, onExit, onReadyToLeave }: { initi
           <Button onClick={() => void execute(() => navigate(1))}>前往批量修復 →</Button>
         </Space>
         {!detectionCanConfigure && <Alert type="info" message="自動檢測暫不可用，可先手動編輯。" />}
-        {detecting ? <Alert type="info" showIcon message={detection?.progress ? `${detectionLabels[detection.state] || detectionLabels[detection.progress.stage] || '自動檢測中'} · ${detection.progress.completed} / ${detection.progress.total} 頁` : detectionLabels[detection?.state || ''] || '自動檢測中，完成後即可編輯'} action={<Button danger onClick={() => void execute(async () => { await api(`${url}/detection/${detection?.state === 'recovery_required' ? 'recover' : 'cancel'}`, { method: 'POST' }); await reloadProject(); setEditorKey(k => k + 1) })}>{detection?.state === 'recovery_required' ? '檢查恢復' : '停止偵測'}</Button>} /> : <RasterEditor key={`${page.id}-${editorKey}`} ref={editor} width={page.width} height={page.height} mode="edit"
+        <p className="detection-estimate">參考估算：首次準備約 20 秒，每張約 8 秒；第一張合計約 28 秒，之後每張約 8 秒。{project.pages.length} 張合計約 {Math.floor((20 + project.pages.length * 8) / 60)} 分 {(20 + project.pages.length * 8) % 60} 秒（依圖片與設備浮動）。</p>
+        {detection?.created_at && <p role="timer">{detecting ? '已運行' : '本次耗時'} {Math.max(0, Math.floor(((detecting ? clock : Date.parse(detection.updated_at || detection.created_at)) - Date.parse(detection.created_at)) / 1000))} 秒{detecting && <> · {clock - Date.parse(detection.created_at) < (20 + (detection.total || project.pages.length) * 8) * 1000 ? `預估剩餘約 ${Math.ceil(((20 + (detection.total || project.pages.length) * 8) * 1000 - clock + Date.parse(detection.created_at)) / 1000)} 秒` : '已超過參考時間，仍在處理'}</>}</p>}
+        {detecting ? <Alert type="info" showIcon message={detection?.progress ? `${detectionLabels[detection.state] || detectionLabels[detection.progress.stage] || '自動檢測中'} · ${detection.progress.completed} / ${detection.progress.total} 頁` : detectionLabels[detection?.state || ''] || '自動檢測中，完成後即可編輯'} action={<Button danger onClick={() => void execute(async () => { await api(`${url}/detection/${detection?.state === 'recovery_required' ? 'recover' : 'cancel'}`, { method: 'POST' }); await reloadProject(); setEditorKey(k => k + 1) })}>{detection?.state === 'recovery_required' ? '檢查恢復' : '停止偵測'}</Button>} /> : <RasterEditor key={`${page.id}-${editorKey}`} ref={editor} width={page.width} height={page.height} mode="edit" viewState={editView}
           baseUrl={assetUrl(project.id, page.source)} overlayUrl={`${assetUrl(project.id, page.overlay)}?v=${page.edit_revision}`} otherUrl={`${assetUrl(project.id, page.other)}?v=${page.edit_revision}`} editedUrl={`${assetUrl(project.id, page.edited)}?v=${page.edit_revision}`}
           detectedTextUrl={page.detected_text ? assetUrl(project.id, page.detected_text) : undefined}
-          onSave={saveEdit} onDirty={setDirty} disabled={busy} />}
+          onSave={saveEdit} onDirty={setDirty} onRepairMaskChange={value => setLiveRepair(previous => ({ ...previous, [page.id]: value }))} disabled={busy} />}
         {detection?.error && <Alert type="error" message="自動檢測未完成，請重試；若持續失敗，請聯絡管理員查看檢測日誌。" />}
       </>}
       {step === 1 && <>
@@ -345,14 +349,12 @@ function ProjectWorkspace({ initial, gpuOwner, onExit, onReadyToLeave }: { initi
         <Space wrap className="editor-toolbar"><Text>{composition?.pages.filter(p => p.confirmed).length || 0} / {project.pages.length} 頁已確認</Text>
           <Tag color={cp?.confirmed ? 'green' : 'orange'}>{cp?.passthrough ? '無需修復，沿用底圖' : cp?.confirmed ? '此頁已確認' : '此頁待確認'}</Tag>
           <label>羽化 <InputNumber disabled={busy || !composition} min={0} max={8} value={feather} onChange={v => void saveFeather(v || 0)} /> px</label>
-          <Button disabled={!composition || busy || dirty} onClick={() => void confirmPage()}>確認此頁</Button>
-          <Button disabled={!composition || busy || dirty} onClick={() => void confirmPage(true)}>確認全部目前預覽</Button>
-          <Button type="primary" disabled={!composition || busy || dirty || !!gpuOwner || composition.pages.some(p => !p.confirmed)} onClick={() => void execute(async () => { if (!await flush()) return; const result = await api<{ download_url: string }>(`${compUrl}/export`, json('POST', { revision: compositionRevision.current })); window.location.assign(result.download_url) })}>只導出成品</Button>
+          {composition && <><label>Mask 擴大 <InputNumber min={0} max={80} value={composition.settings.expand_px} onChange={v => void saveFeather(feather, {expand_px:v ?? 5})} /></label><label>差異閾值 <InputNumber min={1} max={255} value={composition.settings.threshold} onChange={v => void saveFeather(feather, {threshold:v ?? 12})} /></label><label>最小區域 <InputNumber min={1} max={10000} value={composition.settings.min_area} onChange={v => void saveFeather(feather, {min_area:v ?? 16})} /></label><Button disabled={busy} onClick={() => void saveFeather(feather)}>重算 Mask</Button></>}
+          <Button type="primary" disabled={!composition || busy || !!gpuOwner || composition.pages.some(p => !p.confirmed)} onClick={() => void execute(async () => { if (!await flush()) return; const result = await api<{ download_url: string }>(`${compUrl}/export`, json('POST', { revision: compositionRevision.current })); window.location.assign(result.download_url) })}>輸出目前合成結果</Button>
         </Space>
         {cp?.warnings.map(w => <Alert key={w} type="warning" message={w} />)}
-        {assignment && cp ? <RasterEditor key={`${runId}-${page.id}-${editorKey}`} ref={editor} width={page.width} height={page.height} mode="compose" baseUrl={cp.base_url}
-          candidates={candidateOptions} assignmentRle={assignment} onSave={saveComposition} onDirty={setDirty} disabled={busy || cp.passthrough} /> : <Spin />}
-        {cp && <details className="saved-preview"><summary>查看已保存的成品效果（包含羽化）</summary><img src={`${cp.preview_url}&revision=${composition?.revision}`} alt="已保存成品" /></details>}
+        {assignment && cp ? <RasterEditor key={`${runId}-${page.id}-${editorKey}`} ref={editor} width={page.width} height={page.height} mode="compose" viewState={composeView} onPreviewReady={confirmDisplayedPage} baseUrl={cp.base_url} previewUrl={`${cp.preview_url}&revision=${composition?.revision}`}
+          candidates={candidateOptions} assignmentRle={assignment} onSave={saveComposition} onDirty={setDirty} disabled={busy || cp.passthrough} /> : <div className="compose-loading"><Spin /></div>}
       </>}
     </section></div>
   </main>

@@ -8,12 +8,19 @@ import shutil
 import threading
 import uuid
 from contextlib import contextmanager
+from functools import lru_cache
 from pathlib import Path, PurePosixPath
 
 from PIL import Image, ImageChops
 
 from .repository import now_iso
 from .detection_options import DetectionOptions
+
+@lru_cache(maxsize=512)
+def _has_repair_mask(path: str, modified_ns: int, size: int) -> bool:
+    with Image.open(path) as mask:
+        return mask.convert('L').getbbox() is not None
+
 
 ACTIVE_STATES = {'queued', 'validating', 'running', 'packaging', 'abandoning'}
 
@@ -68,7 +75,13 @@ class ProjectStore:
         path = self.project_dir(project_id) / 'project.json'
         if not path.is_file():
             raise KeyError(project_id)
-        return json.loads(path.read_text(encoding='utf-8'))
+        project = json.loads(path.read_text(encoding='utf-8'))
+        for page in project['pages']:
+            if page.get('mask_ready'):
+                mask_path = self.asset_path(project_id, page['other'])
+                stat = mask_path.stat()
+                page['has_repair_mask'] = _has_repair_mask(str(mask_path), stat.st_mtime_ns, stat.st_size)
+        return project
 
     def write(self, project: dict) -> None:
         project['updated_at'] = now_iso()
@@ -216,6 +229,7 @@ class ProjectStore:
                 page['detected_text'] = str(text_path.relative_to(self.project_dir(project_id)))
             page['edit_revision'] += 1
             page['mask_ready'] = True
+            page['has_repair_mask'] = other.getbbox() is not None
             if detection_metadata is not None:
                 page['detection'] = detection_metadata
             project['revision'] += 1

@@ -12,7 +12,7 @@
 .file-picker { display: inline-flex; position: relative; overflow: hidden; cursor: pointer; border: 1px solid #cfc7b8; border-radius: 7px; padding: 5px 14px; background: #faf7f0; }
 .file-picker input { position: absolute; inset: 0; opacity: 0; cursor: pointer; width: 100%; }
 .file-picker:has(input:disabled) { opacity: .5; cursor: not-allowed; }
-.project-body { display: grid; grid-template-columns: 180px minmax(0,1fr); gap: 22px; margin-top: 26px; }
+.project-body { display: grid; grid-template-columns: 120px minmax(0,1fr); gap: 12px; margin-top: 26px; }
 .project-workspace { padding: 24px; }
 .project-content { min-width: 0; }
 .page-list { max-height: 78vh; overflow: auto; border-right: 1px solid #cfc7b8; }
@@ -305,3 +305,25 @@ footer { padding: 20px 0; color: #746e63; font-size: 12px; }
 .create-image-inputs p { margin: 0 0 8px; }
 .create-image-inputs .image-import-main { padding: 18px 10px; }
 @media (max-width: 540px) { .create-image-inputs { grid-template-columns: minmax(0, 1fr); } }
+
+.page-list strong { max-width: 100%; font-size: 13px; }
+.page-untouched { color: #77736d; }
+.page-complete { color: #27833c; }
+.page-needs-repair { color: #a46b00; }
+.page-status-legend { font-size: 11px; padding: 8px 2px; }
+.canvas-scroll { min-width: 0; max-width: 100%; }
+.canvas-scroll canvas { max-width: none; max-height: none; flex-shrink: 0; }
+.editor-zoom-controls { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.detection-estimate { font-size: 12px; color: #756e63; }
+
+.canvas-panels.compose { display: flex; overflow-x: auto; align-items: stretch; }
+.canvas-panels.compose .compare-panel { flex: 0 0 auto; width: 32%; min-width: 260px; resize: horizontal; overflow: hidden; border: 1px solid #d7d0c3; }
+.candidate-controls { padding: 6px; min-height: 74px; }
+.canvas-panels.compose .canvas-scroll { height: 66vh; }
+
+.compose-hint { display: block; margin: 4px 0 8px; color: #756e63; }
+.result-controls { display: flex; align-items: center; color: #756e63; }
+
+.compose-loading { min-height: calc(66vh + 220px); display: grid; place-items: center; }
+.canvas-panels.compose { min-height: calc(66vh + 110px); }
+.editor-save-state { display: inline-block; min-width: 110px; }

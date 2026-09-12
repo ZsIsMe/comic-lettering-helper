@@ -423,3 +423,17 @@ def test_create_without_detection_settings_retains_existing_api_behavior(tmp_pat
         response = client.post('/api/projects', files={'source_files': ('01.png', png_upload('RGB', 'white'), 'image/png')})
     assert response.status_code == 201
     assert 'detection_options' not in response.json()
+
+
+def test_page_repair_status_uses_current_mask_and_supports_old_projects(tmp_path):
+    store, project = make_project(tmp_path)
+    pid, page = project['id'], project['pages'][0]
+    assert store.read(pid)['pages'][0]['has_repair_mask'] is False
+    mask = Image.new('L', (6, 4)); mask.putpixel((2, 2), 255)
+    result = store.save_edit(pid, page['id'], 0, Image.new('RGBA', (6, 4)), mask, Image.new('L', (6, 4)))
+    assert result['pages'][0]['has_repair_mask'] is True
+    result['pages'][0].pop('has_repair_mask')
+    store.write(result)
+    assert store.read(pid)['pages'][0]['has_repair_mask'] is True
+    store.save_edit(pid, page['id'], 1, Image.new('RGBA', (6, 4)), Image.new('L', (6, 4)), Image.new('L', (6, 4)))
+    assert store.read(pid)['pages'][0]['has_repair_mask'] is False

@@ -7,7 +7,7 @@ export const workflowOptions: { value: Workflow; label: string }[] = [
 export interface Page {
   id: string; stem: string; filename: string; width: number; height: number
   original: string; source: string; overlay: string | null; other: string | null; edited: string | null
-  edit_revision: number; mask_ready?: boolean
+  edit_revision: number; mask_ready?: boolean; has_repair_mask?: boolean
   thumbnail?: string
   detected_text?: string
 }
