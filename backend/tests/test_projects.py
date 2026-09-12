@@ -301,3 +301,68 @@ def test_replaced_mask_preserves_fill_and_protects_added_and_erased_pixels_from_
     assert result[0, 1].tolist() == [0, 0, 0, 0]  # Erasure survives re-detection.
     assert result[0, 2].tolist() == [0, 0, 0, 0]
     assert np.array_equal(protection, layers['edited'])
+
+
+def test_detected_text_is_optional_immutable_and_roundtrips_with_manual_edits(tmp_path):
+    store, project = make_project(tmp_path)
+    repository = JobRepository(tmp_path / 'jobs')
+    pid, page_id = project['id'], project['pages'][0]['id']
+    assert 'detected_text' not in project['pages'][0]
+    text = Image.new('L', (6, 4))
+    text.putpixel((1, 1), 255)
+    overlay, other, edited = Image.new('RGBA', (6, 4)), Image.new('L', (6, 4)), Image.new('L', (6, 4))
+    project = store.save_edit(pid, page_id, 0, overlay, other, edited, detected_text=text)
+    first_path = project['pages'][0]['detected_text']
+    project = store.save_edit(pid, page_id, 1, overlay, other, edited, detected_text=Image.new('L', (6, 4), 255))
+    second_path = project['pages'][0]['detected_text']
+    assert first_path != second_path
+    with Image.open(store.asset_path(pid, first_path)) as first:
+        assert first.getpixel((0, 0)) == 0
+        assert first.getpixel((1, 1)) == 255
+    project = store.save_edit(pid, page_id, 2, overlay, other, edited)
+    assert project['pages'][0]['detected_text'] == second_path
+    archive = export_project(store, repository, pid)
+    imported = import_project(store, repository, archive, 1000000)
+    imported_page = imported['pages'][0]
+    with Image.open(store.asset_path(imported['id'], imported_page['detected_text'])) as image:
+        assert image.mode == 'L'
+        assert image.size == (6, 4)
+        assert image.getextrema() == (255, 255)
+
+
+def test_detected_text_save_failure_does_not_publish_partial_revision(tmp_path, monkeypatch):
+    store, project = make_project(tmp_path)
+    pid, page_id = project['id'], project['pages'][0]['id']
+    before = (store.project_dir(pid) / 'project.json').read_bytes()
+    save = Image.Image.save
+    def failed_save(image, path, *args, **kwargs):
+        if 'detected-text-' in str(path):
+            raise OSError('simulated asset write failure')
+        return save(image, path, *args, **kwargs)
+    monkeypatch.setattr(Image.Image, 'save', failed_save)
+    with pytest.raises(OSError, match='write failure'):
+        store.save_edit(pid, page_id, 0, Image.new('RGBA', (6, 4)), Image.new('L', (6, 4)), Image.new('L', (6, 4)), detected_text=Image.new('L', (6, 4)))
+    assert (store.project_dir(pid) / 'project.json').read_bytes() == before
+    assert 'detected_text' not in store.read(pid)['pages'][0]
+
+
+@pytest.mark.parametrize('invalid', ['path', 'mode', 'size', 'missing'])
+def test_import_validates_optional_detected_text_asset(tmp_path, invalid):
+    store, project = make_project(tmp_path)
+    repository = JobRepository(tmp_path / 'jobs')
+    pid, page_id = project['id'], project['pages'][0]['id']
+    project = store.save_edit(pid, page_id, 0, Image.new('RGBA', (6, 4)), Image.new('L', (6, 4)), Image.new('L', (6, 4)), detected_text=Image.new('L', (6, 4)))
+    text_path = store.asset_path(pid, project['pages'][0]['detected_text'])
+    if invalid == 'path':
+        project['pages'][0]['detected_text'] = '../outside.png'
+        store.write(project)
+    elif invalid == 'mode':
+        Image.new('RGB', (6, 4)).save(text_path)
+    elif invalid == 'size':
+        Image.new('L', (7, 4)).save(text_path)
+    else:
+        text_path.unlink()
+    archive = export_project(store, repository, pid)
+    with pytest.raises(ValueError):
+        import_project(store, repository, archive, 1000000)
+    assert len(store.list()) == 1

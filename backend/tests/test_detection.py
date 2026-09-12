@@ -167,10 +167,16 @@ def test_bubble_fill_preserves_protected_other():
     assert not np.any((overlay[:, :, 3] > 0) & (remaining > 0))
 
 
-def test_sequential_stages_and_publish_without_model_inference(tmp_path, monkeypatch):
+@pytest.mark.parametrize('device', ['cuda:0', 'mps', 'cpu'])
+def test_sequential_stages_and_publish_without_model_inference(tmp_path, monkeypatch, device):
     manager, project = setup_manager(tmp_path)
+    config = json.loads(manager.config_path.read_text())
+    config['device'] = device
+    manager.config_path = tmp_path / 'detection-config.json'
+    manager.config_path.write_text(json.dumps(config))
     monkeypatch.setattr(manager, 'availability', lambda: {'available': True})
-    monkeypatch.setattr(manager, '_comfy_release', lambda: None)
+    releases = []
+    monkeypatch.setattr(manager, '_comfy_release', lambda: releases.append(True))
     stages = []
     async def stage(record, name):
         stages.append(name)
@@ -179,6 +185,9 @@ def test_sequential_stages_and_publish_without_model_inference(tmp_path, monkeyp
             for entry in manifest['pages']:
                 target = Path(entry['output'])
                 target.mkdir(parents=True)
+                text = Image.new('L', (30, 30))
+                text.putpixel((4, 5), 255)
+                text.save(target / 'text_mask.png')
                 for key in ('overlay', 'other', 'edited'):
                     with Image.open(entry[key]) as image:
                         image.save(target / f'{key}.png')
@@ -188,11 +197,17 @@ def test_sequential_stages_and_publish_without_model_inference(tmp_path, monkeyp
         await manager.task
     asyncio.run(run())
     assert stages == ['check', 'rf', 'mangalens', 'classify']
+    assert releases == ([True] if device == 'cuda:0' else [])
     assert manager.status(project['id'])['state'] == 'completed'
     saved = manager.store.read(project['id'])
     assert saved['state'] == 'ready'
     assert saved['pages'][0]['edit_revision'] == 1
     assert saved['pages'][0]['mask_ready']
+    assert saved['pages'][0]['detection']['device'] == device
+    with Image.open(manager.store.asset_path(project['id'], saved['pages'][0]['detected_text'])) as text:
+        assert text.mode == 'L'
+        assert text.size == (30, 30)
+        assert text.getpixel((4, 5)) == 255
     assert manager.gpu_gate.owner is None
 
 

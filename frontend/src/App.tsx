@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
+import { DirectoryPicker } from './DirectoryPicker'
 import {
   Alert,
   Button,
@@ -32,7 +33,6 @@ import {
   StopOutlined,
 } from '@ant-design/icons'
 
-const { Dragger } = Upload
 const { Title, Text, Paragraph } = Typography
 
 type WorkflowId = 'firered' | 'qwen2511_lanpaint' | 'flux2klein_lanpaint'
@@ -112,11 +112,9 @@ function uploadProps(
   setFiles: (files: File[]) => void,
   accept: string,
   disabled: boolean,
-  directory: boolean,
 ): UploadProps {
   const allowed = new Set(accept.split(',').map((value) => value.trim().toLowerCase()))
   return {
-    directory,
     multiple: true,
     accept,
     disabled,
@@ -415,24 +413,24 @@ export default function App() {
                   <Row gutter={[20, 20]}>
                     <Col xs={24} lg={12}>
                       <div className="upload-choice">
-                        <Dragger {...uploadProps(selectSourceFiles, '.png,.jpg,.jpeg', false, true)} className="folder-drop source-drop">
+                        <DirectoryPicker onSelect={(files, folderName) => { selectSourceFiles(files); setName(folderName) }} className="shallow-folder source-drop">
                           <FolderOpenOutlined />
                           <strong>選擇原圖文件夾</strong>
                           <span>可选多图或者文件夹，不会选择子文件夹。</span>
-                        </Dragger>
-                        <Upload {...uploadProps(selectSourceFiles, '.png,.jpg,.jpeg', false, false)}>
+                        </DirectoryPicker>
+                        <Upload {...uploadProps(selectSourceFiles, '.png,.jpg,.jpeg', false)}>
                           <Button block>或選擇多張原圖</Button>
                         </Upload>
                       </div>
                     </Col>
                     <Col xs={24} lg={12}>
                       <div className="upload-choice">
-                        <Dragger {...uploadProps(setMaskFiles, '.png', false, true)} className="folder-drop mask-drop">
+                        <DirectoryPicker mask onSelect={setMaskFiles} className="shallow-folder mask-drop">
                           <CloudUploadOutlined />
                           <strong>選擇黑白 Mask 文件夾</strong>
                           <span>可选多图或者文件夹，不会选择子文件夹。</span>
-                        </Dragger>
-                        <Upload {...uploadProps(setMaskFiles, '.png', false, false)}>
+                        </DirectoryPicker>
+                        <Upload {...uploadProps(setMaskFiles, '.png', false)}>
                           <Button block>或選擇多張 Mask</Button>
                         </Upload>
                       </div>

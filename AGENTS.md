@@ -24,6 +24,8 @@
 - 完整项目封存包含可续编辑资产和相对引用，重新匯入分配新项目及 job ID；只导出结果是已确认的完整成品集合。权重和环境不进封存或 Git。
 - RF/MangaLens 来源和隔离环境见 `docs/DETECTION_MODELS.md`；权重由用户上传，CUDA、依赖组合与显存切换仍需目标 GPU 验证，不能把 CPU/本地测试描述为 GPU 通过。
 - 整体计划见 `docs/PROJECT_WORKBENCH_PLAN.md`；模型未上传时可完成非 GPU 开发，但不得声称已完成目标镜像验收。
+- 2026-09-12 使用者追加本機模型測試：允許顯式配置 `mps` 或 `cpu`，正式配置仍預設 `cuda:0`。不可在指定裝置失敗時默默降級；非 CUDA 偵測不要求本機 ComfyUI，也不呼叫 CUDA 顯存接口。本機模型配置與個人環境路徑放 `var/`，不提交。MPS 驗收不等同 AutoDL CUDA 驗收。
+- 第一部分左側為「Mask / 原圖」編輯畫布（0% 原圖、100% 黑底 Mask），右側為填色預覽。填色、擦除、待修補與撤銷立即更新雙側，不等待保存；顯示色／透明度不修改持久圖層。`page.detected_text` 可選資產用來區分文字 Mask 與整塊填色。
 
 - `frontend/`：React 19 + TypeScript + Vite + Ant Design。生产环境构建为静态文件，不运行独立 Node 服务。
 - `backend/`：FastAPI，同时提供 `/api/*` 和 `frontend/dist/` 静态页面。

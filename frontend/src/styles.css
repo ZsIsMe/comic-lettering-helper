@@ -29,6 +29,15 @@
 .canvas-panels { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 12px; }
 .canvas-panels.compose { grid-template-columns: repeat(auto-fit,minmax(200px,1fr)); }
 .canvas-panels section > strong { display: block; min-height: 38px; font-size: 13px; padding: 8px; background: #e8e2d7; }
+.canvas-panels.edit section { display: flex; flex-direction: column; min-width: 0; }
+.panel-note { float: right; color: #746e63; font-weight: normal; }
+.panel-controls { padding: 8px; display: flex; flex-wrap: wrap; align-content: center; align-items: center; gap: 8px 12px; min-height: 88px; background: #faf7f0; }
+.panel-controls label { display: inline-flex; align-items: center; gap: 6px; }
+.panel-controls input[type=color] { width: 28px; height: 26px; padding: 0; border: 0; background: none; }
+.panel-controls .ant-input-number { width: 64px; }
+.mask-mix { display: flex; align-items: center; gap: 8px; width: 100%; }
+.mask-mix .ant-slider { flex: 1; min-width: 50px; }
+.canvas-panels.edit .canvas-scroll { margin-top: auto; }
 .canvas-scroll { overflow: auto; height: 65vh; background: #c4bfb5; overscroll-behavior: contain; }
 .canvas-scroll canvas { display: block; }
 .saved-preview { padding-top: 20px; }
@@ -149,6 +158,12 @@ button, input { font: inherit; }
 .folder-drop .anticon { font-size: 32px; color: var(--teal); }
 .folder-drop strong { font-family: "Songti TC", serif; font-size: 19px; }
 .folder-drop span { color: #746e63; }
+.shallow-folder.ant-btn { width: 100%; height: auto; min-height: 150px; display: flex; flex-direction: column; gap: 8px; padding: 24px 12px; white-space: normal; border-style: dashed; background: rgba(255,255,255,.4); }
+.shallow-folder > .anticon { font-size: 32px; color: var(--teal); }
+.shallow-folder strong { font-family: "Songti TC", serif; font-size: 19px; }
+.directory-picker { display: flex; flex-direction: column; gap: 6px; }
+.directory-drop { padding: 12px; border: 1px dashed #b8b0a2; border-radius: 7px; color: #746e63; text-align: center; background: rgba(255,255,255,.3); }
+.directory-drop.disabled { opacity: .5; }
 .mask-drop.ant-upload-wrapper .ant-upload-drag { background-image: repeating-linear-gradient(135deg, rgba(37,35,31,.025) 0 8px, transparent 8px 16px); }
 .upload-choice { display: grid; gap: 10px; }
 .upload-choice > .ant-upload-wrapper,

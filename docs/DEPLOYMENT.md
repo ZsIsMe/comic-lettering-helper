@@ -1,8 +1,12 @@
 # AutoDL 部署與重建手冊
 
+文件夾按鈕需瀏覽器支援 File System Access 的目錄選擇 API，且頁面處於安全上下文（例如 HTTPS 或 localhost）。部署後應檢查實際瀏覽器及授權；按鈕無法取得目錄時可拖入文件夾（使用 Entries API）或多選圖片，不會改用遞歸讀取。參見 [MDN 目錄選擇](https://developer.mozilla.org/en-US/docs/Web/API/Window/showDirectoryPicker)與 [Entries 讀取](https://developer.mozilla.org/en-US/docs/Web/API/FileSystemDirectoryReader/readEntries)。
+
 **2026-09-12 狀態：**新的項目工作台、第一／第三部分畫布及封存功能已完成本機實作整合，尚未部署到 AutoDL、未建立新 Tag／鏡像；RF＋MangaLens CUDA 與切換顯存仍待真實 GPU 驗收。不要把下面保留的三工作流歷史基線，或本機 CPU 測試，視為新偵測環境已可發布。
 
 目前程式和資料契約見 [ARCHITECTURE.md](ARCHITECTURE.md)，需求基線見 [PROJECT_WORKBENCH_PLAN.md](PROJECT_WORKBENCH_PLAN.md)，偵測配置及已知依賴例外見 [DETECTION_MODELS.md](DETECTION_MODELS.md)。
+
+本機測試可由 `COMIC_DETECTION_CONFIG` 指向未提交的配置，明確設 `device: "mps"` 或 `"cpu"`，並設定已有的模型路徑與 `COMIC_DETECTION_PYTHON`。不需要安裝 ComfyUI 才能測第一部分；正式 AutoDL 配置維持 `cuda:0`。更新第一部分雙畫布或模型装置支援後，先建置前端，再重啟本機服務以載入配置；保留原 `COMIC_DATA_ROOT`，不清除試用項目。
 
 這份文件同時服務兩種情境，請先確認自己走哪一條路：
 

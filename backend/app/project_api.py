@@ -185,6 +185,14 @@ def import_project(store: ProjectStore, repository, archive_path: Path, max_byte
                     if key == 'overlay' and image.mode != 'RGBA':
                         raise ValueError('填色圖層必須為 RGBA')
                     image.verify()
+            if page.get('detected_text') is not None:
+                text_parts = relative_path(page['detected_text']).parts
+                if text_parts[0] != 'assets':
+                    raise ValueError('偵測文字 Mask 路徑必須位於項目 assets 內')
+                with Image.open(verify_asset(page['detected_text'])) as detected_text:
+                    if detected_text.format != 'PNG' or detected_text.mode != 'L' or detected_text.size != (page['width'], page['height']):
+                        raise ValueError('偵測文字 Mask 必須為原尺寸灰階 PNG')
+                    detected_text.verify()
             if page.get('thumbnail') is not None:
                 thumbnail_parts = relative_path(page['thumbnail']).parts
                 if thumbnail_parts[0] != 'assets':

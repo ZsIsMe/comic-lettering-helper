@@ -1,5 +1,6 @@
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from 'react'
 import { Alert, Button, Checkbox, InputNumber, Select, Slider, Space, Spin, Tag } from 'antd'
+import { renderEditViews } from './edit-preview'
 
 type Pixels = { overlay: ImageData; other: ImageData; edited: ImageData; assignment: Uint16Array }
 export interface RasterSave {
@@ -10,6 +11,7 @@ interface Candidate { code: number; label: string; url: string; diffUrl: string 
 interface Props {
   width: number; height: number; baseUrl: string; mode: 'edit' | 'compose'
   overlayUrl?: string; otherUrl?: string; editedUrl?: string
+  detectedTextUrl?: string
   assignmentRle?: number[][]; candidates?: Candidate[]
   onSave: (data: RasterSave) => Promise<void>
   onDirty?: (dirty: boolean) => void
@@ -52,12 +54,20 @@ function rle(values: Uint16Array): number[][] {
   return runs
 }
 
+function previewPreference<T>(key: string, fallback: T): T {
+  try { return JSON.parse(localStorage.getItem(`comic-editor-${key}`) || 'null') ?? fallback }
+  catch { return fallback }
+}
+function rgb(hex: string) { return [1, 3, 5].map(offset => parseInt(hex.slice(offset, offset + 2), 16)) }
+
 /** All masks and selections use original image pixels; zoom affects CSS only. */
 export const RasterEditor = forwardRef<RasterHandle, Props>(function RasterEditor(props, ref) {
   const { width, height, mode, disabled } = props
   const initial = useRef(props)
   const pixels = useRef<Pixels | null>(null)
   const base = useRef<ImageData | null>(null)
+  const detectedText = useRef<ImageData | null>(null)
+  const frame = useRef<number | null>(null)
   const candidates = useRef<Map<number, { image: ImageData; diff: ImageData }>>(new Map())
   const canvasRefs = useRef<Map<number, HTMLCanvasElement>>(new Map())
   const viewRefs = useRef<Map<number, HTMLDivElement>>(new Map())
@@ -75,27 +85,28 @@ export const RasterEditor = forwardRef<RasterHandle, Props>(function RasterEdito
   const [color, setColor] = useState('#ffffff'); const [size, setSize] = useState(16)
   const [zoom, setZoom] = useState(Math.min(1, 550 / width)); const [compare, setCompare] = useState(100)
   const [sourceCode, setSourceCode] = useState(1)
-  const [showMask, setShowMask] = useState(true)
+  const [maskPercent, setMaskPercent] = useState(() => previewPreference('mask-percent', 70))
+  const [maskColor, setMaskColor] = useState(() => previewPreference('mask-color', '#ffffff'))
+  const [showMask, setShowMask] = useState(() => previewPreference('show-other', true))
+  const [otherPercent, setOtherPercent] = useState(() => previewPreference('other-percent', 38))
+  const [otherColor, setOtherColor] = useState(() => previewPreference('other-color', '#ff6ea5'))
   const [showSources, setShowSources] = useState(false)
   const [historyState, setHistoryState] = useState([0, 0])
 
-  const redraw = useCallback(() => {
+  const drawNow = useCallback(() => {
     const p = pixels.current; const b = base.current
     if (!p || !b) return
+    if (mode === 'edit') {
+      const views = renderEditViews({ base: b.data, overlay: p.overlay.data, other: p.other.data, edited: p.edited.data,
+        detectedText: detectedText.current?.data }, { maskPercent, maskColor: rgb(maskColor), showOther: showMask,
+        otherPercent, otherColor: rgb(otherColor) })
+      for (const [code, canvas] of canvasRefs.current) canvas.getContext('2d')!.putImageData(new ImageData(code === 0 ? views.left : views.right, width, height), 0, 0)
+      return
+    }
     for (const [code, canvas] of canvasRefs.current) {
       const ctx = canvas.getContext('2d')!
       const out = new ImageData(new Uint8ClampedArray(b.data), width, height)
-      if (mode === 'edit' && code === 0) {
-        for (let i = 0; i < out.data.length; i += 4) {
-          const alpha = p.overlay.data[i + 3] / 255
-          for (let c = 0; c < 3; c++) out.data[i + c] = Math.round(out.data[i + c] * (1 - alpha) + p.overlay.data[i + c] * alpha)
-          if (showMask && p.other.data[i] >= 128) {
-            out.data[i] = Math.round(out.data[i] * .5 + 255 * .5)
-            out.data[i + 1] = Math.round(out.data[i + 1] * .5 + 70 * .5)
-            out.data[i + 2] = Math.round(out.data[i + 2] * .5 + 160 * .5)
-          }
-        }
-      } else if (mode === 'compose') {
+      if (mode === 'compose') {
         if (code === 0) {
           for (let n = 0; n < p.assignment.length; n++) {
             const source = candidates.current.get(p.assignment[n])?.image
@@ -117,16 +128,29 @@ export const RasterEditor = forwardRef<RasterHandle, Props>(function RasterEdito
       }
       ctx.putImageData(out, 0, 0)
     }
-  }, [width, height, mode, compare, showMask, showSources])
+  }, [width, height, mode, compare, showMask, showSources, maskPercent, maskColor, otherPercent, otherColor])
+  const redraw = useCallback(() => {
+    if (frame.current !== null) cancelAnimationFrame(frame.current)
+    frame.current = requestAnimationFrame(() => { frame.current = null; drawNow() })
+  }, [drawNow])
+  useEffect(() => () => { if (frame.current !== null) cancelAnimationFrame(frame.current) }, [])
+  useEffect(() => {
+    if (mode !== 'edit') return
+    try {
+      for (const [key, value] of Object.entries({ 'mask-percent': maskPercent, 'mask-color': maskColor, 'show-other': showMask, 'other-percent': otherPercent, 'other-color': otherColor }))
+        localStorage.setItem(`comic-editor-${key}`, JSON.stringify(value))
+    } catch { /* Display preferences are optional when browser storage is unavailable. */ }
+  }, [mode, maskPercent, maskColor, showMask, otherPercent, otherColor])
 
   useEffect(() => {
     alive.current = true
     let cancelled = false
     const p = initial.current
     void (async () => {
-      const [b, overlay, other, edited] = await Promise.all([
+      const [b, overlay, other, edited, text] = await Promise.all([
         load(p.baseUrl, p.width, p.height), load(p.overlayUrl || '', p.width, p.height),
         load(p.otherUrl || '', p.width, p.height, true), load(p.editedUrl || '', p.width, p.height, true),
+        p.detectedTextUrl ? load(p.detectedTextUrl, p.width, p.height, true) : Promise.resolve(null),
       ])
       const assignment = new Uint16Array(p.width * p.height)
       let offset = 0
@@ -134,7 +158,7 @@ export const RasterEditor = forwardRef<RasterHandle, Props>(function RasterEdito
       const decoded = await Promise.all((p.candidates || []).map(async candidate => ({ code: candidate.code,
         image: await load(candidate.url, p.width, p.height), diff: await load(candidate.diffUrl, p.width, p.height) })))
       if (cancelled) return
-      base.current = b; pixels.current = { overlay, other, edited, assignment }
+      base.current = b; detectedText.current = text; pixels.current = { overlay, other, edited, assignment }
       candidates.current = new Map(decoded.map(item => [item.code, item]))
       setLoading(false)
     })().catch(err => { if (!cancelled) { setLoading(false); setError(String(err)) } })
@@ -271,11 +295,12 @@ export const RasterEditor = forwardRef<RasterHandle, Props>(function RasterEdito
     for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) mark(x, y, sourceCode)
     changed()
   }
-  const panels = mode === 'edit' ? [{ code: 0, label: '填色與待修補區域' }, { code: -1, label: '原圖' }]
+  const panels = mode === 'edit' ? [{ code: 0, label: 'Mask / 原圖' }, { code: -1, label: '填色預覽' }]
     : [{ code: 0, label: '局部採用預覽（邊緣羽化於保存後預覽）' }, ...(props.candidates || [])]
   return <div className="raster-editor" onKeyDown={event => {
     if ((event.target as HTMLElement).tagName !== 'CANVAS') return
     if (mode === 'edit' && ['F1', 'F2'].includes(event.key)) { event.preventDefault(); setCategory(event.key === 'F1' ? 'solid' : 'other') }
+    if (event.key === 'F4') { event.preventDefault(); setZoom(Math.min(1, (viewRefs.current.get(0)?.clientWidth || 550) / width)) }
     if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'z') { event.preventDefault(); undo(event.shiftKey) }
   }}>
     {error && <Alert type="error" showIcon message={error} action={<Button onClick={() => void flush()}>重試保存</Button>} />}
@@ -299,17 +324,24 @@ export const RasterEditor = forwardRef<RasterHandle, Props>(function RasterEdito
     <Space wrap className="editor-toolbar">
       <label>縮放 <InputNumber aria-label="縮放百分比" min={5} max={400} value={Math.round(zoom * 100)} onChange={v => setZoom((v || 100) / 100)} /> %</label>
       <Button onClick={() => setZoom(Math.min(1, (viewRefs.current.get(0)?.clientWidth || 550) / width))}>適合視窗</Button>
-      {mode === 'edit' ? <Checkbox checked={showMask} onChange={e => setShowMask(e.target.checked)}>顯示待修補 Mask</Checkbox>
-        : <Checkbox checked={showSources} onChange={e => setShowSources(e.target.checked)}>顯示來源顏色</Checkbox>}
+      {mode === 'compose' && <Checkbox checked={showSources} onChange={e => setShowSources(e.target.checked)}>顯示來源顏色</Checkbox>}
       {mode === 'compose' && <label className="compare-slider">候選顯示比例 <Slider value={compare} onChange={setCompare} /></label>}
     </Space>
     {loading ? <Spin tip="載入原尺寸圖片…"><div style={{ height: 240 }} /></Spin> : <div className={`canvas-panels ${mode}`}>
       {panels.map(panel => <section key={panel.code}>
-        <strong>{panel.label}</strong>
+        <strong>{panel.label}{mode === 'edit' && <span className="panel-note">{panel.code === 0 ? '在此編輯' : '即時更新'}</span>}</strong>
+        {mode === 'edit' && <div className="panel-controls">{panel.code === 0 ? <>
+          <div className="mask-mix"><Button size="small" onClick={() => setMaskPercent(0)}>原圖</Button><Slider aria-label="Mask / 原圖混合比例" min={0} max={100} value={maskPercent} onChange={setMaskPercent} /><Button size="small" onClick={() => setMaskPercent(100)}>Mask</Button><span>{maskPercent}%</span></div>
+          <label>Mask 顯示顏色 <input type="color" aria-label="Mask 顯示顏色" value={maskColor} onChange={e => setMaskColor(e.target.value)} /></label>
+        </> : <>
+          <Checkbox checked={showMask} onChange={e => setShowMask(e.target.checked)}>顯示圖像修補</Checkbox>
+          <label>標記顏色 <input type="color" aria-label="圖像修補標記顏色" value={otherColor} onChange={e => setOtherColor(e.target.value)} /></label>
+          <label>透明度 <InputNumber aria-label="图像修補標記透明度" min={0} max={100} value={otherPercent} onChange={v => setOtherPercent(v ?? 38)} /> %</label>
+        </>}</div>}
         <div className="canvas-scroll" ref={node => { if (node) viewRefs.current.set(panel.code, node) }}
           onScroll={event => { const el = event.currentTarget; for (const view of viewRefs.current.values()) if (view !== el && (view.scrollLeft !== el.scrollLeft || view.scrollTop !== el.scrollTop)) { view.scrollLeft = el.scrollLeft; view.scrollTop = el.scrollTop } }}>
           <canvas tabIndex={0} aria-label={panel.label} width={width} height={height} style={{ width: width * zoom, height: height * zoom, cursor: tool === 'pan' ? 'grab' : 'crosshair', touchAction: 'none' }}
-            ref={node => { if (node) { canvasRefs.current.set(panel.code, node); requestAnimationFrame(redraw) } }}
+            ref={node => { if (node) { canvasRefs.current.set(panel.code, node); redraw() } else canvasRefs.current.delete(panel.code) }}
             onContextMenu={e => e.preventDefault()} onPointerDown={e => down(e, panel.code)} onPointerMove={e => move(e, panel.code)}
             onPointerUp={end} onPointerCancel={() => { const g = gesture.current; if (g) { pixels.current = g.before; gesture.current = null; redraw(); if (persisted.current < version.current) timer.current = setTimeout(() => void flush(), 800) } }} />
         </div>

@@ -1,4 +1,4 @@
-"""Lazy CUDA adapters. No auto-download and no CPU fallback."""
+"""Lazy adapters for explicitly selected devices; no automatic device fallback."""
 from __future__ import annotations
 
 import hashlib
@@ -11,12 +11,18 @@ class DetectionUnavailable(RuntimeError):
     pass
 
 
+def configured_device(config):
+    device = config.get('device')
+    if device not in ('cuda:0', 'mps', 'cpu'):
+        raise DetectionUnavailable('偵測必須明確指定 cuda:0、mps 或 cpu')
+    return device
+
+
 def load_config(path):
     config = json.loads(Path(path).read_text(encoding='utf-8'))
     if config.get('version') != 1:
         raise DetectionUnavailable('不支援的偵測模型配置版本')
-    if config.get('device') != 'cuda:0':
-        raise DetectionUnavailable('偵測目前要求明確指定 cuda:0')
+    configured_device(config)
     for name in ('rf', 'mangalens'):
         item = config[name]
         item['path'] = os.environ.get(item.get('path_env', ''), item['path'])
@@ -38,11 +44,19 @@ def validate_weights(config, verify_hash=True):
                 raise DetectionUnavailable(f'{name} 模型 SHA-256 不符')
 
 
-def require_cuda(config):
+def require_device(config):
+    device = configured_device(config)
     try:
         import torch
     except ImportError as exc:
         raise DetectionUnavailable('偵測環境缺少 PyTorch；請設定 COMIC_DETECTION_PYTHON') from exc
+    if device == 'cpu':
+        return torch
+    if device == 'mps':
+        backend = getattr(torch.backends, 'mps', None)
+        if backend is None or not backend.is_built() or not backend.is_available():
+            raise DetectionUnavailable('已選擇 MPS，但目前執行環境不可用；不會退回 CPU 或 CUDA')
+        return torch
     if not torch.cuda.is_available():
         raise DetectionUnavailable('偵測需要 CUDA GPU，目前不可用；不會退回 CPU')
     free, _ = torch.cuda.mem_get_info(0)
@@ -50,6 +64,30 @@ def require_cuda(config):
     if free < minimum:
         raise DetectionUnavailable('GPU 可用顯存不足，請確認其他工作已結束且閒置模型已卸載')
     return torch
+
+
+def device_metrics(config, torch, *, inference=False):
+    """Keep CUDA VRAM and Apple shared-memory measurements distinct."""
+    device = configured_device(config)
+    result = {'device': device}
+    if device == 'cuda:0':
+        if inference:
+            result['peak_allocated_mb'] = torch.cuda.max_memory_allocated(0) // (1024 * 1024)
+            result['peak_reserved_mb'] = torch.cuda.max_memory_reserved(0) // (1024 * 1024)
+        else:
+            free, total = torch.cuda.mem_get_info(0)
+            result.update(gpu=torch.cuda.get_device_name(0),
+                free_vram_mb=free // (1024 * 1024), total_vram_mb=total // (1024 * 1024))
+    elif device == 'mps':
+        result['gpu'] = 'Apple MPS'
+        # These are current allocations, not CUDA-style peak VRAM counters.
+        for method, key in (('current_allocated_memory', 'mps_allocated_mb'),
+                            ('driver_allocated_memory', 'mps_driver_allocated_mb'),
+                            ('recommended_max_memory', 'mps_recommended_max_mb')):
+            measure = getattr(torch.mps, method, None)
+            if measure is not None:
+                result[key] = measure() // (1024 * 1024)
+    return result
 
 
 class RFDetector:
@@ -60,7 +98,7 @@ class RFDetector:
         from safetensors.torch import load_file
         self.cv2, self.np = cv2, np
         self.config = config['rf']
-        torch = require_cuda(config)
+        torch = require_device(config)
         self.model = RFDETRSeg2XLarge(pretrain_weights=None, device=config['device'],
             resolution=self.config['resolution'], num_select=self.config['num_select'], num_classes=4)
         self.model.model.model.load_state_dict(load_file(self.config['path'], device='cpu'), strict=True)
@@ -93,7 +131,7 @@ class RFDetector:
 class MangaLensDetector:
     def __init__(self, config):
         from ultralytics import YOLO
-        require_cuda(config)
+        require_device(config)
         self.config = config['mangalens']
         self.device = config['device']
         self.model = YOLO(self.config['path'], task='segment')

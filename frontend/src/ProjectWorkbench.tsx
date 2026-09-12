@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Alert, Button, Card, Checkbox, Empty, Input, InputNumber, List, Modal, Progress, Select, Space, Spin, Steps, Tag, Typography, message } from 'antd'
 import LegacyBatch from './App'
+import { DirectoryPicker } from './DirectoryPicker'
 import { RasterEditor, type RasterHandle, type RasterSave } from './RasterEditor'
 import { active, api, assetUrl, json, projectUrl, selectedFiles, workflowOptions, type Composition, type Project, type Run, type Workflow } from './workbench-api'
 
@@ -9,9 +10,9 @@ const remember = 'comic-workbench-project'
 type Detection = { state: string; message?: string; error?: string; progress?: { stage: string; completed: number; total: number } }
 const detectionActive = (state: string) => ['queued', 'checking', 'rf', 'mangalens', 'classify', 'saving', 'cancelling', 'recovery_required'].includes(state)
 function bytes(value = 0) { return value > 1024 ** 3 ? `${(value / 1024 ** 3).toFixed(1)} GB` : `${(value / 1024 ** 2).toFixed(1)} MB` }
-function Picker({ label, mask, onSelect, disabled }: { label: string; mask?: boolean; onSelect: (files: File[]) => void; disabled?: boolean }) {
+function Picker({ label, mask, onSelect, disabled }: { label: string; mask?: boolean; onSelect: (files: File[], folderName?: string) => void; disabled?: boolean }) {
   return <Space wrap>
-    <label className="file-picker">{label}文件夾<input disabled={disabled} type="file" multiple {...{ webkitdirectory: '' }} onChange={e => { onSelect(selectedFiles(e.target.files, mask)); e.target.value = '' }} /></label>
+    <DirectoryPicker disabled={disabled} mask={mask} onSelect={onSelect}>{label}文件夾</DirectoryPicker>
     <label className="file-picker">多選{label}<input disabled={disabled} type="file" multiple accept={mask ? '.png' : '.png,.jpg,.jpeg'} onChange={e => { onSelect(selectedFiles(e.target.files, mask)); e.target.value = '' }} /></label>
   </Space>
 }
@@ -87,7 +88,7 @@ export default function ProjectWorkbench() {
     <Modal title="新建漫畫項目" open={createOpen} onCancel={() => setCreateOpen(false)} onOk={() => void create()} okText="建立項目" confirmLoading={busy} okButtonProps={{ disabled: !sources.length || !!gpuOwner }}>
       <Space direction="vertical" size="large" style={{ width: '100%' }}>
         <Input aria-label="項目名稱" placeholder="項目名稱" value={name} onChange={e => setName(e.target.value)} maxLength={80} />
-        <div><p>原圖（必須）· 已選 {sources.length} 張</p><Picker label="原圖" onSelect={files => { setSources(files); if (!name && files.length) setName(files[0].webkitRelativePath.split('/')[0] || files[0].name.replace(/\.[^.]+$/, '')) }} /></div>
+        <div><p>原圖（必須）· 已選 {sources.length} 張</p><Picker label="原圖" onSelect={(files, folderName) => { setSources(files); if (!name) setName(folderName || files[0]?.name.replace(/\.[^.]+$/, '') || '') }} /></div>
         <div><p>Mask（可選）· 已選 {masks.length} 張</p><Picker label="Mask" mask onSelect={setMasks} /></div>
         <Text type="secondary">已有 Mask 可直接進入批量修復；只上傳原圖則先偵測或人工編輯。文件夾只讀第一層，每次選擇整批取代。</Text>
       </Space>
@@ -104,7 +105,7 @@ function ProjectWorkspace({ initial, gpuOwner, onExit }: { initial: Project; gpu
   const [assignment, setAssignment] = useState<number[][] | null>(null)
   const [busy, setBusy] = useState(false); const [error, setError] = useState(''); const [dirty, setDirty] = useState(false)
   const [editorKey, setEditorKey] = useState(0)
-  const [availability, setAvailability] = useState<{ available?: boolean; ready?: boolean; errors?: string[]; message?: string } | null>(null)
+  const [availability, setAvailability] = useState<{ available?: boolean; ready?: boolean; errors?: string[]; message?: string; device?: string } | null>(null)
   const [detection, setDetection] = useState<Detection | null>(null)
   const [feather, setFeather] = useState(1)
   const editor = useRef<RasterHandle>(null)
@@ -264,7 +265,7 @@ function ProjectWorkspace({ initial, gpuOwner, onExit }: { initial: Project; gpu
       </List.Item>} />
     </aside><section className="project-content">
       {step === 0 && <>
-        <Space wrap className="editor-toolbar"><Button type="primary" loading={detecting} disabled={!!gpuOwner || busy || detecting || !(availability?.available ?? availability?.ready)} onClick={() => void detect()}>RF＋MangaLens 偵測</Button>
+        <Space wrap className="editor-toolbar"><Button type="primary" loading={detecting} disabled={!!gpuOwner || busy || detecting || !(availability?.available ?? availability?.ready)} onClick={() => void detect()}>RF＋MangaLens 偵測{availability?.available && availability.device ? `（${availability.device.toUpperCase()}）` : ''}</Button>
           <Picker label="Mask" mask disabled={!!gpuOwner || busy || detecting} onSelect={files => void importMasks(files)} />
           <Button disabled={detecting || !!gpuOwner} onClick={() => void download(`${url}/export-pair`)}>導出底圖＋Mask</Button>
           <Button onClick={() => void execute(() => navigate(1))}>前往批量修復 →</Button>
@@ -272,6 +273,7 @@ function ProjectWorkspace({ initial, gpuOwner, onExit }: { initial: Project; gpu
         {!(availability?.available ?? availability?.ready) && <Alert type="info" message="偵測模型尚未就緒；可先匯入 Mask 或人工編輯" description={<details><summary>查看模型配置狀態</summary>{availability?.message || availability?.errors?.join('、')}</details>} />}
         {detecting ? <Alert type="info" showIcon message={detection?.progress ? `${detection.progress.stage} · ${detection.progress.completed} / ${detection.progress.total} 頁` : detection?.message || 'GPU 偵測中，完成後即可編輯'} action={<Button danger onClick={() => void execute(async () => { await api(`${url}/detection/${detection?.state === 'recovery_required' ? 'recover' : 'cancel'}`, { method: 'POST' }); await reloadProject(); setEditorKey(k => k + 1) })}>{detection?.state === 'recovery_required' ? '檢查恢復' : '停止偵測'}</Button>} /> : <RasterEditor key={`${page.id}-${editorKey}`} ref={editor} width={page.width} height={page.height} mode="edit"
           baseUrl={assetUrl(project.id, page.source)} overlayUrl={`${assetUrl(project.id, page.overlay)}?v=${page.edit_revision}`} otherUrl={`${assetUrl(project.id, page.other)}?v=${page.edit_revision}`} editedUrl={`${assetUrl(project.id, page.edited)}?v=${page.edit_revision}`}
+          detectedTextUrl={page.detected_text ? assetUrl(project.id, page.detected_text) : undefined}
           onSave={saveEdit} onDirty={setDirty} disabled={busy} />}
         {detection?.error && <Alert type="error" message={detection.error} />}
       </>}

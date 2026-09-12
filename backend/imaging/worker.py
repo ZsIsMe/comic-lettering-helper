@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from pathlib import Path
 import time
 
@@ -53,7 +54,7 @@ def validate_manifest(manifest):
 
 def run_stage(stage, manifest, config, progress):
     import numpy as np
-    from .models import validate_weights, require_cuda, RFDetector, MangaLensDetector
+    from .models import validate_weights, require_device, device_metrics, RFDetector, MangaLensDetector
     validate_manifest(manifest)
     if stage == 'check':
         validate_weights(config)
@@ -62,10 +63,8 @@ def run_stage(stage, manifest, config, progress):
         import rfdetr  # noqa: F401
         import safetensors  # noqa: F401
         import ultralytics  # noqa: F401
-        torch = require_cuda(config)
-        free, total = torch.cuda.mem_get_info(0)
-        value = {'stage': stage, 'gpu': torch.cuda.get_device_name(0),
-                 'free_vram_mb': free // (1024 * 1024), 'total_vram_mb': total // (1024 * 1024)}
+        torch = require_device(config)
+        value = {'stage': stage, **device_metrics(config, torch)}
         atomic_json(progress, value)
         print(json.dumps(value), flush=True)
         return
@@ -100,8 +99,7 @@ def run_stage(stage, manifest, config, progress):
                  'model_load_seconds': round(load_seconds, 3)}
         if detector is not None:
             import torch
-            value['peak_allocated_mb'] = torch.cuda.max_memory_allocated(0) // (1024 * 1024)
-            value['peak_reserved_mb'] = torch.cuda.max_memory_reserved(0) // (1024 * 1024)
+            value.update(device_metrics(config, torch, inference=True))
         atomic_json(progress, value)
         print(json.dumps(value), flush=True)
 
@@ -116,6 +114,9 @@ def main():
     from .models import load_config
     manifest = json.loads(args.manifest.read_text(encoding='utf-8'))
     config = load_config(args.config)
+    if config['device'] == 'mps':
+        # Set before importing torch; unsupported MPS operators must fail visibly.
+        os.environ['PYTORCH_ENABLE_MPS_FALLBACK'] = '0'
     try:
         run_stage(args.stage, manifest, config, args.progress)
     except Exception as exc:

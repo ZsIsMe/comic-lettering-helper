@@ -51,15 +51,17 @@ class DetectionManager:
         # This imports only the stdlib adapter configuration, not torch/cv2.
         from imaging.models import load_config, validate_weights
         errors = []
+        device = None
         try:
             config = load_config(self.config_path)
+            device = config['device']
             validate_weights(config, verify_hash=False)
         except (OSError, KeyError, ValueError, RuntimeError) as exc:
             errors.append(str(exc))
         if not self.python or not Path(self.python).is_file() or not os.access(self.python, os.X_OK):
             errors.append('請設定 COMIC_DETECTION_PYTHON 為獨立偵測環境的 Python 執行檔')
         return {'available': not errors, 'errors': errors, 'gpu_verified': False,
-                'active_id': self.active_id, 'device': 'cuda:0'}
+                'active_id': self.active_id, 'device': device}
 
     def _task_dir(self, project_id, detection_id):
         if not isinstance(detection_id, str) or len(detection_id) != 32 or any(c not in '0123456789abcdef' for c in detection_id):
@@ -157,6 +159,7 @@ class DetectionManager:
                     frozen_config[name].pop('path_env', None)
                 atomic_json(root / 'config.json', frozen_config)
                 record = {'id': detection_id, 'project_id': project_id, 'state': 'queued', 'pid': None,
+                          'device': frozen_config['device'],
                           'created_at': now_iso(), 'total': len(pages), 'error': None, 'applied': []}
                 self._write(record)
                 project.update(state='detecting', detection_id=detection_id)
@@ -201,6 +204,11 @@ class DetectionManager:
         env['TRANSFORMERS_OFFLINE'] = '1'
         env['YOLO_OFFLINE'] = 'true'
         env['YOLO_AUTOINSTALL'] = 'false'
+        runtime_cache = self.settings.data_root / 'runtime-cache'
+        for directory in ('ultralytics', 'matplotlib'):
+            (runtime_cache / directory).mkdir(parents=True, exist_ok=True)
+        env['YOLO_CONFIG_DIR'] = str(runtime_cache / 'ultralytics')
+        env['MPLCONFIGDIR'] = str(runtime_cache / 'matplotlib')
         with (root / 'worker.log').open('ab') as log:
             self.process = await asyncio.create_subprocess_exec(self.python, '-m', 'imaging.worker',
                 '--stage', stage, '--manifest', str(root / 'manifest.json'), '--config', str(root / 'config.json'),
@@ -222,6 +230,7 @@ class DetectionManager:
 
     def _apply(self, record):
         root = self._task_dir(record['project_id'], record['id'])
+        device = record.get('device', 'cuda:0')
         manifest = json.loads((root / 'manifest.json').read_text())
         with self.store.lock(record['project_id']):
             project = self.store.read(record['project_id'])
@@ -231,25 +240,29 @@ class DetectionManager:
                 if page['edit_revision'] != entry['expected_revision']:
                     raise ProjectConflict('偵測期間頁面已更新，結果保留在快取，未覆蓋編輯')
                 output = Path(entry['output'])
-                with Image.open(output / 'overlay.png') as overlay, Image.open(output / 'other.png') as other, Image.open(output / 'edited.png') as edited:
-                    if overlay.mode != 'RGBA' or other.mode != 'L' or edited.mode != 'L':
+                with Image.open(output / 'overlay.png') as overlay, Image.open(output / 'other.png') as other, Image.open(output / 'edited.png') as edited, Image.open(output / 'text_mask.png') as detected_text:
+                    if overlay.mode != 'RGBA' or other.mode != 'L' or edited.mode != 'L' or detected_text.mode != 'L':
                         raise ValueError('偵測輸出圖層格式不正確')
-                    if any(image.size != (page['width'], page['height']) for image in (overlay, other, edited)):
+                    if any(image.size != (page['width'], page['height']) for image in (overlay, other, edited, detected_text)):
                         raise ValueError('偵測輸出圖層尺寸不一致')
+                    for image in (overlay, other, edited, detected_text):
+                        image.load()
                     if ImageChops.multiply(overlay.getchannel('A'), other).getbbox():
                         raise ValueError('偵測輸出兩類選區重疊')
             for entry in manifest['pages']:
                 output = Path(entry['output'])
-                with Image.open(output / 'overlay.png') as overlay, Image.open(output / 'other.png') as other, Image.open(output / 'edited.png') as edited:
+                with Image.open(output / 'overlay.png') as overlay, Image.open(output / 'other.png') as other, Image.open(output / 'edited.png') as edited, Image.open(output / 'text_mask.png') as detected_text:
                     self.store.save_edit(record['project_id'], entry['id'], entry['expected_revision'], overlay, other, edited,
-                        detection_metadata={'id': record['id'], 'models': ['rf', 'mangalens'], 'device': 'cuda:0',
-                            'cache': str(output.relative_to(self.store.project_dir(record['project_id'])))})
+                        detection_metadata={'id': record['id'], 'models': ['rf', 'mangalens'], 'device': device,
+                            'cache': str(output.relative_to(self.store.project_dir(record['project_id'])))},
+                        detected_text=detected_text)
                 record['applied'].append(entry['id'])
                 self._write(record)
 
     async def _run(self, record):
         try:
-            await asyncio.to_thread(self._comfy_release)
+            if record.get('device', 'cuda:0') == 'cuda:0':
+                await asyncio.to_thread(self._comfy_release)
             for stage in ('check', 'rf', 'mangalens', 'classify'):
                 if self.cancel_requested:
                     raise asyncio.CancelledError()

@@ -170,7 +170,7 @@ class ProjectStore:
     def clean_name(name: str) -> str:
         return re.sub(r'[\\/\x00-\x1f\x7f]+', '_', str(name)).strip(' ._')[:80] or '未命名項目'
 
-    def save_edit(self, project_id: str, page_id: str, expected_revision: int, overlay: Image.Image, other: Image.Image, edited: Image.Image, detection_metadata: dict | None = None, *, preserve_overlay: bool = False) -> dict:
+    def save_edit(self, project_id: str, page_id: str, expected_revision: int, overlay: Image.Image, other: Image.Image, edited: Image.Image, detection_metadata: dict | None = None, *, preserve_overlay: bool = False, detected_text: Image.Image | None = None) -> dict:
         with self.lock(project_id):
             project = self.read(project_id)
             if project.get('state') == 'deleting':
@@ -183,6 +183,8 @@ class ProjectStore:
                 raise ValueError('編輯圖層必須保持原圖尺寸')
             if overlay.mode != 'RGBA':
                 raise ValueError('填色 overlay 必須為 RGBA PNG')
+            if detected_text is not None and (detected_text.mode != 'L' or detected_text.size != size):
+                raise ValueError('偵測文字 Mask 必須為原尺寸灰階圖')
             # Normal edits prefer repair pixels; external Mask replacement preserves fills.
             other = other.convert('L').point(lambda v: 255 if v >= 128 else 0)
             edited = edited.convert('L').point(lambda v: 255 if v >= 128 else 0)
@@ -203,6 +205,11 @@ class ProjectStore:
             for key, value in [('overlay', overlay), ('other', other), ('edited', edited)]:
                 value.save(target / f'{key}.png')
                 page[key] = str((target / f'{key}.png').relative_to(self.project_dir(project_id)))
+            if detected_text is not None:
+                text_path = self.project_dir(project_id) / 'assets' / page_id / f'detected-text-{revision}.png'
+                text_path.parent.mkdir(parents=True, exist_ok=True)
+                detected_text.save(text_path)
+                page['detected_text'] = str(text_path.relative_to(self.project_dir(project_id)))
             page['edit_revision'] += 1
             page['mask_ready'] = True
             if detection_metadata is not None:

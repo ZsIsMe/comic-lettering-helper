@@ -9,6 +9,7 @@ export interface Page {
   original: string; source: string; overlay: string | null; other: string | null; edited: string | null
   edit_revision: number; mask_ready?: boolean
   thumbnail?: string
+  detected_text?: string
 }
 export interface Project {
   id: string; name: string; revision: number; state: string; pages: Page[]
