@@ -1,5 +1,7 @@
 # RF-DETR + MangaLens detection
 
+中文用途、下載連結與完整資產校驗值見 [獨立模型說明](MODEL_GUIDE.md)。
+
 The optional first stage uses two sequential model processes on an explicitly configured device: all RF pages, then all MangaLens pages. Production defaults to `cuda:0`; local runs may explicitly select `mps` or `cpu`. A third CPU process classifies the detected text and bubbles into RGBA solid overlay and remaining repair mask. Original RGB coordinates and protected manual edits are retained. Ordinary edits do not run these models. Missing models disable detection only; direct image/Mask repair remains available.
 
 `config/detection-models.json` records the upstream URLs and SHA-256 copied from the reference project, not a new remote verification. Upload weights manually to the configured paths, or set `COMIC_RF_MODEL` and `COMIC_MANGALENS_MODEL`. No weights are included or downloaded. The worker verifies both weight hashes before inference. RF classes used for text removal are text and onomatopoeia; MangaLens balloon instance polygons guide conservative whole-bubble filling.
