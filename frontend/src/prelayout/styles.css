@@ -5,3 +5,4 @@
 .pl-detail-tile{position:absolute;pointer-events:none;user-select:none}.pl-image-error button{cursor:pointer}.pl-file input:disabled{cursor:wait}
 .pl-shortcut-help{font-size:13px;line-height:1.7}.pl-shortcut-help dl{margin-bottom:0}.pl-shortcut-help dl>div{padding:9px 0;border-top:1px solid #eee}.pl-shortcut-help dt{font-weight:600;color:#6d3f27}.pl-shortcut-help dd{margin:3px 0 0}
 .pl-rotate-step{position:absolute;display:flex;align-items:center;justify-content:center;padding:0;border:solid #bd714b;border-radius:50%;background:#fffaf3;color:#873f1d;cursor:pointer;line-height:1;font-family:Arial,sans-serif;font-weight:600;writing-mode:horizontal-tb;-webkit-text-stroke:0;z-index:2}.pl-rotate-step:hover{background:#f5dbc5}.pl-rotate-step:focus-visible{outline:2px solid #a34e28;outline-offset:2px}
+.pl-character-layer{position:absolute;inset:0;pointer-events:none;overflow:hidden;z-index:8}

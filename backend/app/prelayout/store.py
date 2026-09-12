@@ -17,6 +17,7 @@ from pathlib import Path
 from PIL import Image
 
 from prelayout_core.data import identifier, read_json, validate_items, validate_measure, parse_translation, export_item, match_translation
+from prelayout_core.characters import character_pages
 
 
 class Conflict(ValueError):
@@ -169,7 +170,7 @@ class PrelayoutStore:
         if page is None:
             raise KeyError('頁面不存在')
         state = read_json((self.directory(pid) / page['state']).read_bytes())
-        measure = []
+        measure, characters = [], []
         did = project.get('detection_id')
         if did:
             path = self.directory(pid) / 'detections' / did / 'output' / 'measure.json'
@@ -179,7 +180,16 @@ class PrelayoutStore:
             elif path.exists():
                 data = read_json(path.read_bytes())
                 measure = data.get('pages', {}).get(page['name'], [])
-        return {**page, **state, 'measure': measure}
+            character_path = path.parent / 'page-characters' / f'{page_id}.json'
+            if not character_path.exists():
+                # Older tasks already have the OCR/debug output. Derive all compact
+                # pages once, so subsequent page reads never parse a whole chapter.
+                with self.lock(pid):
+                    if not character_path.exists():
+                        for cid, values in character_pages(path.parent, project['pages']).items():
+                            atomic_json(path.parent / 'page-characters' / f'{cid}.json', values)
+            characters = read_json(character_path.read_bytes())
+        return {**page, **state, 'measure': measure, 'character_boxes': characters}
 
     def save_page(self, pid, page_id, revision, items, operation_id):
         with self.lock(pid):
@@ -477,6 +487,9 @@ class PrelayoutStore:
                 # Derived caches in an archive must never override the validated source.
                 for page in project['pages']:
                     atomic_json(content / f'detections/{did}/output/page-measures/{page["id"]}.json', measure['pages'][page['name']])
+                output = content / f'detections/{did}/output'
+                for cid, values in character_pages(output, project['pages'], measure.get('font_size_calculation_method')).items():
+                    atomic_json(output / 'page-characters' / f'{cid}.json', values)
             project['id'] = identifier('pl')
             project['created_at'] = project['updated_at'] = now()
             project['name'] = str(project['name'])[:80]

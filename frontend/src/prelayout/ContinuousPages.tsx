@@ -138,10 +138,10 @@ export function ContinuousPages({ project, controller, selection, onSelect, zoom
         }
         const common = { project: project.id, page: row.page, scale: row.scale, edge, controller, selection, onSelect, onInteracting: interactionChanged, onMeasure, onPointer, detailed: settled, interacting: !!interacting }
         return <section className="pl-page-row" key={row.page.id} style={{ top: row.top, height: row.height, width: wide }}>
-          <div className="pl-page-caption">{row.page.name}{compare ? ' · 左：原圖與偵測框　右：預排版' : clean && !row.page.clean ? ' · 原圖（尚無去字預覽）' : clean && row.page.clean_kind === 'inpainted' ? ' · inpainted 預覽' : clean ? ' · 去字圖' : ' · 原圖'}</div>
+          <div className="pl-page-caption">{row.page.name}{compare ? ' · 左：預排版　右：原圖與偵測框' : clean && !row.page.clean ? ' · 原圖（尚無去字預覽）' : clean && row.page.clean_kind === 'inpainted' ? ' · inpainted 預覽' : clean ? ' · 去字圖' : ' · 原圖'}</div>
           <div className="pl-page-pair">
-            {compare && <TextPage {...common} clean={false} readonly showMeasure={showMeasure} region={region(0)} />}
-            <TextPage {...common} clean={clean} showMeasure={!compare && showMeasure} region={region(compare ? 1 : 0)} />
+            <TextPage key="editor" {...common} clean={clean} showMeasure={!compare && showMeasure} region={region(0)} />
+            {compare && <TextPage key="source" {...common} clean={false} readonly showMeasure={showMeasure} region={region(1)} />}
           </div>
         </section>
       })}

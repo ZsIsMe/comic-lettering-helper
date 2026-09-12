@@ -47,13 +47,21 @@
 
 本輪重新通過 lint、build、8 組快捷鍵測試及 79 項後端回歸。以唯讀 HTTP 檢查確認本機 6018 健康回應 200、GPU gate 空閒，所提供的 HTML、預排版 JS 與 CSS 雜湊和本次構建一致；使用者刷新可載入更新。未重啟服務、執行模型、提交或部署遠端。
 
+## 追加左右對調與單字框驗證
+
+對照改為左編輯、右原圖；「偵測框」同時顯示區塊與單字框，hover 顯示 W／H／FS（例如 `W25H24FS26.8`）。新增測試覆蓋 OCR 與字級接受條件、legacy 排序、無效框排除、計算方法選擇、派生快取重建、原始資料不變、標籤格式與最小重疊框命中。
+
+本輪 lint、正式 build、10 組前端邏輯測試及 83 項後端測試通過。權限範圍變更後，Vite 共用依賴暫存及既有程序管理測試先受沙箱限制；以核准的必要權限重新執行後通過，未修改測試以跳過驗證。
+
+本機服務恢復於 127.0.0.1:6018，既有 17 頁項目讀出 990 個可靠單字框；整批 API 讀取與靜態版本核對約 0.106 秒。原始 measure／debug／OCR 與各頁排版檔案雜湊不變，未重新執行模型；生成的只有逐頁快取。報告位於 Git 忽略的 `var-test/prelayout-local-models/character-overlay-report.json`。應用已接收開啟頁面的排程；本輪未透過瀏覽器工具重測畫面與實際 hover，因此 API 耗時不能當作互動效能。
+
 ## 自動檢查
 
 | 檢查 | 本機結果與限制 |
 | --- | --- |
 | `npm --prefix frontend run lint` | 通過 |
 | `npm --prefix frontend run test:prelayout-shortcuts` | 8 passed；離線邏輯與撤銷測試，未啟動瀏覽器或使用本地模型 |
-| `npm --prefix frontend run build` | 通過；預排版為約 45 kB 的按需載入分塊，既有主 bundle 仍有大於 500 kB 的 Vite 提示 |
+| `npm --prefix frontend run build` | 通過；預排版為約 47 kB 的按需載入分塊，既有主 bundle 仍有大於 500 kB 的 Vite 提示 |
 | `.venv/bin/python -m pytest -q backend/tests` | 79 passed；包含 inpainted 合成與完整發布、CUDA 預設、MPS 外部程序、設備不可由請求覆寫、CPU 拒絕及缺資產失敗；一項既有 Starlette／AnyIO 棄用提示 |
 | `make verify-local` | 已執行，19 項外部環境缺失：本機沒有 `/root/ComfyUI`、六個 custom nodes、三個已安裝工作流及九個正式修復模型；倉庫工作流雜湊和前端构建通過 |
 | `prelayout_core.check`（未加 `--require-cuda`） | 五項 SHA-256、核心依賴及字型指標通過；`cuda_available=false`、`inference_verified=false` |

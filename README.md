@@ -27,6 +27,10 @@ CTD 流程同時生成來源核心的 `inpainted` 去字預覽：沿用 OpenCV T
 
 **部署狀態：程式記錄於 `codex/prelayout-web` 本地分支，尚未推送、合併回原分支或部署，未建立 Tag 或鏡像；CTD／OCR 真實 CUDA 推理與共享顯存切換仍待目標 GPU 驗收。** 詳見 [實作計劃與範圍](docs/PRELAYOUT_IMPLEMENTATION_PLAN.md)、[本地驗證](docs/PRELAYOUT_LOCAL_VALIDATION.md)及 [部署準備](docs/DEPLOYMENT.md#預排版部署準備)。
 
+勾選「原圖對照」後，左側為預排版編輯圖，右側為原圖。勾選「偵測框」同時顯示文字區塊與單字框；滑鼠停在單字框上會顯示如 `W12H12FS22.0` 的提示，W／H 為原圖像素寬高，FS 優先使用估算字級。沿用原程式的 OCR／字級篩選結果；既有偵測資料可直接顯示，無須重新推理。
+
+「上傳去字圖」入口目前隱藏，介面使用生成的 `inpainted` 預覽；底層去字圖匯入功能與既有資產保留。
+
 ### 預排版快捷鍵
 
 先點選文字；Shift 點選可多選。Mac 使用 ⌘／Option，Windows 使用 Ctrl／Alt。

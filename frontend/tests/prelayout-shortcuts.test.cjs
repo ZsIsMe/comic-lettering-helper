@@ -38,6 +38,27 @@ const fixture = () => [
   { _id: 'c', text: '未選', x: .5, y: .75, 'font-size': 50, rotation: 0, orientation: 'vertical', color: '#000000', 'stroke-color': '#ffffff', 'stroke-weight': 0, match_status: 'auto' },
 ]
 const { textShortcut, adjustedItems } = sources().load('shortcuts')
+const { characterLabel, characterAt, characterPath } = sources().load('character-overlay')
+
+test('character hover labels use original width/height and the estimated font size', () => {
+  const box = { bbox: [10, 20, 22, 32], width: 12, height: 12, estimated_font_size: 22, calculated_font_size: 24 }
+  assert.equal(characterLabel(box), 'W12H12FS22.0')
+  assert.equal(characterLabel({ ...box, estimated_font_size: 21.83 }), 'W12H12FS21.8')
+  assert.equal(characterLabel({ ...box, estimated_font_size: undefined }), 'W12H12FS24.0')
+  assert.equal(characterLabel({ ...box, estimated_font_size: undefined, calculated_font_size: undefined }), 'W12H12')
+})
+
+test('overlapping character hit tests choose the smallest original-coordinate box', () => {
+  const boxes = [{ bbox: [0, 0, 100, 100] }, { bbox: [10, 20, 22, 32] }, { bbox: [0, 0, 0, 0] }]
+  for (const scale of [.5, 1, 2]) {
+    assert.equal(characterAt(boxes, 15 * scale / scale, 25 * scale / scale), 1)
+  }
+  assert.equal(characterAt(boxes, 22, 32), 1)
+  assert.equal(characterAt(boxes, 23, 32), 0)
+  assert.equal(characterAt(boxes, 101, 50), null)
+  assert.equal(characterAt([], 0, 0), null)
+  assert.equal(characterPath([boxes[1]]), 'M10,20h12v12h-12Z')
+})
 
 test('arrow modifiers move selected centers and boxes by original pixels', () => {
   for (const [direction, dx, dy] of [['ArrowLeft', -1, 0], ['ArrowRight', 1, 0], ['ArrowUp', 0, -1], ['ArrowDown', 0, 1]]) {

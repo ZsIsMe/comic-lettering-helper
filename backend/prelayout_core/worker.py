@@ -13,6 +13,7 @@ from PIL import Image
 
 from app.prelayout.store import atomic_json
 from .data import read_json, validate_measure
+from .characters import character_pages
 
 
 def load(path):
@@ -144,6 +145,8 @@ def main():
     validate_measure(measure, record['pages'])
     for page in record['pages']:
         atomic_json(images / 'ctd' / 'page-measures' / f'{page["id"]}.json', measure['pages'][page['name']])
+    for cid, values in character_pages(images / 'ctd', record['pages'], record['options']['method']).items():
+        atomic_json(images / 'ctd' / 'page-characters' / f'{cid}.json', values)
     (images / 'ctd').rename(folder / 'output')
     atomic_json(folder / 'output' / 'complete.json', {'pages': [page['name'] for page in record['pages']], 'inpainted': True})
 

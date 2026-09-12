@@ -6,6 +6,8 @@
 
 ## 獨立資料的網頁預排版
 
+預排版工具列目前隱藏「上傳去字圖」，保留 BT／LabelPlus 入口。既有 `clean` 匯入處理及 API 保留；底圖仍直接使用已生成的 inpainted 預覽。
+
 `WorkspaceEntry.tsx` 在原工作台旁加入預排版入口，前端按需載入；切換前保存目前操作，修圖工作台保留自己的編輯狀態。預排版離開時卸載自身鍵盤事件，CSS 使用 `pl-` 範圍。預排版沒有獨立 Git 倉庫或桌面殼。
 
 ```text
@@ -22,6 +24,8 @@ ComfyUI 修復 ──┘
 資料根預設 `<COMIC_DATA_ROOT>/prelayout`，禁止與修圖 projects／jobs 目錄重疊。圖片獨立上傳，沒有跨功能的引用、去重、硬連結或輸入交接。`need_inpaint` 只保存為排版欄位。BT 頂層、分組、未知欄位保留；内部穩定 ID 不寫入 BT 匯出。
 
 CTD 階段沿用來源核心的 OpenCV Telea 生成 `output/inpainted/<stem>.png`（RGBA 透明覆蓋層），再與該項目原圖合成至 `output/backgrounds/`。`complete.json` 的 `inpainted: true` 表示需要完整底圖驗證；發布時核對全批 RGB PNG 尺寸，將底圖複製到新的 `clean/` 資產，再一次更新 detection ID 與頁面引用（`clean_kind: inpainted`）。半成品不替換舊底圖，既有 reader 可繼續讀舊資產；文字修訂與原圖不變。底圖版本改變會更新既有預覽快取鍵，沿用分級與圖塊預覽。此 CPU 影像預處理不涉及神經網路推理後備或 ComfyUI。
+
+對照模式順序為左側編輯圖、右側原圖與偵測框，兩側沿用各自的可見區座標與同一捲動／縮放。`characters.py` 從唯讀 `measure.debug.json`／`measure_ocr.json` 提取單字框；OCR 模式沿用來源的 accepted 字元及 accepted font-fit 條件，FS 優先估算值。worker 生成逐頁 `page-characters/`；舊任務首次讀取時一次建立全批精簡快取，後續僅讀本頁，封存匯入重建派生快取。原始 measure、偵測輸出、文字修訂不改寫。前端以一條 SVG path 畫每頁的單字框；rAF 合併 hover 命中測試，重疊時取最小框，只顯示一份 W／H／FS 提示。該層不接收指標事件，拖曳期間暫停 hover，保持文字編輯與區塊套用可用。
 
 頁面採不可變 JSON 修訂與原子 manifest 發布；文字保存带 `expected_revision` 和冪等操作 ID。瀏覽器按頁訂閱，700 ms 停頓後串行保存；IndexedDB 保存預排版草稿，多分頁版本衝突由使用者選擇。滑鼠拖曳移動與旋轉只在 rAF 更新選中元素的 transform，結束後記錄一次撤銷；點選本身不修改文字或匹配狀態。
 

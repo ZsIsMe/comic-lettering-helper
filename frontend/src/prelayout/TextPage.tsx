@@ -1,10 +1,13 @@
 import { memo, useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import type { PointerEvent as ReactPointer } from 'react'
-import { type Item, type Page, uid } from './types'
+import { type Item, type Page, type CharacterBox, uid } from './types'
 import { EditorState } from './editor-state'
 import { PreviewLayer } from './PreviewLayer'
 import { color, moved, resized, transform, type Selection, type PagePointer, type VisibleRegion } from './geometry'
 import { adjustedItems } from './shortcuts'
+import { CharacterOverlay, type CharacterOverlayHandle } from './CharacterOverlay'
+
+const noCharacters: CharacterBox[] = []
 
 const rotationCorners = [
   { x: 'left', y: 'top', delta: 1, label: '左上：逆時針旋轉' },
@@ -23,6 +26,7 @@ export const TextPage = memo(function TextPage({ project, page, scale, edge, cle
   const [error, setError] = useState('')
   const state = controller.pages.get(page.id)
   const scene = useRef<HTMLDivElement>(null)
+  const characterOverlay = useRef<CharacterOverlayHandle>(null)
   const dragging = useRef<{ pointer: number; start: number[]; mode: string; items: Item[]; originals: Item[]; center: number[]; selected: string[]; angle: number; scale: number } | null>(null)
   const frame = useRef(0)
   const latest = useRef<number[]>([])
@@ -113,10 +117,13 @@ export const TextPage = memo(function TextPage({ project, page, scale, edge, cle
   }
   const selected = selection.page === page.id ? selection.ids : []
   return <div className="pl-page" data-page={page.id} data-readonly={!!readonly} style={{ width: page.width * scale, height: page.height * scale }} onPointerMove={event => {
-    if (readonly || dragging.current) return
+    if (interacting || dragging.current) return
     const rect = event.currentTarget.getBoundingClientRect()
-    onPointer({ page: page.id, x: (event.clientX - rect.left) / (page.width * scale), y: (event.clientY - rect.top) / (page.height * scale) })
-  }} onPointerLeave={() => { if (!readonly && !dragging.current) onPointer(null) }}>
+    const x = (event.clientX - rect.left) / scale, y = (event.clientY - rect.top) / scale
+    if (event.target instanceof Element && event.target.closest('.pl-text')) characterOverlay.current?.clear()
+    else if (!interacting) characterOverlay.current?.probe(x, y)
+    if (!readonly && !dragging.current) onPointer({ page: page.id, x: x / page.width, y: y / page.height })
+  }} onPointerLeave={() => { characterOverlay.current?.clear(); if (!readonly && !dragging.current) onPointer(null) }}>
     <div className="pl-scene" ref={scene} style={{ width: page.width, height: page.height, transform: `scale(${scale})` }} onDoubleClick={add} onPointerDown={event => {
       if (readonly || event.button !== 0) return
       scene.current?.closest<HTMLElement>('.pl-viewport')?.focus({ preventScroll: true })
@@ -143,8 +150,9 @@ export const TextPage = memo(function TextPage({ project, page, scale, edge, cle
       </div>)}
       {showMeasure && state?.data.measure.map((measure, index) => {
         const box = measure.xyxy_pixel
-        return box && <button key={index} className="pl-measure" aria-label={`套用偵測框 ${index + 1}`} onClick={event => { event.stopPropagation(); onMeasure(index, page.id) }} style={{ left: box[0], top: box[1], width: box[2] - box[0], height: box[3] - box[1], borderWidth: 2 / scale, fontSize: 13 / scale }}>{index + 1}</button>
+        return box && <button key={index} className="pl-measure" aria-label={`套用偵測框 ${index + 1}`} onPointerDown={event => event.stopPropagation()} onDoubleClick={event => event.stopPropagation()} onClick={event => { event.stopPropagation(); onMeasure(index, page.id) }} style={{ left: box[0], top: box[1], width: box[2] - box[0], height: box[3] - box[1], borderWidth: 2 / scale, fontSize: 13 / scale }}>{index + 1}</button>
       })}
+      {showMeasure && <CharacterOverlay ref={characterOverlay} characters={state?.data.character_boxes || noCharacters} width={page.width} height={page.height} scale={scale} region={region} disabled={interacting} />}
     </div>
     {error && <div className="pl-image-error">{error}</div>}
   </div>

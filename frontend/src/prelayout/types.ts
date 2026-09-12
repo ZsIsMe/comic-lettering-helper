@@ -6,7 +6,8 @@ export type Item = {
 }
 export type Page = { id: string; name: string; width: number; height: number; revision: number; sha256: string; clean: string | null; clean_kind?: 'uploaded' | 'inpainted' }
 export type Measure = { xyxy_pixel?: number[]; center_normalized?: number[]; font_size?: number; orientation?: string; text_color?: string; text_has_stroke?: boolean; [key: string]: unknown }
-export type PageData = Page & { items: Item[]; measure: Measure[] }
+export type CharacterBox = { bbox: number[]; width: number; height: number; estimated_font_size?: number; calculated_font_size?: number; source_block_index: number; line_index: number; character_index: number }
+export type PageData = Page & { items: Item[]; measure: Measure[]; character_boxes?: CharacterBox[] }
 export type Project = { id: string; name: string; updated_at: string; revision: number; pages: Page[]; detection_id: string | null }
 export type Availability = { methods: Record<string, boolean>; assets: Record<string, boolean>; font_version?: string; runtime: boolean; device?: string; gpu_owner: string | null }
 export type Detection = { id: string; state: string; device?: string; message?: string; progress?: { completed: number; total: number; stage: string } }

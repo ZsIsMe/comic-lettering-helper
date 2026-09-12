@@ -377,6 +377,65 @@ def test_per_page_measure_is_used_without_loading_whole_chapter(store, project, 
     assert store.page(project['id'], page['id'])['measure'] == measure['pages'][page['name']]
 
 
+def test_character_overlay_uses_accepted_ocr_and_matching_font_fit():
+    from prelayout_core.characters import character_boxes
+    chars = [{'bbox': [10, 20, 22, 32], 'width': 12, 'height': 12, 'line_index': 0,
+              'character_index': i, 'status': 'accepted' if i != 1 else 'rejected', 'ocr_text': '測試'} for i in range(4)]
+    ocr = {'pages': {'2.png': [{'source_block_index': 7, 'ocr_characters': chars, 'font_fit': {
+        'character_results': [{'line_index': 0, 'character_index': i, 'accepted': i != 2,
+                               'pixel_size': 22, 'estimated_pixel_size': 21.8} for i in range(3)]}}]}}
+    result = character_boxes({}, ocr, '2.png', 'ocr_aligned')
+    assert len(result) == 1 and result[0]['source_block_index'] == 7
+    assert result[0]['estimated_font_size'] == 21.8 and result[0]['calculated_font_size'] == 22
+    assert result[0]['bbox'] == [10, 20, 22, 32] and result[0]['width'] == 12
+    assert 'ocr_text' not in result[0]
+    assert character_boxes({}, {}, '2.png', 'ocr_aligned') == []
+
+
+def test_character_overlay_legacy_order_invalid_boxes_and_method_selection():
+    from prelayout_core.characters import character_boxes
+    chars = [{'bbox': [30, 20, 42, 32], 'calculated_font_size': 22}, {'bbox': [10, 20, 22, 32], 'estimated_font_size': 23.25},
+             {'bbox': [0, 0, 0, 10]}, {'bbox': [False, 0, 10, 10]}, {'bbox': ['x', 0, 10, 10]}]
+    debug = {'font_size': {'2.png': [{'font_size_debug': {'orientation': 'horizontal'}, 'char_boxes': chars}]}}
+    boxes = character_boxes(debug, {'pages': {'2.png': []}}, '2.png', 'single_char')
+    assert [b['bbox'][0] for b in boxes] == [10, 30]
+    assert [b['character_index'] for b in boxes] == [0, 1]
+    assert boxes[0]['width'] == 12 and boxes[0]['height'] == 12
+    assert boxes[0]['estimated_font_size'] == 23.25
+    assert character_boxes(debug, {}, '2.png', 'ocr_aligned') == []
+
+
+def test_character_overlay_cache_is_read_only_and_per_page(store, project):
+    _, folder, measure = install_measure(store, project)
+    output = folder / 'output'; page = project['pages'][0]
+    debug = {'font_size': {p['name']: [{'char_boxes': [{'bbox': [10, 20, 22, 32], 'calculated_font_size': 22}]}] for p in project['pages']}}
+    atomic_json(output / 'measure.debug.json', debug)
+    for p in project['pages']:
+        atomic_json(output / 'page-measures' / f'{p["id"]}.json', measure['pages'][p['name']])
+    before = store.read(project['id'])
+    result = store.page(project['id'], page['id'])
+    assert len(result['character_boxes']) == 1
+    assert store.read(project['id']) == before and result['items'] == []
+    assert json.loads((output / 'measure.debug.json').read_text()) == debug
+    assert json.loads((output / 'measure.json').read_text()) == measure
+    assert len(list((output / 'page-characters').glob('*.json'))) == len(project['pages'])
+    (output / 'measure.debug.json').write_bytes(b'not JSON')
+    (output / 'measure.json').write_bytes(b'not JSON')
+    assert store.page(project['id'], page['id']) == result
+
+
+def test_archive_rebuilds_character_overlay_instead_of_trusting_cache(store, project):
+    _, folder, _ = install_measure(store, project)
+    page = project['pages'][0]
+    atomic_json(folder / 'output' / 'measure.debug.json', {'font_size': {page['name']: [{'char_boxes': [{'bbox': [10, 20, 22, 32]}]}]}})
+    atomic_json(folder / 'output' / 'page-characters' / f'{page["id"]}.json', [{'invalid': True}])
+    archive = store.export_archive(project['id'])
+    imported = store.import_archive(archive.read_bytes(), 10_000_000)
+    archive.unlink()
+    chars = store.page(imported['id'], imported['pages'][0]['id'])['character_boxes']
+    assert len(chars) == 1 and chars[0]['bbox'] == [10, 20, 22, 32]
+
+
 def test_live_recovery_process_group_keeps_gpu_until_children_exit(store, project):
     """An actual child ignoring TERM must not leave the gate free while still running."""
     import os
