@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Alert, Button, Card, Checkbox, Empty, Input, InputNumber, List, Modal, Progress, Select, Space, Spin, Steps, Tag, Typography, message } from 'antd'
+import { Alert, Button, Card, Checkbox, Dropdown, Empty, Input, InputNumber, List, Modal, Progress, Select, Space, Spin, Steps, Tag, Typography, message } from 'antd'
 import LegacyBatch from './App'
 import { ImagePicker } from './ImagePicker'
 import { DetectionSettings } from './DetectionSettings'
@@ -131,6 +131,8 @@ export default function ProjectWorkbench({ onReadyToLeave }: { onReadyToLeave?: 
 function ProjectWorkspace({ initial, gpuOwner, onExit, onReadyToLeave }: { initial: Project; gpuOwner: string | null; onExit: () => Promise<void>; onReadyToLeave?: (handler: () => Promise<boolean>) => void }) {
   const [modal, modalHolder] = Modal.useModal()
   const [project, setProject] = useState(initial)
+  const workspaceRoot = useRef<HTMLElement>(null)
+  const [pageFilter, setPageFilter] = useState('all')
   const [pageIndex, setPageIndex] = useState(0); const [step, setStep] = useState(0)
   const [workflow, setWorkflow] = useState<Workflow[]>(['flux2klein_lanpaint'])
   const [run, setRun] = useState<Run | null>(null); const [runId, setRunId] = useState(initial.current_run_id)
@@ -155,6 +157,9 @@ function ProjectWorkspace({ initial, gpuOwner, onExit, onReadyToLeave }: { initi
   const navigating = useRef(false)
   const wasDetecting = useRef(initial.state === 'detecting')
   const page = project.pages[pageIndex]
+  const pageStatus = (item: Project['pages'][number]) => !(liveRepair[item.id] !== undefined || item.mask_ready) ? 'untouched' : (liveRepair[item.id] ?? item.has_repair_mask) ? 'repair' : 'complete'
+  const visiblePages = project.pages.map((item, index) => ({item, index})).filter(({item}) => pageFilter === 'all' || pageStatus(item) === pageFilter)
+  const adjacentPage = (direction: number) => direction > 0 ? visiblePages.find(({index}) => index > pageIndex)?.index : visiblePages.slice().reverse().find(({index}) => index < pageIndex)?.index
   const currentPageId = useRef(page.id); currentPageId.current = page.id
   const url = projectUrl(project.id)
   const compUrl = `${url}/compositions/${runId}`
@@ -238,6 +243,20 @@ function ProjectWorkspace({ initial, gpuOwner, onExit, onReadyToLeave }: { initi
     }
     setPageIndex(nextPage); setStep(nextStep); setDirty(false); setEditorKey(k => k + 1)
   }
+  useEffect(() => {
+    const keydown = (event: KeyboardEvent) => {
+      if (step !== 0 || !['PageUp', 'PageDown'].includes(event.key) || event.defaultPrevented || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return
+      const root = workspaceRoot.current
+      const target = event.target instanceof Element ? event.target : null
+      if (!root?.getClientRects().length || target?.closest('input, textarea, select, [contenteditable="true"], [role="dialog"], [role="combobox"]') || document.querySelector('.ant-modal-wrap:not([style*="display: none"])')) return
+      event.preventDefault()
+      if (event.repeat || navigating.current || detecting) return
+      const next = adjacentPage(event.key === 'PageDown' ? 1 : -1)
+      if (next !== undefined) void execute(() => navigate(0, next))
+    }
+    window.addEventListener('keydown', keydown)
+    return () => window.removeEventListener('keydown', keydown)
+  })
   async function saveEdit(data: RasterSave) {
     const body = new FormData(); body.append('expected_revision', String(editRevision.current))
     body.append('overlay', data.overlay, 'overlay.png'); body.append('other', data.other, 'other.png'); body.append('edited', data.edited, 'edited.png')
@@ -294,7 +313,7 @@ function ProjectWorkspace({ initial, gpuOwner, onExit, onReadyToLeave }: { initi
     label: workflowOptions.find(w => w.value === item.workflow)!.label,
     url: `${compUrl}/pages/${page.id}/image?source=${item.workflow}`, diffUrl: `${compUrl}/pages/${page.id}/image?source=diff:${item.workflow}&revision=${composition?.revision}`,
   })) || []
-  return <main className="app-shell project-workspace">
+  return <main ref={workspaceRoot} className={`app-shell project-workspace${step === 0 ? ' compact-edit' : ''}`}>
     {modalHolder}
     <Modal title="自動檢測設定" width={600} open={detectConfirmOpen} onCancel={() => { if (!busy) setDetectConfirmOpen(false) }}
       onOk={() => void detect()} okText="覆蓋並重新檢測" cancelText="取消" confirmLoading={busy}
@@ -311,20 +330,26 @@ function ProjectWorkspace({ initial, gpuOwner, onExit, onReadyToLeave }: { initi
         <Button disabled={busy || !!gpuOwner || detecting} onClick={() => void download(`${url}/export`)}>導出項目</Button>
       </Space></header>
     {error && <Alert type="error" showIcon closable onClose={() => setError('')} message={error} />}
-    <Steps current={step} onChange={value => void execute(() => navigate(value))} items={[{ title: '準備與編輯' }, { title: '批量修復' }, { title: '比較合成', disabled: run?.state !== 'completed' }]} />
-    <div className="project-body"><aside className="page-list">
+    <Steps size="small" responsive={false} current={step} onChange={value => void execute(() => navigate(value))} items={[{ title: '準備與編輯' }, { title: '批量修復' }, { title: '比較合成', disabled: run?.state !== 'completed' }]} />
+    <div className={`project-body${step === 0 ? ' pages-collapsed' : ''}`}><aside id="editing-page-list" className="page-list" hidden={step === 0}>
       <div className="page-status-legend"><span className="page-untouched">{step === 2 ? '待確認' : '未處理'}</span> · <span className="page-complete">{step === 2 ? '已確認' : '完成'}</span>{step !== 2 && <> · <span className="page-needs-repair">待修補</span></>}</div><List dataSource={project.pages} renderItem={(item, index) => <List.Item className={index === pageIndex ? 'selected' : ''} onClick={() => void execute(() => navigate(step, index))}>
         <strong className={step === 2 ? (composition?.pages.find(p => p.page_id === item.id)?.confirmed ? 'page-complete' : 'page-untouched') : (liveRepair[item.id] !== undefined || item.mask_ready) ? ((liveRepair[item.id] ?? item.has_repair_mask) ? 'page-needs-repair' : 'page-complete') : 'page-untouched'} title={(liveRepair[item.id] !== undefined || item.mask_ready) ? ((liveRepair[item.id] ?? item.has_repair_mask) ? '仍有待修補區域' : '已完成塗白，無待修補區域') : '尚未處理'}>{item.filename}</strong>
       </List.Item>} />
     </aside><section className="project-content">
       {step === 0 && <>
-        <Space wrap className="editor-toolbar"><Button type="primary" loading={detecting} disabled={!!gpuOwner || busy || detecting || !detectionCanConfigure} onClick={() => { setDetectError(''); setDetectConfirmOpen(true) }}>自動檢測</Button>
-          <Button disabled={detecting || !!gpuOwner} onClick={() => void download(`${url}/export-pair`)}>導出底圖＋Mask</Button>
-          <Button onClick={() => void execute(() => navigate(1))}>前往批量修復 →</Button>
+        <Space wrap size={6} className="editor-toolbar page-summary">
+          <Button size="small" aria-label="上一頁" title="PageUp" disabled={busy || adjacentPage(-1) === undefined} onClick={() => void execute(() => navigate(0, adjacentPage(-1)!))}>‹</Button>
+          <Select size="small" aria-label="選擇頁面" value={pageIndex} popupMatchSelectWidth={260} showSearch optionFilterProp="label" onChange={index => void execute(() => navigate(0, index))} options={visiblePages.map(({item,index}) => ({value:index,label:`${item.filename} · ${index+1}/${project.pages.length}`}))} />
+          <Button size="small" aria-label="下一頁" title="PageDown" disabled={busy || adjacentPage(1) === undefined} onClick={() => void execute(() => navigate(0, adjacentPage(1)!))}>›</Button>
+          <Button size="small" type={pageFilter === 'all' ? 'text' : 'default'} onClick={() => setPageFilter('all')}>全部 {project.pages.length}</Button>
+          {[{key:'untouched',label:'未處理',cls:'page-untouched'},{key:'repair',label:'待修補',cls:'page-needs-repair'},{key:'complete',label:'完成',cls:'page-complete'}].map(status => <Button size="small" key={status.key} className={status.cls} aria-pressed={pageFilter === status.key} type={pageFilter === status.key ? 'default' : 'text'} onClick={() => setPageFilter(pageFilter === status.key ? 'all' : status.key)}>{status.label} {project.pages.filter(item => pageStatus(item) === status.key).length}</Button>)}
+          <Button type="primary" loading={detecting} disabled={!!gpuOwner || busy || detecting || !detectionCanConfigure} onClick={() => { setDetectError(''); setDetectConfirmOpen(true) }}>自動檢測</Button>
+          <Dropdown menu={{items:[{key:'pairs',label:'導出底圖＋Mask',disabled:detecting || !!gpuOwner},{key:'project',label:'導出項目',disabled:busy || detecting || !!gpuOwner}],onClick:({key}) => void download(`${url}/${key === 'pairs' ? 'export-pair' : 'export'}`)}}><Button size="small">更多 ▾</Button></Dropdown>
+          <Button onClick={() => void execute(() => navigate(1))}>下一步 →</Button>
         </Space>
-        {!detectionCanConfigure && <Alert type="info" message="自動檢測暫不可用，可先手動編輯。" />}
-        <p className="detection-estimate">參考估算：首次準備約 20 秒，每張約 8 秒；第一張合計約 28 秒，之後每張約 8 秒。{project.pages.length} 張合計約 {Math.floor((20 + project.pages.length * 8) / 60)} 分 {(20 + project.pages.length * 8) % 60} 秒（依圖片與設備浮動）。</p>
-        {detection?.created_at && <p role="timer">{detecting ? '已運行' : '本次耗時'} {Math.max(0, Math.floor(((detecting ? clock : Date.parse(detection.updated_at || detection.created_at)) - Date.parse(detection.created_at)) / 1000))} 秒{detecting && <> · {clock - Date.parse(detection.created_at) < (20 + (detection.total || project.pages.length) * 8) * 1000 ? `預估剩餘約 ${Math.ceil(((20 + (detection.total || project.pages.length) * 8) * 1000 - clock + Date.parse(detection.created_at)) / 1000)} 秒` : '已超過參考時間，仍在處理'}</>}</p>}
+        {!detectionCanConfigure && <span className="detection-unavailable">自動檢測暫不可用，可手動編輯</span>}
+        {detecting && <p className="detection-estimate">參考估算：首次準備約 20 秒，每張約 8 秒；第一張合計約 28 秒，之後每張約 8 秒。{project.pages.length} 張合計約 {Math.floor((20 + project.pages.length * 8) / 60)} 分 {(20 + project.pages.length * 8) % 60} 秒（依圖片與設備浮動）。</p>}
+        {detecting && detection?.created_at && <p role="timer">{detecting ? '已運行' : '本次耗時'} {Math.max(0, Math.floor(((detecting ? clock : Date.parse(detection.updated_at || detection.created_at)) - Date.parse(detection.created_at)) / 1000))} 秒{detecting && <> · {clock - Date.parse(detection.created_at) < (20 + (detection.total || project.pages.length) * 8) * 1000 ? `預估剩餘約 ${Math.ceil(((20 + (detection.total || project.pages.length) * 8) * 1000 - clock + Date.parse(detection.created_at)) / 1000)} 秒` : '已超過參考時間，仍在處理'}</>}</p>}
         {detecting ? <Alert type="info" showIcon message={detection?.progress ? `${detectionLabels[detection.state] || detectionLabels[detection.progress.stage] || '自動檢測中'} · ${detection.progress.completed} / ${detection.progress.total} 頁` : detectionLabels[detection?.state || ''] || '自動檢測中，完成後即可編輯'} action={<Button danger onClick={() => void execute(async () => { await api(`${url}/detection/${detection?.state === 'recovery_required' ? 'recover' : 'cancel'}`, { method: 'POST' }); await reloadProject(); setEditorKey(k => k + 1) })}>{detection?.state === 'recovery_required' ? '檢查恢復' : '停止偵測'}</Button>} /> : <RasterEditor key={`${page.id}-${editorKey}`} ref={editor} width={page.width} height={page.height} mode="edit" viewState={editView}
           baseUrl={assetUrl(project.id, page.source)} overlayUrl={`${assetUrl(project.id, page.overlay)}?v=${page.edit_revision}`} otherUrl={`${assetUrl(project.id, page.other)}?v=${page.edit_revision}`} editedUrl={`${assetUrl(project.id, page.edited)}?v=${page.edit_revision}`}
           detectedTextUrl={page.detected_text ? assetUrl(project.id, page.detected_text) : undefined}

@@ -327,3 +327,38 @@ footer { padding: 20px 0; color: #746e63; font-size: 12px; }
 .compose-loading { min-height: calc(66vh + 220px); display: grid; place-items: center; }
 .canvas-panels.compose { min-height: calc(66vh + 110px); }
 .editor-save-state { display: inline-block; min-width: 110px; }
+
+.project-body.pages-collapsed { grid-template-columns: minmax(0, 1fr); }
+.page-list[hidden] { display: none; }
+
+.canvas-panels.edit.preview-right { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.canvas-panels.edit.preview-bottom, .canvas-panels.edit.preview-hidden { grid-template-columns: minmax(0, 1fr); }
+.canvas-panels.edit section[hidden] { display: none; }
+
+/* Keep preparation controls compact so the image stays near the top. */
+.compact-edit.project-workspace { padding: 10px 16px; }
+.compact-edit .project-header { padding-bottom: 6px; margin-bottom: 8px; gap: 12px; border-bottom-width: 1px; }
+.compact-edit .project-header > div:first-child { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.compact-edit .project-header h2 { font-size: 16px; margin: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 45vw; }
+.compact-edit .project-header > div:first-child > .ant-typography:not(h2) { display: none; }
+.compact-edit .project-header .ant-btn { height: 26px; padding: 0 8px; }
+.compact-edit .project-body { margin-top: 6px; }
+.compact-edit .editor-toolbar { padding: 3px 0; }
+.compact-edit .page-summary .ant-btn { height: 26px; padding: 0 7px; }
+.compact-edit .page-summary .ant-select { width: 160px; }
+.compact-edit .detection-unavailable { display: inline-block; font-size: 11px; color: #756e63; margin: 0 0 3px; }
+.compact-edit .edit-control-panel { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; padding: 5px 0; margin-bottom: 4px; }
+.compact-edit .edit-control-row { display: contents; }
+.compact-edit .edit-row-label { display: none; }
+.compact-edit .edit-control-panel .ant-btn { height: 26px; padding: 0 7px; font-size: 12px; }
+.compact-edit .category-buttons, .compact-edit .selection-tools { gap: 3px; }
+.compact-edit .editor-history-controls { margin-left: 0; gap: 3px; }
+.compact-edit .editor-save-state { min-width: 45px; font-size: 11px; }
+.compact-edit .panel-controls { min-height: 0; padding: 4px 6px; gap: 4px 8px; font-size: 12px; }
+.compact-edit .canvas-panels section > strong { min-height: 0; padding: 3px 6px; }
+.compact-edit .mask-mix { width: auto; flex: 1 1 150px; }
+.compact-edit .editor-zoom-controls { gap: 3px; }
+.compact-edit .canvas-scroll { height: max(360px, calc(100vh - 255px)); }
+
+.canvas-scroll { display: flex; }
+.canvas-scroll canvas { flex: 0 0 auto; margin: auto; }
