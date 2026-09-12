@@ -4,16 +4,16 @@ import { type Item, type Page, type CharacterBox, uid } from './types'
 import { EditorState } from './editor-state'
 import { PreviewLayer } from './PreviewLayer'
 import { color, moved, resized, transform, type Selection, type PagePointer, type VisibleRegion } from './geometry'
-import { adjustedItems } from './shortcuts'
+import { adjustedItems, type TextAdjustment } from './shortcuts'
 import { CharacterOverlay, type CharacterOverlayHandle } from './CharacterOverlay'
 
 const noCharacters: CharacterBox[] = []
 
-const rotationCorners = [
-  { x: 'left', y: 'top', delta: 1, label: '左上：逆時針旋轉' },
-  { x: 'right', y: 'top', delta: -1, label: '右上：順時針旋轉' },
-  { x: 'left', y: 'bottom', delta: 1, label: '左下：逆時針旋轉' },
-  { x: 'right', y: 'bottom', delta: -1, label: '右下：順時針旋轉' },
+const frameControls = [
+  { x: 'left', y: 'top', kind: 'font', delta: -2, icon: '−', label: '左上：縮小文字', hint: '字級減少 2；Option／Alt 點擊減少 10' },
+  { x: 'right', y: 'top', kind: 'font', delta: 2, icon: '+', label: '右上：放大文字', hint: '字級增加 2；Option／Alt 點擊增加 10' },
+  { x: 'left', y: 'bottom', kind: 'rotate', delta: 1, icon: '↶', label: '左下：逆時針旋轉', hint: '逆時針 1°；Option／Alt 點擊 5°' },
+  { x: 'right', y: 'bottom', kind: 'rotate', delta: -1, icon: '↷', label: '右下：順時針旋轉', hint: '順時針 1°；Option／Alt 點擊 5°' },
 ] as const
 
 export const TextPage = memo(function TextPage({ project, page, scale, edge, clean, readonly, controller, selection, onSelect, onInteracting, showMeasure, onMeasure, region, detailed, interacting, onPointer }: {
@@ -109,10 +109,10 @@ export const TextPage = memo(function TextPage({ project, page, scale, edge, cle
     const item: Item = { _id: uid(), text: '新文字', x: (event.clientX - rect.left) / (page.width * scale), y: (event.clientY - rect.top) / (page.height * scale), 'font-size': 40, rotation: 0, orientation: 'vertical', color: '#000000', 'stroke-color': '#ffffff', 'stroke-weight': 0, match_status: 'manual' }
     controller.edit(page.id, [...state.data.items, item]); onSelect({ page: page.id, ids: [item._id] })
   }
-  function rotate(delta: number) {
+  function adjust(adjustment: TextAdjustment) {
     const state = controller.pages.get(page.id)
     if (readonly || interacting || dragging.current || !state || selection.page !== page.id) return
-    const items = adjustedItems(state.data.items, selection.ids, { kind: 'rotate', delta }, page.width, page.height)
+    const items = adjustedItems(state.data.items, selection.ids, adjustment, page.width, page.height)
     if (items !== state.data.items) controller.edit(page.id, items)
   }
   const selected = selection.page === page.id ? selection.ids : []
@@ -134,14 +134,14 @@ export const TextPage = memo(function TextPage({ project, page, scale, edge, cle
         onPointerDown={event => down(event, item)} onPointerMove={move} onPointerUp={event => end(event)} onPointerCancel={event => end(event, true)} onDoubleClick={event => event.stopPropagation()}>
         {item.text || '\u200b'}
         {selected.includes(item._id) && <>
-          {rotationCorners.map(corner => <button key={`${corner.x}-${corner.y}`} type="button" className="pl-rotate-step" aria-label={corner.label} title={`${corner.label} 1°；Option／Alt 點擊 5°（套用所有選取文字）`} style={{
+          {frameControls.map(corner => <button key={`${corner.x}-${corner.y}`} type="button" className="pl-text-step" aria-label={corner.label} title={`${corner.hint}（套用所有選取文字）`} style={{
             width: 22 / scale, height: 22 / scale, fontSize: 17 / scale, borderWidth: 1 / scale,
             [corner.x]: -6 / scale, [corner.y]: -6 / scale,
             transform: `translate(${corner.x === 'left' ? '-100%' : '100%'}, ${corner.y === 'top' ? '-100%' : '100%'}) rotate(${item.rotation}deg)`,
           }} onPointerDown={event => {
             event.stopPropagation(); event.preventDefault()
             scene.current?.closest<HTMLElement>('.pl-viewport')?.focus({ preventScroll: true })
-          }} onClick={event => { event.stopPropagation(); rotate(corner.delta * (event.altKey ? 5 : 1)) }}>{corner.delta > 0 ? '↶' : '↷'}</button>)}
+          }} onClick={event => { event.stopPropagation(); adjust({ kind: corner.kind, delta: corner.delta * (event.altKey ? 5 : 1) }) }}>{corner.icon}</button>)}
           <span className="pl-handle pl-rotate" title="拖曳旋轉" role="button" aria-label="旋轉文字" style={{ width: 12 / scale, height: 12 / scale, top: -26 / scale }} onPointerDown={event => down(event, item, 'rotate')} />
           <span className="pl-source-box" style={{ width: item.xyxy_pixel ? item.xyxy_pixel[2] - item.xyxy_pixel[0] : 60, height: item.xyxy_pixel ? item.xyxy_pixel[3] - item.xyxy_pixel[1] : 60, borderWidth: 1 / scale }}>
             <span className="pl-handle pl-resize" title="調整參考框" style={{ width: 10 / scale, height: 10 / scale }} onPointerDown={event => down(event, item, 'resize')} />

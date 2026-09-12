@@ -136,7 +136,7 @@ async function until(fn, label, timeout = 12000) {
     await page.getByRole('button', { name: /撤\s*銷/, exact: true }).click(); await save()
     console.log('PASS manual matching protection and read-only measure')
 
-    const downloadEvent = page.waitForEvent('download'); await page.getByRole('button', { name: '匯出 BT', exact: true }).click(); const download = await downloadEvent
+    const downloadEvent = page.waitForEvent('download'); await page.getByRole('button', { name: '匯出 Meo.json', exact: true }).click(); const download = await downloadEvent
     const btFile = path.join(output, 'export_bt.json'); await download.saveAs(btFile)
     const exported = JSON.parse(fs.readFileSync(btFile)); assert(!('_id' in exported.transMap['001.png'][0])); assert(exported.transMap['001.png'][0].fixture_unknown.retained)
     await page.screenshot({ path: path.join(output, 'editor.png') })

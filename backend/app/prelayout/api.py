@@ -138,7 +138,7 @@ def router(store, detector, max_bytes):
         with store.lock(pid):
             data = call(store.translation, pid)
             return Response(json.dumps(data, ensure_ascii=False, indent=2), media_type='application/json',
-                            headers={'Content-Disposition': 'attachment; filename="bt.json"'})
+                            headers={'Content-Disposition': 'attachment; filename="Meo.json"'})
 
     @api.post('/projects/{pid}/matches')
     def matches(pid: str):

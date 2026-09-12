@@ -16,12 +16,12 @@ async function until(fn,label){const start=Date.now();while(!await fn()){if(Date
   await button('建立項目').click();await page.locator('.pl-page').waitFor();
   createdId=await page.evaluate(()=>localStorage.getItem('pl-last-project'));assert(createdId&&createdId!==fixture.id);
   await page.getByText('目前使用系統替代字型。',{exact:false}).waitFor();
-  await page.setViewportSize({width:600,height:900});await pause(300);assert.equal(await page.locator('.pl-pages-nav').isVisible(),false);assert((await page.locator('.pl-viewport').boundingBox()).width>=300);await page.screenshot({path:path.join(output,'narrow-editor.png')});await page.setViewportSize({width:1440,height:1000});
+  await page.setViewportSize({width:600,height:900});await pause(300);assert.equal(await page.locator('.pl-pages-nav').isVisible(),true);assert((await page.locator('.pl-viewport').boundingBox()).width>=300);await page.screenshot({path:path.join(output,'narrow-editor.png')});await page.setViewportSize({width:1440,height:1000});
   const api=base+'/api/prelayout/projects/'+createdId;const record=await (await page.request.get(api)).json();const pid=record.pages[0].id;
   const read=async()=> (await page.request.get(api+'/pages/'+pid)).json();
   await page.locator('.pl-page').dblclick({position:{x:150,y:200}});await page.locator('.pl-text').waitFor();await saved();
   assert.equal((await read()).items.length,1);
-  await button('開啟 BT').click();await page.locator('.pl-tool-row input[type=file]').setInputFiles(path.join(output,'sample_bt.json'));
+  await button('開啟 Meo.json').click();await page.locator('.pl-tool-row input[type=file]').setInputFiles(path.join(output,'sample_bt.json'));
   await page.getByRole('dialog').filter({hasText:'確認匯入譯稿'}).waitFor();await button('匯入').click();await until(async()=>await page.locator('.pl-text').count()===35,'BT imported');
   await page.locator('.pl-text').first().click();
   await page.locator('.pl-inspector textarea').fill('編輯\n換行');await saved();let local=await read();const id=local.items[0]._id;assert.equal(local.items[0].text,'編輯\n換行');
@@ -41,15 +41,15 @@ async function until(fn,label){const start=Date.now();while(!await fn()){if(Date
   await page.unroute('**/api/prelayout/projects/*/pages/*/text');await saved();assert.equal((await read()).items[0].text,'失敗後保留');
   // Model-free LabelPlus import retains the outside group and labels drafts unmatched.
   const lp='1, 0\n-\n對話\n框外\n-\n備註\n>>>>>>>>[001.png]<<<<<<<<\n----------------[1]----------------[0.5,0.3,1]\n對話內容\n----------------[2]----------------[0.6,0.3,2]\n音效\n';
-  await button('匯入 LabelPlus').click();await page.locator('.pl-tool-row input[type=file]').setInputFiles({name:'fixture.txt',mimeType:'text/plain',buffer:Buffer.from(lp)});await button('匯入').click();await until(async()=>await page.locator('.pl-text').count()===2,'LabelPlus imported');
+  await button('匯入LP.txt').click();await page.locator('.pl-tool-row input[type=file]').setInputFiles({name:'fixture.txt',mimeType:'text/plain',buffer:Buffer.from(lp)});await button('匯入').click();await until(async()=>await page.locator('.pl-text').count()===2,'LabelPlus imported');
   local=await read();assert.deepEqual(local.items.map(i=>i.groupId),[0,1]);assert(local.items.every(i=>i.match_status==='unmatched'));
   await button('下一個待處理').click();assert.equal(await page.locator('.pl-text.selected').count(),1);
   await button('上傳去字圖').click();await page.locator('.pl-tool-row input[type=file]').setInputFiles({name:'001.png',mimeType:'image/png',buffer:fs.readFileSync(path.join(output,'sample.png'))});
   await until(async()=>!!(await (await page.request.get(api)).json()).pages[0].clean,'clean image paired');
   assert.equal(await button('導出項目').count(),0);
-  const event=page.waitForEvent('download');await button('匯出 BT').click();const download=await event;assert.equal(download.suggestedFilename(),'bt.json');const bt=path.join(output,'bt.json');await download.saveAs(bt);
+  const event=page.waitForEvent('download');await button('匯出 Meo.json').click();const download=await event;assert.equal(download.suggestedFilename(),'Meo.json');const bt=path.join(output,'Meo.json');await download.saveAs(bt);
   const exported=JSON.parse(fs.readFileSync(bt));assert.deepEqual(exported.transMap['001.png'].map(i=>i.groupId),[0,1]);
-  await button('開啟 BT').click();await page.locator('.pl-tool-row input[type=file]').setInputFiles(bt);await button('匯入').click();
+  await button('開啟 Meo.json').click();await page.locator('.pl-tool-row input[type=file]').setInputFiles(bt);await button('匯入').click();
   await until(async()=>!await page.locator('.ant-modal-wrap:visible').count(),'BT roundtrip');
   const imported=await(await page.request.get(api)).json();const items=(await read()).items;
   assert.equal(items.length,2);assert(imported.pages[0].clean);
