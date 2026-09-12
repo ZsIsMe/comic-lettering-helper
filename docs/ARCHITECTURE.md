@@ -4,6 +4,33 @@
 
 2026-09-12：上述工作台功能已在本機實作整合；新增 CUDA 環境與模型切換尚待目標 GPU 驗收，本次擴充未部署、未建立新 Tag 或鏡像。本文後段保留原第二部分的輸入、任務及性能記錄，只有明確標示的歷史基線已做過遠端 GPU 實測。需求邊界見 [工作台計劃](PROJECT_WORKBENCH_PLAN.md)，偵測部署限制見 [偵測模型說明](DETECTION_MODELS.md)。
 
+## 獨立資料的網頁預排版
+
+`WorkspaceEntry.tsx` 在原工作台旁加入預排版入口，前端按需載入；切換前保存目前操作，修圖工作台保留自己的編輯狀態。預排版離開時卸載自身鍵盤事件，CSS 使用 `pl-` 範圍。預排版沒有獨立 Git 倉庫或桌面殼。
+
+```text
+/api/prelayout → PrelayoutStore → <COMIC_PRELAYOUT_DATA_ROOT>
+                      ├─ projects/<pl-id>/originals、clean、imports
+                      ├─ projects/<pl-id>/pages/<page-id>/<revision>.json
+                      ├─ projects/<pl-id>/detections/<d-id>/task.json、progress.json、worker.log、output/
+                      └─ preferences/clipboard.json
+預排版 CTD/OCR ─┐
+RF/MangaLens ───┼─ 共用 ResourceGate（只協調硬體占用）
+ComfyUI 修復 ──┘
+```
+
+資料根預設 `<COMIC_DATA_ROOT>/prelayout`，禁止與修圖 projects／jobs 目錄重疊。圖片獨立上傳，沒有跨功能的引用、去重、硬連結或輸入交接。`need_inpaint` 只保存為排版欄位。BT 頂層、分組、未知欄位保留；内部穩定 ID 不寫入 BT 匯出。
+
+頁面採不可變 JSON 修訂與原子 manifest 發布；文字保存带 `expected_revision` 和冪等操作 ID。瀏覽器按頁訂閱，700 ms 停頓後串行保存；IndexedDB 保存預排版草稿，多分頁版本衝突由使用者選擇。移動與旋轉只在 rAF 更新選中元素的 transform，結束後記錄一次撤銷；點選本身不修改文字或匹配狀態。連續微移以 350 ms 分組。
+
+`ContinuousPages` 保留可視範圍、前後約一個視窗及操作中的頁面；卸載節點不卸載資料。底圖與文字各自渲染；JPEG 預覽級別為 384／768／1536／3072，巨圖使用可見區圖塊，原圖座標不變。瀏覽器圖片快取上限 256 MiB（估計解碼像素）及 40 項，不是整個瀏覽器記憶體限制；伺服器每項目預覽快取 256 MiB、同時兩個預覽解碼。預覽 reader 不佔用長時間編輯鎖，上傳準備限一份並行。效能證據見 [本地驗證](PRELAYOUT_LOCAL_VALIDATION.md)。
+
+模型任務使用外部 Python 的程序群組，依序全批 CTD／對齊／量測，再按選定方法全批 OCR／字級校準。`COMIC_PRELAYOUT_DEVICE` 預設 `cuda`，本地 Apple Silicon 可明確選 `mps`；設備固定於任務記錄，指定設備不可用即失敗，沒有 CPU 推理後備，MPS 子程序強制停用 PyTorch 的 CPU fallback。兩種設備均先取得共用 GPU gate；CUDA 另檢查 ComfyUI 佇列並卸載閒置模型，本地 MPS 不聯絡 CUDA 的 ComfyUI 服務。每頁回報進度，全部 measure 驗證後才發布新 detection ID；不改原有文字。重新匹配預覽與套用分開，套用時重新核對項目修訂並保護人工條目。
+
+取消以 TERM、等待、必要時 KILL 處理整個程序群組，模型子程序未退出前不釋放 GPU。服務重啟保留所有存活偵測的 GPU 占用；若主程序在寫入 PID 前中斷，按 worker 與任務 ID 尋找原程序。無完整輸出則失敗，完整輸出須重新驗證後發布；不重放推理。程序檢查不可用時不能據此宣稱 GPU 已空閒。此資源機制已做本機程序測試，實際 CUDA 顯存交接仍待遠端驗證。
+
+預排版只透過 `/export/bt` 匯出 `bt.json`；前端「導出項目」與 `/export/archive` 已移除。項目資料保存在伺服器，關閉頁面後可重開。既有預排版封存仍可匯入：驗證路徑、尺寸、雜湊及修訂，重新分配項目／偵測 ID，清除 PID／重試操作，從已驗證的 measure 重建逐頁快取。worker 日誌由獨立診斷下載端點提供，下載持有 reader 直至完成或客戶端斷線，期間拒絕刪除。
+
 ## 項目工作台與三部分邊界
 
 首頁由 `frontend/src/ProjectWorkbench.tsx` 提供項目列表、新建／重開、重命名、用量、封存匯入／導出及確認刪除；「舊版批次與歷史」繼續開啟 `App.tsx` 的原有介面。旧任務仍保留在 jobs，不強制遷移。

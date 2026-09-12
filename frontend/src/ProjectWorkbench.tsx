@@ -16,7 +16,7 @@ function Picker({ label, mask, onSelect, disabled }: { label: string; mask?: boo
   </Space>
 }
 
-export default function ProjectWorkbench() {
+export default function ProjectWorkbench({ onReadyToLeave }: { onReadyToLeave?: (handler: () => Promise<boolean>) => void }) {
   const [legacy, setLegacy] = useState(false)
   const [projects, setProjects] = useState<Project[]>([])
   const [current, setCurrent] = useState<Project | null>(null)
@@ -70,7 +70,7 @@ export default function ProjectWorkbench() {
       onOk: async () => { await api(`${projectUrl(project.id)}?confirm=true`, { method: 'DELETE' }); await reload() } })
   }
   if (legacy) return <><div className="legacy-back"><Button onClick={() => setLegacy(false)}>返回項目工作台</Button></div><LegacyBatch /></>
-  if (current) return <ProjectWorkspace key={current.id} initial={current} gpuOwner={gpuOwner} onExit={async () => { localStorage.removeItem(remember); setCurrent(null); await reload() }} />
+  if (current) return <ProjectWorkspace key={current.id} initial={current} gpuOwner={gpuOwner} onReadyToLeave={onReadyToLeave} onExit={async () => { localStorage.removeItem(remember); setCurrent(null); await reload() }} />
   return <main className="app-shell project-home">
     <header className="project-header"><div><Text className="eyebrow">COMIC WORKSPACE</Text><Title>漫畫修圖項目</Title><Text>保存原圖、修補與合成進度，下次打開接著編輯。</Text></div><Space wrap>
       <Button onClick={() => setLegacy(true)}>舊版批次與歷史</Button>
@@ -95,7 +95,7 @@ export default function ProjectWorkbench() {
   </main>
 }
 
-function ProjectWorkspace({ initial, gpuOwner, onExit }: { initial: Project; gpuOwner: string | null; onExit: () => Promise<void> }) {
+function ProjectWorkspace({ initial, gpuOwner, onExit, onReadyToLeave }: { initial: Project; gpuOwner: string | null; onExit: () => Promise<void>; onReadyToLeave?: (handler: () => Promise<boolean>) => void }) {
   const [project, setProject] = useState(initial)
   const [pageIndex, setPageIndex] = useState(0); const [step, setStep] = useState(0)
   const [workflow, setWorkflow] = useState<Workflow[]>(['flux2klein_lanpaint'])
@@ -127,6 +127,10 @@ function ProjectWorkspace({ initial, gpuOwner, onExit }: { initial: Project; gpu
     finally { navigating.current = false; setBusy(false) }
   }
   async function flush() { return !editor.current || await editor.current.flush() }
+  useEffect(() => {
+    onReadyToLeave?.(async () => !editor.current || await editor.current.flush())
+    return () => onReadyToLeave?.(async () => true)
+  }, [onReadyToLeave])
   async function reloadProject() { const p = await api<Project>(url); setProject(p); return p }
   const loadComposition = useCallback(async () => {
     if (!runId) return

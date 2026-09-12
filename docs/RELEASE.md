@@ -10,6 +10,18 @@
 
 需求和里程碑见 [PROJECT_WORKBENCH_PLAN.md](PROJECT_WORKBENCH_PLAN.md)，实际数据／API 边界见 [ARCHITECTURE.md](ARCHITECTURE.md)，检测模型来源、候选依赖与已知 metadata 例外见 [DETECTION_MODELS.md](DETECTION_MODELS.md)。模型与部署验证未完成前，不将“第一部分 CUDA 可用”写入发行承诺。
 
+## 2026-09-12 預排版擴充
+
+依後續需求，預排版僅匯出 `bt.json`，移除「導出項目」按鈕及項目 ZIP 匯出 API。伺服器保存及既有封存匯入保留，使用者關閉網頁後可重開原項目。
+
+本地測試新增明確選用 Apple GPU（`COMIC_PRELAYOUT_DEVICE=mps`）的路徑，可引用已有外置模型及 Python；預設 CUDA、GPU 任務互斥與不回退 CPU 的約束保持。真實本地模型結果另記於下方驗證文件，不作 CUDA 鏡像發布依據。
+
+工作樹 `codex/prelayout-web` 在既有工程內增加獨立資料的網頁預排版，包含連續頁面、分級預覽、BT／LabelPlus、文字與多選編輯、草稿／版本衝突、唯讀量測匹配、封存重開，以及外部 CTD／OCR 背景任務。沒有引入角度測量工具、measure 編輯、獨立倉庫或桌面打包。
+
+本機證據集中在 [PRELAYOUT_LOCAL_VALIDATION.md](PRELAYOUT_LOCAL_VALIDATION.md)。程式以 `codex/prelayout-web` 本地分支記錄，本次未部署、推送或建立 Tag；既有 `0.1.0` 與先前修圖 GPU 成功記錄不能代表此擴充已發布。CTD／OCR 的真實 CUDA、小批次、顯存切換與乾淨鏡像驗收仍是發布門檻，詳見 [部署準備](DEPLOYMENT.md#預排版部署準備)。
+
+發布還須確認：預排版和修圖封存不跨資料引用；固定字型與指標匹配；模型及推理環境在工程外；公開鏡像清理涵蓋預排版圖片、文字、匯入稿、常用框、任務及暫存 ZIP；保留所遷入核心及外部資產的來源授權材料。
+
 ## 基本原则
 
 - 本地是主要开发环境；完成修改和本地测试后才推送 GitHub。

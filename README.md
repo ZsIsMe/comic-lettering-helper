@@ -17,6 +17,48 @@
 
 首頁保留「舊版批次與歷史」入口。原有三步提交向導、任務列表、進度及候選 ZIP 下載繼續可用，舊任務不強制轉成項目。
 
+## 預排版功能
+
+預排版已在 `codex/prelayout-web` 工作樹完成本地功能整合，入口為「開啟預排版」或 `/#/prelayout`。它與圖片修復分別管理圖片、項目、文字進度、常用文字框及輸出，不需要先修圖。介面採連續多頁上下捲動，支持 BT／LabelPlus 匯入、文字移動／旋轉／參考框調整、橫直排、樣式、多選、撤銷／重做及獨立草稿恢復。排版只匯出 `bt.json`，不提供「導出項目」或項目 ZIP 匯出；項目仍保存在伺服器，關閉網頁後可重開續編。
+
+底圖使用分級預覽及可見區圖塊，文字保持獨立渲染；移動／旋轉期間凍結底圖，結束後保存。低解析度只影響預覽，原圖和排版座標保持原有精度。CTD／OCR 只生成唯讀量測版本，匹配需明確套用；沒有角度測量工具或人工編輯 `measure.json` 的入口。獨立倉庫與桌面端打包不在此次範圍。
+
+**部署狀態：程式記錄於 `codex/prelayout-web` 本地分支，尚未推送、合併回原分支或部署，未建立 Tag 或鏡像；CTD／OCR 真實 CUDA 推理與共享顯存切換仍待目標 GPU 驗收。** 詳見 [實作計劃與範圍](docs/PRELAYOUT_IMPLEMENTATION_PLAN.md)、[本地驗證](docs/PRELAYOUT_LOCAL_VALIDATION.md)及 [部署準備](docs/DEPLOYMENT.md#預排版部署準備)。
+
+### 預排版模型與配套資產
+
+權重、模型快取、字型與推理環境不加入工程或 Git。製作鏡像時，把下列五項資產直接放到工程外的 `/root/models/comic-prelayout/`，或透過 `COMIC_PRELAYOUT_MODEL_ROOT` 指定另一外部目錄。此表中的來源相對路徑均相對於使用者提供的 `/Users/zhongsheng/Projects/comic-text-detector`；維護者可從該工程已有資產準備鏡像，應用不自動下載。
+
+| 鏡像內檔名 | 已有來源相對路徑 | SHA-256（已讀取本機檔案核對） |
+| --- | --- | --- |
+| `comictextdetector.pt` | `data/comictextdetector.pt` | `1f90fa60aeeb1eb82e2ac1167a66bf139a8a61b8780acd351ead55268540cccb` |
+| `mit48pxctc_ocr.ckpt` | `data/models/mit48pxctc_ocr.ckpt` | `8b0837a24da5fde96c23ca47bb7abd590cd5b185c307e348c6e0b7238178ed89` |
+| `alphabet-all-v5.txt` | `data/alphabet-all-v5.txt` | `c1295ae1962e69e35b5b225a0405d1f3432e368c9941d23bfd3acda12654da33` |
+| `NotoSansCJKjp-Medium.otf` | `assets/fonts/NotoSansCJKjp-Medium.otf` | `dd523e580e3413c480b2d701bf64e534c20f8419e3cfb6a44c2bdcd8d2a6c052` |
+| `NotoSansCJKjp-Medium.ink-metrics.json` | `assets/fonts/NotoSansCJKjp-Medium.ink-metrics.json` | `29a0af82d3501eab9bf8bb0f8de8294b972927eb7d6e863b7cfd2d165ce28a56` |
+
+CTD 單字框方法需要 CTD 權重；OCR 對齊字級方法需要全部五項。網頁預覽使用同一固定字型，透過同源 `/api/prelayout/font` 載入並帶版本快取鍵。缺少字型時提示系統替代字型，人工編輯仍可用；不同系統的替代字型外觀不保證一致。缺少模型時僅停用對應偵測方法，不自動切換演算法或 CPU 推理。
+
+`backend/requirements-prelayout.txt` 記錄已驗證可載入核心的本機依賴版本。參考環境為 Python 3.14.6、PyTorch 2.13.0、torchvision 0.28.0、macOS arm64；這不是 Linux CUDA 鎖定環境。鏡像須另建外部 Python 環境，選定相容的 PyTorch／torchvision CUDA wheels，完成下列預檢及真實 GPU 測試後，保存最終依賴清單。不要把新依賴裝進 ComfyUI 的 Python。
+
+```bash
+# 設定寫入目標鏡像的 .env；推理環境、模型均在原始碼目錄外。
+COMIC_PRELAYOUT_DATA_ROOT=/root/autodl-tmp/comic-inpaint/prelayout
+COMIC_PRELAYOUT_MODEL_ROOT=/root/models/comic-prelayout
+COMIC_PRELAYOUT_PYTHON=/root/comic-prelayout-venv/bin/python
+COMIC_PRELAYOUT_DEVICE=cuda
+
+# 從 /root/comic-inpaint 執行；需要先準備好上面的外部環境及五項資產。
+PYTHONPATH=backend /root/comic-prelayout-venv/bin/python -m prelayout_core.check \
+  --model-root /root/models/comic-prelayout --method ocr_aligned --require-cuda
+```
+
+本地測試可直接使用已有模型及隔離 Python，不必先放入鏡像。Apple Silicon 可明確設定 `COMIC_PRELAYOUT_DEVICE=mps`，並用 `prelayout_core.check --device mps` 預檢；預設仍為 `cuda`。設備由服務端設定並記入任務，不能由網頁請求改成 CPU。MPS 任務不依賴 CUDA 的 ComfyUI 服務，但仍取得共用 GPU gate，且強制 `PYTORCH_ENABLE_MPS_FALLBACK=0`；設備不可用時明確失敗。本地模型測試使用使用者指定資料夾的副本建立獨立預排版項目，原圖及譯稿保持不變。
+
+預檢只校驗資產、依賴、字型指標與指定 GPU 的可見性，不執行模型推理，回報的 `inference_verified` 固定為 `false`。`GET /api/prelayout/availability` 只檢查基本檔案及環境路徑，不能代替預檢。鏡像還須安裝 `ps`（Linux 通常由 `procps` 提供），供程序群組恢復與安全取消使用。
+
+來源核心固定於 commit `ffa7b7e2c3ea87c191d2483d736d0e1975179782`，保留 [來源與授權說明](backend/prelayout_core/NOTICE.md)。核心不依賴來源工程的本機路徑、Qt 或 QtWebEngine。
+
 ## 輸入與 GPU 規則
 
 - 原圖接受 PNG／JPG／JPEG，Mask 接受 PNG；文件夾只讀第一層，忽略 `._*`，重新選擇整批取代，按 stem 配對並拒絕重名、缺頁和尺寸不符。

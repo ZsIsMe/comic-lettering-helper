@@ -1,0 +1,39 @@
+const {chromium}=require(process.env.PRELAYOUT_PLAYWRIGHT || 'playwright');const assert=require('node:assert/strict');const fs=require('node:fs');const path=require('node:path');
+const base=process.env.PRELAYOUT_TEST_URL || 'http://127.0.0.1:6018',output=path.resolve(process.env.PRELAYOUT_TEST_OUTPUT || 'var-test/prelayout-browser'),fixture=JSON.parse(fs.readFileSync(path.join(output,'fixture.json')));
+const pause=ms=>new Promise(r=>setTimeout(r,ms)),p95=values=>values.sort((a,b)=>a-b)[Math.floor((values.length-1)*.95)];
+;(async()=>{
+ const browser=await chromium.launch({headless:true,...(process.env.PRELAYOUT_CHROME?{executablePath:process.env.PRELAYOUT_CHROME}:{})});const context=await browser.newContext({viewport:{width:1440,height:1000},deviceScaleFactor:1});context.setDefaultTimeout(15000);const page=await context.newPage(), errors=[],report={browser:browser.version(),synthetic:true};page.on('pageerror',e=>errors.push(e.message));
+ const api=base+'/api/prelayout/projects/'+fixture.id, route=api+'/pages/'+fixture.pages[96].id;
+ const read=async()=>(await(await page.request.get(route)).json());const save=async()=>{await page.getByRole('button',{name:/保\s*存/,exact:true}).click();await page.waitForFunction(()=>document.querySelector('.pl-title .ant-tag').textContent==='已保存')};
+ const center=async loc=>{const r=await loc.boundingBox();assert(r);return [r.x+r.width/2,r.y+r.height/2]};
+ try{
+  let data=await read();data.items=data.items.map((i,n)=>({...i,'font-size':48,'stroke-weight':10,rotation:0,x:.12+(n%7)*.12,y:.10+Math.floor(n/7)*.024}));
+  assert.equal((await page.request.patch(route+'/text',{data:{expected_revision:data.revision,operation_id:'render-'+Date.now(),items:data.items}})).status(),200);
+  await page.addInitScript(id=>{localStorage.setItem('pl-last-project',id);localStorage.setItem('pl-view-'+id,JSON.stringify({zoom:1}))},fixture.id);await page.goto(base+'/?prelayoutDiagnostics=1#/prelayout');await page.locator('.pl-pages-nav button').nth(96).click();
+  const id=data.items[0]._id, item=page.locator(`[data-item="${id}"]`);await item.waitFor();await page.waitForFunction(()=>[...document.fonts].some(f=>f.family.includes('Prelayout CJK')&&f.status==='loaded'));await pause(1000);
+  const recordFrames=async(fn)=>{
+   await page.evaluate(()=>{window.__frames=[];window.__latencies=[];window.__record=true;let last=performance.now();function frame(t){if(!window.__record)return;window.__frames.push(t-last);last=t;requestAnimationFrame(frame)};window.__pointer=()=>{const t=performance.now();requestAnimationFrame(()=>window.__latencies.push(performance.now()-t))};window.addEventListener('pointermove',window.__pointer,{passive:true});requestAnimationFrame(frame)});
+   await fn();return page.evaluate(()=>{window.__record=false;window.removeEventListener('pointermove',window.__pointer);return {frames:window.__frames.slice(2),latencies:window.__latencies.slice(2)}});
+  };
+  const c=await center(item);await page.mouse.move(...c);await page.mouse.down();
+  const drag=await recordFrames(async()=>{const start=Date.now();while(Date.now()-start<10000){const t=(Date.now()-start)/1000;await page.mouse.move(c[0]+25*Math.sin(t),c[1]+20*Math.cos(t));await pause(12)}await page.mouse.move(c[0]+10,c[1]+10)});await page.mouse.up();await save();
+  report.denseDrag={items:data.items.length,stroke:10,seconds:10,frameP95:p95(drag.frames),pointerRafP95:p95(drag.latencies)};
+  assert(report.denseDrag.frameP95<=20);assert(report.denseDrag.pointerRafP95<=50);
+  const mid=await center(item),handle=await center(page.getByRole('button',{name:'旋轉文字'})),angle=Math.atan2(handle[1]-mid[1],handle[0]-mid[0]),radius=Math.hypot(handle[0]-mid[0],handle[1]-mid[1]);
+  const cdp=await context.newCDPSession(page);await cdp.send('Tracing.start',{categories:'devtools.timeline,blink.user_timing,disabled-by-default-devtools.timeline.frame',transferMode:'ReturnAsStream'});
+  await page.mouse.move(...handle);await page.mouse.down();const rotation=await recordFrames(async()=>{const start=Date.now();while(Date.now()-start<10000){const a=angle+(Date.now()-start)/1800;await page.mouse.move(mid[0]+radius*Math.cos(a),mid[1]+radius*Math.sin(a));await pause(12)}});await page.mouse.up();await save();
+  const ended=new Promise(r=>cdp.once('Tracing.tracingComplete',r));await cdp.send('Tracing.end');const {stream}=await ended;let trace='';for(;;){const chunk=await cdp.send('IO.read',{handle:stream});trace+=chunk.base64Encoded?Buffer.from(chunk.data,'base64').toString():chunk.data;if(chunk.eof)break}await cdp.send('IO.close',{handle:stream});fs.writeFileSync(path.join(output,'rotation-trace.json'),trace);
+  const events=JSON.parse(trace).traceEvents;report.rotation={seconds:10,frameP95:p95(rotation.frames),pointerRafP95:p95(rotation.latencies),layoutEvents:events.filter(e=>e.name==='Layout'&&e.ph==='X').length,paintEvents:events.filter(e=>e.name==='Paint'&&e.ph==='X').length};assert(report.rotation.frameP95<=20);assert(report.rotation.pointerRafP95<=50);
+  const original=(await read()).items.find(i=>i._id===id), fitScale=(await page.locator(`[data-page="${fixture.pages[96].id}"]`).boundingBox()).width/2000;report.zoom=[];
+  for(const [label,factor] of [['50%',.5],['適合寬度',1],['200%',2]]){
+   await page.locator('.ant-select').filter({has:page.getByRole('combobox',{name:'縮放'})}).locator('.ant-select-selector').click();await page.locator('.ant-select-dropdown:visible .ant-select-item-option').filter({hasText:new RegExp('^'+label+'$')}).click();await pause(400);
+   const renderedScale=(await page.locator(`[data-page="${fixture.pages[96].id}"]`).boundingBox()).width/2000;assert(Math.abs(renderedScale-fitScale*factor)<.001,'The requested zoom actually changed page geometry');await page.keyboard.press('Escape');
+   const state=(await read()).items.find(i=>i._id===id);assert.equal(state.x,original.x);assert.equal(state.y,original.y);assert.equal(state.rotation,original.rotation);const geometry=await item.evaluate(el=>({x:parseFloat(el.style.left),y:parseFloat(el.style.top)}));assert(Math.abs(geometry.x-original.x*2000)<1);assert(Math.abs(geometry.y-original.y*3000)<1);report.zoom.push({factor,coordinateError:Math.max(Math.abs(geometry.x-original.x*2000),Math.abs(geometry.y-original.y*3000))});
+  }
+  // Cancel a real captured pointer after a partial move: neither server data nor DOM may drift.
+  await page.locator('.ant-select').filter({has:page.getByRole('combobox',{name:'縮放'})}).locator('.ant-select-selector').click();await page.locator('.ant-select-dropdown:visible .ant-select-item-option').filter({hasText:/^適合寬度$/}).click();await item.scrollIntoViewIfNeeded();const at=await center(item);
+  await item.evaluate(el=>el.addEventListener('pointerdown',e=>window.__pointerId=e.pointerId,{once:true}));await page.mouse.move(...at);await page.mouse.down();await page.mouse.move(at[0]+20,at[1]+20);await item.evaluate(el=>el.dispatchEvent(new PointerEvent('pointercancel',{pointerId:window.__pointerId,bubbles:true})));await page.mouse.up();await save();
+  const after=(await read()).items.find(i=>i._id===id);assert.equal(after.x,original.x);assert.equal(after.y,original.y);assert.equal(after.rotation,original.rotation);
+  await page.screenshot({path:path.join(output,'dense-editor.png')});assert.deepEqual(errors,[]);report.errors=errors;report.passed=true;fs.writeFileSync(path.join(output,'render-browser-report.json'),JSON.stringify(report,null,2));console.log('PASS render acceptance',report);
+ }catch(e){report.passed=false;report.failure=String(e);report.errors=errors;fs.writeFileSync(path.join(output,'render-browser-report.json'),JSON.stringify(report,null,2));await page.screenshot({path:path.join(output,'render-failure.png')}).catch(()=>{});throw e}finally{await browser.close()}
+})().catch(e=>{console.error(e);process.exitCode=1});

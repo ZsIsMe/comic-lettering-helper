@@ -12,6 +12,7 @@ import pytest
 from app.config import Settings
 from app.detection import DetectionManager, DetectionRequest
 from app.projects import ProjectStore, ProjectConflict
+from app.resources import ResourceGate as Gate
 from imaging.core import classify_page
 from imaging.models import DetectionUnavailable, load_config, validate_weights
 from imaging.worker import run_stage
@@ -97,18 +98,6 @@ def test_classify_worker_consumes_stage_cache_without_torch(tmp_path):
     run_stage('classify', {'pages': [page]}, {'mangalens': {'shrink_ratio': 0.02}}, tmp_path / 'progress.json')
     assert (output / 'overlay.png').is_file()
     assert json.loads((tmp_path / 'progress.json').read_text())['completed'] == 1
-
-
-class Gate:
-    owner = None
-    def claim(self, owner):
-        if self.owner is not None:
-            return False
-        self.owner = owner
-        return True
-    def release(self, owner):
-        if self.owner == owner:
-            self.owner = None
 
 
 def setup_manager(tmp_path):

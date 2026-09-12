@@ -102,7 +102,8 @@ class DetectionManager:
                 if pid_alive(record.get('pid')):
                     record['state'] = 'recovery_required'
                     record['error'] = '服務已重啟；偵測程序仍存在，等待程序退出後再恢復'
-                    if self.gpu_gate.claim(record['id']):
+                    self.gpu_gate.retain(record['id'])
+                    if self.active_id is None:
                         self.active_id, self.active_project = record['id'], record['project_id']
                 else:
                     record['state'] = 'failed'
