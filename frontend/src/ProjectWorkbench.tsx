@@ -133,6 +133,7 @@ function ProjectWorkspace({ initial, gpuOwner, onExit, onReadyToLeave }: { initi
   const [project, setProject] = useState(initial)
   const workspaceRoot = useRef<HTMLElement>(null)
   const [pageFilter, setPageFilter] = useState('all')
+  const [compareFilter, setCompareFilter] = useState('all')
   const [pageIndex, setPageIndex] = useState(0); const [step, setStep] = useState(0)
   const [workflow, setWorkflow] = useState<Workflow[]>(['flux2klein_lanpaint'])
   const [run, setRun] = useState<Run | null>(null); const [runId, setRunId] = useState(initial.current_run_id)
@@ -158,7 +159,7 @@ function ProjectWorkspace({ initial, gpuOwner, onExit, onReadyToLeave }: { initi
   const wasDetecting = useRef(initial.state === 'detecting')
   const page = project.pages[pageIndex]
   const pageStatus = (item: Project['pages'][number]) => !(liveRepair[item.id] !== undefined || item.mask_ready) ? 'untouched' : (liveRepair[item.id] ?? item.has_repair_mask) ? 'repair' : 'complete'
-  const visiblePages = project.pages.map((item, index) => ({item, index})).filter(({item}) => pageFilter === 'all' || pageStatus(item) === pageFilter)
+  const visiblePages = project.pages.map((item, index) => ({item, index})).filter(({item}) => step === 2 ? compareFilter === 'all' || (composition?.pages.find(p => p.page_id === item.id)?.confirmed ? 'confirmed' : 'pending') === compareFilter : pageFilter === 'all' || pageStatus(item) === pageFilter)
   const adjacentPage = (direction: number) => direction > 0 ? visiblePages.find(({index}) => index > pageIndex)?.index : visiblePages.slice().reverse().find(({index}) => index < pageIndex)?.index
   const currentPageId = useRef(page.id); currentPageId.current = page.id
   const url = projectUrl(project.id)
@@ -245,14 +246,14 @@ function ProjectWorkspace({ initial, gpuOwner, onExit, onReadyToLeave }: { initi
   }
   useEffect(() => {
     const keydown = (event: KeyboardEvent) => {
-      if (step !== 0 || !['PageUp', 'PageDown'].includes(event.key) || event.defaultPrevented || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return
+      if (![0, 2].includes(step) || !['PageUp', 'PageDown'].includes(event.key) || event.defaultPrevented || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return
       const root = workspaceRoot.current
       const target = event.target instanceof Element ? event.target : null
       if (!root?.getClientRects().length || target?.closest('input, textarea, select, [contenteditable="true"], [role="dialog"], [role="combobox"]') || document.querySelector('.ant-modal-wrap:not([style*="display: none"])')) return
       event.preventDefault()
       if (event.repeat || navigating.current || detecting) return
       const next = adjacentPage(event.key === 'PageDown' ? 1 : -1)
-      if (next !== undefined) void execute(() => navigate(0, next))
+      if (next !== undefined) void execute(() => navigate(step, next))
     }
     window.addEventListener('keydown', keydown)
     return () => window.removeEventListener('keydown', keydown)
@@ -331,7 +332,7 @@ function ProjectWorkspace({ initial, gpuOwner, onExit, onReadyToLeave }: { initi
       </Space></header>
     {error && <Alert type="error" showIcon closable onClose={() => setError('')} message={error} />}
     <Steps size="small" responsive={false} current={step} onChange={value => void execute(() => navigate(value))} items={[{ title: '準備與編輯' }, { title: '批量修復' }, { title: '比較合成', disabled: run?.state !== 'completed' }]} />
-    <div className={`project-body${step === 0 ? ' pages-collapsed' : ''}`}><aside id="editing-page-list" className="page-list" hidden={step === 0}>
+    <div className={`project-body${step !== 1 ? ' pages-collapsed' : ''}`}><aside id="editing-page-list" className="page-list" hidden={step !== 1}>
       <div className="page-status-legend"><span className="page-untouched">{step === 2 ? '待確認' : '未處理'}</span> · <span className="page-complete">{step === 2 ? '已確認' : '完成'}</span>{step !== 2 && <> · <span className="page-needs-repair">待修補</span></>}</div><List dataSource={project.pages} renderItem={(item, index) => <List.Item className={index === pageIndex ? 'selected' : ''} onClick={() => void execute(() => navigate(step, index))}>
         <strong className={step === 2 ? (composition?.pages.find(p => p.page_id === item.id)?.confirmed ? 'page-complete' : 'page-untouched') : (liveRepair[item.id] !== undefined || item.mask_ready) ? ((liveRepair[item.id] ?? item.has_repair_mask) ? 'page-needs-repair' : 'page-complete') : 'page-untouched'} title={(liveRepair[item.id] !== undefined || item.mask_ready) ? ((liveRepair[item.id] ?? item.has_repair_mask) ? '仍有待修補區域' : '已完成塗白，無待修補區域') : '尚未處理'}>{item.filename}</strong>
       </List.Item>} />
@@ -371,7 +372,15 @@ function ProjectWorkspace({ initial, gpuOwner, onExit, onReadyToLeave }: { initi
         </Card>}
       </>}
       {step === 2 && <>
-        <Space wrap className="editor-toolbar"><Text>{composition?.pages.filter(p => p.confirmed).length || 0} / {project.pages.length} 頁已確認</Text>
+        <Space wrap size={6} className="editor-toolbar compare-page-navigation">
+          <Button size="small" aria-label="上一頁" title="PageUp" disabled={busy || !assignment || adjacentPage(-1) === undefined} onClick={() => void execute(() => navigate(2, adjacentPage(-1)!))}>‹</Button>
+          <Select size="small" aria-label="選擇合成頁面" value={pageIndex} disabled={busy || !assignment} showSearch optionFilterProp="label" popupMatchSelectWidth={260} onChange={index => void execute(() => navigate(2, index))} options={[...visiblePages.map(({item,index}) => ({value:index,label:`${item.filename} · ${index+1}/${project.pages.length}`})), ...(!visiblePages.some(p => p.index === pageIndex) ? [{value:pageIndex,label:`${page.filename} · ${pageIndex+1}/${project.pages.length}`,disabled:true}] : [])]} />
+          <Button size="small" aria-label="下一頁" title="PageDown" disabled={busy || !assignment || adjacentPage(1) === undefined} onClick={() => void execute(() => navigate(2, adjacentPage(1)!))}>›</Button>
+          <Button size="small" onClick={() => setCompareFilter('all')}>全部 {project.pages.length}</Button>
+          <Button size="small" className="page-untouched" aria-pressed={compareFilter === 'pending'} onClick={() => setCompareFilter(compareFilter === 'pending' ? 'all' : 'pending')}>待確認 {composition?.pages.filter(p => !p.confirmed).length ?? '—'}</Button>
+          <Button size="small" className="page-complete" aria-pressed={compareFilter === 'confirmed'} onClick={() => setCompareFilter(compareFilter === 'confirmed' ? 'all' : 'confirmed')}>已確認 {composition?.pages.filter(p => p.confirmed).length ?? '—'}</Button>
+        </Space>
+        <Space wrap className="editor-toolbar">
           <Tag color={cp?.confirmed ? 'green' : 'orange'}>{cp?.passthrough ? '無需修復，沿用底圖' : cp?.confirmed ? '此頁已確認' : '此頁待確認'}</Tag>
           <label>羽化 <InputNumber disabled={busy || !composition} min={0} max={8} value={feather} onChange={v => void saveFeather(v || 0)} /> px</label>
           {composition && <><label>Mask 擴大 <InputNumber min={0} max={80} value={composition.settings.expand_px} onChange={v => void saveFeather(feather, {expand_px:v ?? 5})} /></label><label>差異閾值 <InputNumber min={1} max={255} value={composition.settings.threshold} onChange={v => void saveFeather(feather, {threshold:v ?? 12})} /></label><label>最小區域 <InputNumber min={1} max={10000} value={composition.settings.min_area} onChange={v => void saveFeather(feather, {min_area:v ?? 16})} /></label><Button disabled={busy} onClick={() => void saveFeather(feather)}>重算 Mask</Button></>}

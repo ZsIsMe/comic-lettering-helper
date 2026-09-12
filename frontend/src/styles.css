@@ -362,3 +362,7 @@ footer { padding: 20px 0; color: #746e63; font-size: 12px; }
 
 .canvas-scroll { display: flex; }
 .canvas-scroll canvas { flex: 0 0 auto; margin: auto; }
+
+.compare-page-navigation { padding: 3px 0; }
+.compare-page-navigation .ant-select { width: 170px; }
+.compare-page-navigation [aria-pressed="true"] { border-color: currentColor; background: #e1e9e5; }
