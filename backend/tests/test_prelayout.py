@@ -182,7 +182,7 @@ def test_missing_models_and_gpu_gate(store, project, tmp_path, monkeypatch):
         assert client.get('/api/projects').status_code == 404
         exported = client.get(f'{prefix}/export/bt')
         assert exported.status_code == 200
-        assert exported.headers['content-disposition'] == 'attachment; filename="bt.json"'
+        assert exported.headers['content-disposition'] == 'attachment; filename="Meo.json"'
         assert exported.json() == store.translation(project['id'])
         assert client.get(f'{prefix}/export/archive').status_code == 404
 

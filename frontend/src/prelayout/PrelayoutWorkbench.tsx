@@ -217,7 +217,7 @@ function Workspace({ project: initial, onExit, onReadyToLeave }: { project: Proj
       await Promise.all(result.pages.filter(page => page.id === current).map(page => controller.load(page.id)))
     }) })
   }
-  function downloadBt() { void execute(async () => { if (await controller.flush()) window.location.assign(`${projectPath(project.id)}/export/bt`) }) }
+  function downloadMeo() { void execute(async () => { if (await controller.flush()) window.location.assign(`${projectPath(project.id)}/export/bt`) }) }
   const onMeasure = useCallback((index: number, pageId: string) => {
     const state = controller.pages.get(pageId)
     const measure = state?.data.measure[index], box = measure?.xyxy_pixel
@@ -228,18 +228,18 @@ function Workspace({ project: initial, onExit, onReadyToLeave }: { project: Proj
   }, [controller, first, patch, selection, notices])
   return <main className="pl-shell pl-workspace">{modalContext}{noticesContext}
     <header className="pl-toolbar"><div className="pl-title"><Button onClick={() => void execute(async () => { if (await controller.flush()) await onExit() })}>項目列表</Button><strong>{project.name}</strong><Tag color={errors.length ? 'red' : controller.dirty ? 'orange' : 'green'}>{saving ? '保存中' : controller.dirty ? '尚未保存' : '已保存'}</Tag></div>
-      <Space wrap><Button onClick={() => modal.info({ title: '預排版快捷鍵', width: 650, content: <div className="pl-shortcut-help"><p>先點選文字，再使用移動、字級與旋轉快捷鍵。多選時每條文字分別調整；長按可連續操作，放開後記為一次撤銷。編輯輸入框或中文組字期間不攔截按鍵。</p><p>Mac 使用 ⌘／Option，Windows 使用 Ctrl／Alt。移動以原圖像素計算，與畫面縮放無關。</p><dl>{shortcutHelp.map(([action, keys]) => <div key={action}><dt>{action}</dt><dd>{keys}</dd></div>)}</dl></div> })}>快捷鍵</Button><Button onClick={() => void execute(async () => { await controller.flush() })}>保存</Button><Button onClick={downloadBt}>匯出 BT</Button><Button href="/downloads/LabelPlus_Ps_Script_ZS-1.8.0.zip" download="LabelPlus_Ps_Script_ZS-1.8.0.zip">配套PS腳本</Button></Space>
+      <Space wrap><Button onClick={() => modal.info({ title: '預排版快捷鍵', width: 650, content: <div className="pl-shortcut-help"><p>先點選文字，再使用移動、字級與旋轉快捷鍵。多選時每條文字分別調整；長按可連續操作，放開後記為一次撤銷。編輯輸入框或中文組字期間不攔截按鍵。</p><p>Mac 使用 ⌘／Option，Windows 使用 Ctrl／Alt。移動以原圖像素計算，與畫面縮放無關。</p><dl>{shortcutHelp.map(([action, keys]) => <div key={action}><dt>{action}</dt><dd>{keys}</dd></div>)}</dl></div> })}>快捷鍵</Button><Button onClick={() => void execute(async () => { await controller.flush() })}>保存</Button><Button onClick={downloadMeo}>匯出 Meo.json</Button><Button href="/downloads/LabelPlus_Ps_Script_ZS-1.8.0.zip" download="LabelPlus_Ps_Script_ZS-1.8.0.zip">配套PS腳本</Button></Space>
     </header>
     <div className="pl-tool-row"><Space wrap>
-      {(['bt', 'labelplus', 'clean'] as const).filter((kind): boolean => kind !== 'clean' || showCleanUpload).map(kind => <Button key={kind} disabled={busy} onClick={() => { importKind.current = kind; if (fileInput.current) { fileInput.current.accept = kind === 'bt' ? '.json' : kind === 'labelplus' ? '.txt' : '.png,.jpg,.jpeg'; fileInput.current.multiple = kind === 'clean'; fileInput.current.click() } }}>{kind === 'bt' ? '開啟 BT' : kind === 'labelplus' ? '匯入 LabelPlus' : '上傳去字圖'}</Button>)}
+      {(['bt', 'labelplus', 'clean'] as const).filter((kind): boolean => kind !== 'clean' || showCleanUpload).map(kind => <Button key={kind} disabled={busy} onClick={() => { importKind.current = kind; if (fileInput.current) { fileInput.current.accept = kind === 'bt' ? '.json' : kind === 'labelplus' ? '.txt' : '.png,.jpg,.jpeg'; fileInput.current.multiple = kind === 'clean'; fileInput.current.click() } }}>{kind === 'bt' ? '開啟 Meo.json' : kind === 'labelplus' ? '匯入LP.txt' : '上傳去字圖'}</Button>)}
       <input hidden ref={fileInput} type="file" onChange={e => { const list = files(e.target.files); e.target.value = ''; void execute(() => importFile(list)) }} />
       <Button onClick={() => add()}>新增文字</Button><Button onClick={() => controller.undo(selection.page)}>撤銷</Button><Button onClick={() => controller.undo(selection.page, true)}>重做</Button>
       <Select aria-label="縮放" title="相對適合寬度的縮放比例" value={zoom} onChange={setZoom} options={[...new Set([.5, .75, 1, 1.5, 2, 3, zoom])].sort((a, b) => a - b).map(value => ({ value, label: value === 1 ? '適合寬度' : `${Math.round(value * 100)}%` }))} />
       <Checkbox checked={compare} onChange={e => setCompare(e.target.checked)}>原圖對照</Checkbox><Checkbox checked={clean} onChange={e => setClean(e.target.checked)}>去字底圖</Checkbox><Checkbox checked={showMeasure} onChange={e => setShowMeasure(e.target.checked)}>偵測框</Checkbox>
     </Space></div>
     {(error || errors.length > 0) && <Alert type="error" message={error || errors[0]} closable onClose={() => setError('')} />}
+    <nav className="pl-pages-nav" aria-label="頁面導覽"><div className="pl-section-label">{project.pages.length} 頁</div>{project.pages.map((page, index) => <button key={page.id} className={current === page.id ? 'active' : ''} aria-current={current === page.id ? 'page' : undefined} title={page.name} onClick={() => go(page.id)}><span>{String(index + 1).padStart(2, '0')}</span><span>{page.name}</span></button>)}</nav>
     <div className="pl-layout">
-      <aside className="pl-pages-nav"><div className="pl-section-label">{project.pages.length} 頁</div>{project.pages.map((page, index) => <button key={page.id} className={current === page.id ? 'active' : ''} onClick={() => go(page.id)}><span>{String(index + 1).padStart(2, '0')}</span><span>{page.name}</span></button>)}</aside>
       <ContinuousPages project={project} controller={controller} selection={selection} onSelect={select} zoom={zoom} onZoom={setZoom} compare={compare} clean={clean} showMeasure={showMeasure} jump={jump} onCurrent={currentPage} onMeasure={onMeasure} onPointer={pointerChanged} onFontWheel={fontWheel} onInteractionChange={interactionChanged} />
       <aside className="pl-inspector">
         <h2>文字編輯</h2>{state?.conflict && <Space wrap><Button onClick={() => void execute(() => controller.resolve(selection.page, true))}>保留我的草稿</Button><Button onClick={() => void execute(() => controller.resolve(selection.page, false))}>載入伺服器版</Button></Space>}

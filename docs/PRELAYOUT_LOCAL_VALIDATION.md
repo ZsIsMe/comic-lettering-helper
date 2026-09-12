@@ -153,3 +153,7 @@ PYTHONPATH=backend /Users/zhongsheng/Projects/comic-text-detector/ctd_overlay_pr
 5. 乾淨鏡像檢查、敏感資料與預排版資料清理、Git commit／Tag／鏡像版本記錄。
 
 操作順序見 [部署準備](DEPLOYMENT.md#預排版部署準備)。本次本地測試服務只綁定 `127.0.0.1:6018`，未操作 AutoDL。
+
+## 檔案名稱更新
+
+介面統一為「開啟 Meo.json」「匯出 Meo.json」「匯入LP.txt」，下載名稱為 `Meo.json`。原有 JSON 內容格式、LabelPlus 解析及內部 `/export/bt` 路徑保留。上文 `bt.json` 為當時歷史測試名稱；正式 API 測試已改為核對新下載名與原內容一致，瀏覽器測試腳本同步更新文案，但本輪不重新執行瀏覽器操作。
