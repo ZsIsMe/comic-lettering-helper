@@ -2,7 +2,7 @@ import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useSta
 import { Alert, Button, Checkbox, InputNumber, Select, Slider, Space, Spin } from 'antd'
 import { renderEditViews } from './edit-preview'
 import { combineSelection, magicSelection, polygonSelection, rectangleSelection, type SelectionOperation } from './selection-core'
-import { applyCategoryMask, applySpecialSelection, categoryMask, mergeLayerRegion, type EditCategory, type EditLayers, type EditRect } from './mask-edit-core'
+import { applyCategoryMask, applySpecialSelection, textRepairMask, categoryMask, mergeLayerRegion, type EditCategory, type EditLayers, type EditRect } from './mask-edit-core'
 import { LocalEditWindow } from './LocalEditWindow'
 
 type Pixels = { overlay: ImageData; other: ImageData; edited: ImageData; assignment: Uint16Array }
@@ -87,6 +87,7 @@ export const RasterEditor = forwardRef<RasterHandle, Props>(function RasterEdito
   const pixels = useRef<Pixels | null>(null)
   const base = useRef<ImageData | null>(null)
   const detectedText = useRef<ImageData | null>(null)
+  const repairText = useRef<Uint8Array | null>(null)
   const frame = useRef<number | null>(null)
   const candidates = useRef<Map<number, { image: ImageData; diff: ImageData }>>(new Map())
   const canvasRefs = useRef<Map<number, HTMLCanvasElement>>(new Map())
@@ -215,6 +216,7 @@ export const RasterEditor = forwardRef<RasterHandle, Props>(function RasterEdito
       const decoded = await Promise.all((p.candidates || []).map(async candidate => ({ code: candidate.code,
         image: await load(candidate.url, p.width, p.height), diff: await load(candidate.diffUrl, p.width, p.height) })))
       if (cancelled) return
+      repairText.current = textRepairMask(text?.data, p.width, p.height)
       base.current = b; detectedText.current = text; pixels.current = { overlay, other, edited, assignment }
       candidates.current = new Map(decoded.map(item => [item.code, item]))
       setLoading(false)
@@ -301,7 +303,7 @@ export const RasterEditor = forwardRef<RasterHandle, Props>(function RasterEdito
   }
   function editedSelection(before: Pixels, selection: Uint8Array, op: Gesture['operation'], target = category, fillColor = color): Pixels {
     const data = layers(before)
-    if (op === 'clear' || op === 'swap') return replaceLayers(before, applySpecialSelection(data, selection, op, rgb(fillColor)), width, height)
+    if (op === 'clear' || op === 'swap') return replaceLayers(before, applySpecialSelection(data, selection, op, rgb(fillColor), repairText.current), width, height)
     const current = categoryMask(data, target)
     const next = combineSelection(current, selection, width, height, op, intersectOffset)
     const paint = ['add', 'selection_inner', 'add_selection_inner'].includes(op) ? combineSelection(new Uint8Array(width * height), selection, width, height, op) : undefined
@@ -543,7 +545,7 @@ export const RasterEditor = forwardRef<RasterHandle, Props>(function RasterEdito
       </div>
       <div className="edit-control-footer">
         <div className="editor-context-hint">
-          <span className="mask-action-hint" aria-label="Mask 互換">純色填充 ↔ 待修補</span>
+          <span className="mask-action-hint" title="純色轉待修補只保留文字及人工範圍，撤掉框內氣泡擴展填色" aria-label="Mask 互換">純色填充 ↔ 待修補</span>
           <small>{special === 'clear' ? '左鍵框選，同時清除兩類 Mask' : tool === 'lasso' ? '逐點選取 · Enter 閉合 · Backspace 退點 · Esc 取消' : tool === 'local' ? '框選局部範圍，套用才回寫' : tool === 'bounds' ? '拖動藍色範圍四邊' : tool === 'magic' ? '綠色預覽添加，紅色預覽減去；點擊套用' : '右鍵清除 · Cmd／Ctrl＋右鍵拖框互換'}</small>
         </div>
         {zoomControls}

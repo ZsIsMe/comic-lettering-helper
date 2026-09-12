@@ -15,6 +15,7 @@ from starlette.concurrency import run_in_threadpool
 from starlette.background import BackgroundTask
 
 from .projects import ACTIVE_STATES, ProjectConflict, ProjectStore, atomic_json, digest_file, relative_path
+from .detection_options import DetectionOptions
 from .repository import now_iso
 from .schemas import JobRecord
 from .storage import save_uploads
@@ -162,6 +163,8 @@ def import_project(store: ProjectStore, repository, archive_path: Path, max_byte
         project = json.loads((stage / 'project.json').read_text())
         if project.get('version') != 1 or not project.get('pages'):
             raise ValueError('項目缺少原圖或版本不支援')
+        if 'detection_options' in project:
+            project['detection_options'] = DetectionOptions.model_validate(project['detection_options']).model_dump()
         stems, page_ids = set(), set()
         def verify_asset(relative):
             path = stage.joinpath(*relative_path(relative).parts)
@@ -303,8 +306,9 @@ def create_project_router(settings, repository, manager, store: ProjectStore) ->
         return projects
 
     @router.post('', status_code=201)
-    async def create(name: str = Form('未命名項目'), source_files: list[UploadFile] = File(...), mask_files: list[UploadFile] | None = File(None)):
+    async def create(name: str = Form('未命名項目'), source_files: list[UploadFile] = File(...), mask_files: list[UploadFile] | None = File(None), detection_options: str | None = Form(None)):
         try:
+            options = DetectionOptions.model_validate_json(detection_options).model_dump() if detection_options is not None else None
             if manager.gpu_gate.owner is not None:
                 raise ProjectConflict('GPU 任務運行期間暫停上傳')
             with tempfile.TemporaryDirectory(prefix='comic-project-upload-') as temporary:
@@ -314,7 +318,7 @@ def create_project_router(settings, repository, manager, store: ProjectStore) ->
                     if any(Path(file.filename or '').suffix.lower() != '.png' for file in mask_files):
                         raise ValueError('Mask 只接受 PNG')
                     masks = await save_uploads(mask_files, Path(temporary) / 'mask', max_bytes)
-                return await run_in_threadpool(store.create, name, sources, masks)
+                return await run_in_threadpool(store.create, name, sources, masks, detection_options=options)
         except Exception as exc:
             fail(exc)
 

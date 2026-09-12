@@ -11,10 +11,18 @@ export interface Page {
   thumbnail?: string
   detected_text?: string
 }
+export interface DetectionOptions {
+  mask_dilate: number
+  mask_mode: 'text_onomatopoeia' | 'text' | 'onomatopoeia' | 'all'
+  bubble_enabled: boolean
+  bubble_shrink_percent: number
+}
+export const defaultDetectionOptions: DetectionOptions = { mask_dilate: 2, mask_mode: 'text_onomatopoeia', bubble_enabled: true, bubble_shrink_percent: 2 }
 export interface Project {
   id: string; name: string; revision: number; state: string; pages: Page[]
   runs: { id: string; snapshot_id: string; workflows: Workflow[]; created_at: string }[]
   current_run_id: string | null; created_at: string; updated_at: string; storage_bytes?: number
+  detection_options?: DetectionOptions
   detection?: { id: string; state: string; message: string; error?: string | null } | null
 }
 export interface Run {

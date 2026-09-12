@@ -54,7 +54,8 @@ def validate_manifest(manifest):
 
 def run_stage(stage, manifest, config, progress):
     import numpy as np
-    from .models import validate_weights, require_device, device_metrics, RFDetector, MangaLensDetector
+    from .models import validate_weights, require_device, device_metrics, RFDetector, MangaLensDetector, bubbles_enabled
+    use_bubbles = bubbles_enabled(config)
     validate_manifest(manifest)
     if stage == 'check':
         validate_weights(config)
@@ -62,14 +63,15 @@ def run_stage(stage, manifest, config, progress):
         import cv2  # noqa: F401
         import rfdetr  # noqa: F401
         import safetensors  # noqa: F401
-        import ultralytics  # noqa: F401
+        if use_bubbles:
+            import ultralytics  # noqa: F401
         torch = require_device(config)
         value = {'stage': stage, **device_metrics(config, torch)}
         atomic_json(progress, value)
         print(json.dumps(value), flush=True)
         return
     started = time.monotonic()
-    detector = RFDetector(config) if stage == 'rf' else MangaLensDetector(config) if stage == 'mangalens' else None
+    detector = RFDetector(config) if stage == 'rf' else MangaLensDetector(config) if stage == 'mangalens' and use_bubbles else None
     load_seconds = time.monotonic() - started
     total = len(manifest['pages'])
     for index, page in enumerate(manifest['pages']):
@@ -80,11 +82,11 @@ def run_stage(stage, manifest, config, progress):
             save_image(output / 'text_mask.png', detector.predict(rgb))
         elif stage == 'mangalens':
             text_mask = read_image(output / 'text_mask.png', 'L')
-            polygons = detector.predict(rgb) if np.any(text_mask) else []
+            polygons = detector.predict(rgb) if detector is not None and np.any(text_mask) else []
             atomic_json(output / 'bubbles.json', [p.tolist() for p in polygons])
         elif stage == 'classify':
             from .core import classify_page
-            polygons = [np.asarray(p, np.float32) for p in json.loads((output / 'bubbles.json').read_text())]
+            polygons = [np.asarray(p, np.float32) for p in json.loads((output / 'bubbles.json').read_text())] if use_bubbles else []
             overlay, other, edited, diagnostics = classify_page(rgb,
                 read_image(output / 'text_mask.png', 'L'), polygons,
                 overlay=read_image(page['overlay'], 'RGBA'), other=read_image(page['other'], 'L'),

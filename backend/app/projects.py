@@ -13,6 +13,7 @@ from pathlib import Path, PurePosixPath
 from PIL import Image, ImageChops
 
 from .repository import now_iso
+from .detection_options import DetectionOptions
 
 ACTIVE_STATES = {'queued', 'validating', 'running', 'packaging', 'abandoning'}
 
@@ -124,14 +125,17 @@ class ProjectStore:
             with self.lock(project_id):
                 self._readers[project_id] -= 1
 
-    def create(self, name: str, sources: dict[str, Path], masks: dict[str, Path] | None = None) -> dict:
+    def create(self, name: str, sources: dict[str, Path], masks: dict[str, Path] | None = None, *, detection_options: dict | None = None) -> dict:
         if not sources:
             raise ValueError('項目必須包含原圖')
         if masks is not None and sources.keys() != masks.keys():
             raise ValueError('原圖與 Mask 必須完整按檔名配對')
+        options = DetectionOptions.model_validate(detection_options).model_dump() if detection_options is not None else None
         project_id = uuid.uuid4().hex
         root = self.project_dir(project_id)
         project = {'version': 1, 'id': project_id, 'name': self.clean_name(name), 'revision': 0, 'state': 'ready', 'created_at': now_iso(), 'pages': [], 'runs': [], 'current_run_id': None}
+        if options is not None:
+            project['detection_options'] = options
         try:
             for order, (stem, original) in enumerate(sorted(sources.items())):
                 if Path(stem).name != stem or not stem or stem in ('.', '..'):

@@ -16,6 +16,6 @@ No weights were downloaded, no CUDA inference was run, and no remote environment
 
 ## Local model setup and validation
 
-Copy the model JSON into an ignored local data directory, set `device` to `mps` or `cpu`, and set the two weight paths to existing files. Point `COMIC_DETECTION_CONFIG` at that JSON and `COMIC_DETECTION_PYTHON` at an existing compatible environment. Do not modify ComfyUI or copy model files into Git. The web button reports the configured device. Model caches use the application data directory.
+Copy the model JSON into an ignored local data directory, set `device` to `mps` or `cpu`, and set the two weight paths to existing files. Point `COMIC_DETECTION_CONFIG` at that JSON and `COMIC_DETECTION_PYTHON` at an existing compatible environment. Do not modify ComfyUI or copy model files into Git. The web UI labels the action 自動檢測; model and device details remain in maintenance configuration and logs. Project settings may disable MangaLens; that mode runs RF only and does not require MangaLens weights or imports. Model caches use the application data directory.
 
 On 2026-09-12 both real models completed a one-page MPS run using the existing macOS reference environment, with no downloads or dependency installation. The resulting project was exported, imported into the local workbench and opened with its detected text layer. This validates the MPS path only; CPU configuration has unit coverage but was not used for real inference in this run. See [local MPS validation](LOCAL_MPS_VALIDATION.md). CUDA acceptance remains pending.

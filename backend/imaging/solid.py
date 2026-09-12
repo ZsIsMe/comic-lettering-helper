@@ -3,10 +3,11 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass
 import cv2
 import numpy as np
-from .bubbles import fill_bubbles, spatial_spread
+from .bubbles import fill_bubbles, spatial_spread, _polygon_mask
 
 REPAIR_EXPAND_PX = 3
 SAMPLE_RING_PX = 3
+EXTERIOR_CONTEXT_RING_PX = 12
 GROUP_MERGE_PX = 16
 BLOCK_PADDING_PX = 8
 
@@ -412,6 +413,27 @@ def _background_wand_sample(
         return best_selection
     return sample_ring
 
+def _exterior_context_sample(text_mask, repair_area):
+    # Look beyond white lettering outlines as well as the immediate edge.
+    expanded = cv2.dilate(repair_area, _kernel(EXTERIOR_CONTEXT_RING_PX))
+    expanded[(repair_area > 0) | (text_mask > 0)] = 0
+    return expanded
+
+def _bubble_regions(bubble_polygons, shape):
+    regions = []
+    for polygon in bubble_polygons or []:
+        polygon = np.asarray(polygon, np.float32)
+        if polygon.ndim == 2 and polygon.shape[1] == 2 and len(polygon) >= 3 and np.isfinite(polygon).all():
+            regions.append(_polygon_mask(polygon, shape) > 0)
+
+    return regions
+
+def _text_in_bubble(local_text, regions):
+    active = local_text > 0
+    pixels = np.count_nonzero(active)
+    return pixels > 0 and any(np.count_nonzero(region & active) >= 0.98 * pixels
+                              for region in regions)
+
 def background_sample_from_mask(img: np.ndarray, mask: np.ndarray) -> np.ndarray:
     height, width = mask.shape[:2]
     sample_mask = np.zeros((height, width), dtype=np.uint8)
@@ -419,7 +441,7 @@ def background_sample_from_mask(img: np.ndarray, mask: np.ndarray) -> np.ndarray
         sample_mask = cv2.bitwise_or(sample_mask, background)
     return sample_mask
 
-def iter_background_samples_from_mask(img: np.ndarray, mask: np.ndarray):
+def iter_background_samples_from_mask(img: np.ndarray, mask: np.ndarray, bubble_polygons=None):
     color_img = img[:, :, :3].copy() if len(img.shape) == 3 else cv2.cvtColor(img, cv2.COLOR_GRAY2BGR)
     height, width = mask.shape[:2]
     text_mask = np.where(mask > 0, 255, 0).astype(np.uint8)
@@ -427,13 +449,17 @@ def iter_background_samples_from_mask(img: np.ndarray, mask: np.ndarray):
     repair_kernel = _kernel(REPAIR_EXPAND_PX)
     ring_kernel = _kernel(SAMPLE_RING_PX)
 
+    regions = _bubble_regions(bubble_polygons, text_mask.shape)
     for box in boxes:
         local_text = _mask_for_box(text_mask, box)
         if not np.any(local_text):
             continue
         repair_area, sample_ring = _sample_ring_for_local_text(text_mask, local_text, repair_kernel, ring_kernel)
         try:
-            yield _background_wand_sample(color_img, text_mask, repair_area, sample_ring)
+            if _text_in_bubble(local_text, regions):
+                yield _background_wand_sample(color_img, text_mask, repair_area, sample_ring)
+            else:
+                yield _exterior_context_sample(text_mask, repair_area)
         except Exception:
             yield sample_ring
 
@@ -553,6 +579,31 @@ def _best_quality(color_img: np.ndarray, repair_area: np.ndarray, sample_ring: n
         return full
     return max(solid_directionals, key=lambda item: item.score)
 
+def _outside_quality(color_img, repair_area, sample_ring):
+    """Exterior text needs the unfiltered ring and evidence from every side."""
+    full = _quality_from_sample(color_img, sample_ring, 'full')
+    checks = {}
+    ys, xs = np.where(repair_area > 0)
+    cy, cx = (ys.min() + ys.max()) / 2, (xs.min() + xs.max()) / 2
+    yy, xx = np.ogrid[:sample_ring.shape[0], :sample_ring.shape[1]]
+    dx, dy = xx - cx, yy - cy
+    sectors = {
+        'top': (dy < 0) & (np.abs(dy) >= np.abs(dx)),
+        'bottom': (dy >= 0) & (np.abs(dy) >= np.abs(dx)),
+        'left': (dx < 0) & (np.abs(dx) > np.abs(dy)),
+        'right': (dx >= 0) & (np.abs(dx) > np.abs(dy)),
+    }
+    for direction, sector in sectors.items():
+        sample = np.where(sector, sample_ring, 0).astype(np.uint8)
+        quality = _quality_from_sample(color_img, sample, 'full')
+        quality.is_solid &= quality.sample_pixels >= MIN_DIRECTIONAL_SAMPLE_PIXELS
+        checks[direction] = asdict(quality)
+    colors = np.array([full.fill_bgr] + [q['fill_bgr'] for q in checks.values()])
+    full.is_solid &= full.sampled_cells >= 2
+    full.is_solid &= all(q['is_solid'] for q in checks.values())
+    full.is_solid &= int(np.max(np.ptp(colors, axis=0))) <= DIRECTIONAL_FILL_AGREEMENT_MAX
+    return full, checks
+
 def _solid_overlay_from_mask(
     img: np.ndarray,
     mask: np.ndarray,
@@ -573,15 +624,28 @@ def _solid_overlay_from_mask(
     other_mask = np.zeros((height, width), dtype=np.uint8)
     background_sample_mask = np.zeros((height, width), dtype=np.uint8)
     debug_blocks = []
+    bubble_regions = _bubble_regions(bubble_polygons, text_mask.shape)
 
     for box in boxes:
         local_text = _mask_for_box(text_mask, box)
         if not np.any(local_text):
             continue
         repair_area, sample_ring = _sample_ring_for_local_text(text_mask, local_text, repair_kernel, ring_kernel)
-        background_sample = _background_wand_sample(color_img, text_mask, repair_area, sample_ring)
+        # A box intersection is not containment. Crossing or unknown regions
+        # use the complete exterior test, including when detection is disabled.
+        in_bubble = _text_in_bubble(local_text, bubble_regions)
+        direction_checks = {}
+        if in_bubble:
+            background_sample = _background_wand_sample(color_img, text_mask, repair_area, sample_ring)
+            quality = _best_quality(color_img, repair_area, background_sample)
+        else:
+            background_sample = _exterior_context_sample(text_mask, repair_area)
+            quality, direction_checks = _outside_quality(color_img, repair_area, background_sample)
+            near_quality, near_checks = _outside_quality(color_img, repair_area, sample_ring)
+            color_delta = int(np.max(np.abs(np.array(quality.fill_bgr) - near_quality.fill_bgr)))
+            quality.is_solid &= near_quality.is_solid and color_delta <= DIRECTIONAL_FILL_AGREEMENT_MAX
+            direction_checks['near_ring'] = dict(asdict(near_quality), directions=near_checks)
         background_sample_mask = cv2.bitwise_or(background_sample_mask, background_sample)
-        quality = _best_quality(color_img, repair_area, background_sample)
 
         if quality.is_solid:
             active = repair_area > 0
@@ -593,25 +657,33 @@ def _solid_overlay_from_mask(
             other_mask = cv2.bitwise_or(other_mask, repair_area)
 
         block_debug = asdict(quality)
+        block_debug['in_bubble'] = in_bubble
+        block_debug['direction_checks'] = direction_checks
         block_debug['box'] = [int(value) for value in box]
         debug_blocks.append(block_debug)
 
     bubble_records = []
     ignored_boundary_noise = np.zeros(text_mask.shape, np.uint8)
     if bubble_polygons:
-        bubble_overlay, veto, bubble_sample, bubble_records = fill_bubbles(
+        bubble_overlay, _, _, bubble_records = fill_bubbles(
             color_img, text_mask, bubble_polygons, bubble_shrink_ratio, protected,
         )
-        # Bubble validation takes precedence over the local ring fallback,
-        # including failures and the rim intentionally excluded by erosion.
-        inside = veto > 0
-        overlay[inside] = 0
-        repair = cv2.dilate(text_mask, repair_kernel)
-        other_mask[inside & (repair > 0)] = 255
+        # Expansion is additive: neither a failed bubble check nor an
+        # accepted bubble may reclassify the text. OTHER blocks expansion.
+        candidate = bubble_overlay[:, :, 3] > 0
+        n, labels = cv2.connectedComponents(candidate.astype(np.uint8), connectivity=8)
+        for idx in range(1, n):
+            region = labels == idx
+            if np.any(region & (other_mask > 0)) or (protected is not None and np.any(region & (protected > 0))):
+                bubble_overlay[region] = 0
         accepted = bubble_overlay[:, :, 3] > 0
-        overlay[accepted] = bubble_overlay[accepted]
-        other_mask[accepted] = 0
-        background_sample_mask[inside] = bubble_sample[inside]
+        for record in bubble_records:
+            if record['accepted'] and 'box' in record:
+                x1, y1, x2, y2 = record['box']
+                if not np.any(accepted[y1:y2, x1:x2]):
+                    record.update(accepted=False, reason='local_not_solid')
+        added = accepted & (overlay[:, :, 3] == 0)
+        overlay[added] = bubble_overlay[added]
         # An accepted bubble may contain tiny detector islands on its outline.
         # Keep the source mask and artwork, but do not report these deliberately
         # ignored islands as an unfilled paragraph. Never waive manual OTHER.
@@ -621,27 +693,13 @@ def _solid_overlay_from_mask(
             for x, y, w, h in record.get('ignored_boundary_components', []):
                 island = _mask_for_box(text_mask, [x, y, x+w, y+h])
                 ignored_boundary_noise |= cv2.dilate(island, repair_kernel)
-        # A handful of isolated pixels left beside a verified fill are commonly
-        # frame antialiasing, not an unfilled character. Preserve their colour
-        # and suppress the warning only within a small absolute/relative budget.
-        near_fill = cv2.dilate(accepted.astype(np.uint8), _kernel(3)) > 0
-        n, labels, stats, _ = cv2.connectedComponentsWithStats(other_mask, connectivity=8)
-        tiny_edges = []
-        for idx in range(1, n):
-            x, y, w, h, size = stats[idx]
-            if size > 4:
-                continue
-            active = labels[y:y+h, x:x+w] == idx
-            if np.all(near_fill[y:y+h, x:x+w][active]):
-                tiny_edges.append(idx)
-        if sum(stats[idx, cv2.CC_STAT_AREA] for idx in tiny_edges) <= min(64, max(4, np.count_nonzero(accepted)*0.0005)):
-            ignored_boundary_noise[np.isin(labels, tiny_edges)] = 255
         if protected is not None:
             ignored_boundary_noise[protected > 0] = 0
         overlay[ignored_boundary_noise > 0] = 0
         other_mask[ignored_boundary_noise > 0] = 0
     if protected is not None:
         overlay[protected > 0] = 0
+        other_mask[(protected > 0) & (cv2.dilate(text_mask, repair_kernel) > 0)] = 255
     for record, box in zip(debug_blocks, boxes):
         record['local_is_solid'] = record['is_solid']
         block_repair = cv2.dilate(_mask_for_box(text_mask, box), repair_kernel) > 0

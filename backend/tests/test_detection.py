@@ -268,3 +268,223 @@ def test_cancel_waits_for_real_child_exit_before_releasing_gate(tmp_path, monkey
     assert manager.gpu_gate.owner is None
     assert manager.store.read(project['id'])['state'] == 'ready'
     assert manager.status(project['id'])['state'] == 'cancelled'
+
+
+def edited_detection_project(tmp_path, monkeypatch):
+    manager, _ = setup_manager(tmp_path)
+    sources = {}
+    for name in ('first', 'second'):
+        sources[name] = tmp_path / f'{name}.png'
+        Image.new('RGB', (140, 140), 'white').save(sources[name])
+    project = manager.store.create('existing edits', sources)
+    for page in project['pages']:
+        overlay = Image.new('RGBA', (140, 140))
+        overlay.putpixel((10, 10), (12, 34, 56, 255))
+        other, edited = Image.new('L', overlay.size), Image.new('L', overlay.size)
+        other.putpixel((11, 11), 255)
+        for point in ((10, 10), (11, 11), (12, 12)):
+            edited.putpixel(point, 255)  # Includes a deliberate empty/erased pixel.
+        detected = Image.new('L', overlay.size)
+        detected.putpixel((90, 90), 255)
+        project = manager.store.save_edit(project['id'], page['id'], 0, overlay, other, edited,
+                                          detected_text=detected)
+    monkeypatch.setattr(manager, 'availability', lambda: {'available': True})
+    monkeypatch.setattr(manager, '_comfy_release', lambda: None)
+    assets = {page['id']: {key: manager.store.asset_path(project['id'], page[key]).read_bytes()
+                          for key in ('source', 'overlay', 'other', 'edited', 'detected_text')}
+              for page in project['pages']}
+    return manager, project, assets
+
+
+def write_simulated_detection_stage(manager, record, name):
+    root = manager._task_dir(record['project_id'], record['id'])
+    manifest = json.loads((root / 'manifest.json').read_text())
+    for entry in manifest['pages']:
+        target = Path(entry['output'])
+        target.mkdir(parents=True, exist_ok=True)
+        if name == 'rf':
+            text = Image.new('L', (140, 140))
+            text.paste(255, (65, 65, 73, 73))
+            text.save(target / 'text_mask.png')
+        elif name == 'mangalens':
+            (target / 'bubbles.json').write_text('[]')
+    if name == 'classify':
+        config = json.loads((root / 'config.json').read_text())
+        run_stage(name, manifest, config, root / 'progress.json')
+    return manifest
+
+
+@pytest.mark.parametrize('replace_existing', [False, True])
+def test_detection_replace_uses_isolated_inputs_and_only_publishes_selected_page(tmp_path, monkeypatch, replace_existing):
+    manager, project, assets = edited_detection_project(tmp_path, monkeypatch)
+    selected, unselected = project['pages']
+    stages = []
+
+    async def stage(record, name):
+        stages.append(name)
+        assert record['replace_existing'] is replace_existing
+        # No edit is removed before completion, including during classification.
+        current = manager.store.read(project['id'])
+        assert current['pages'] == project['pages']
+        for page in current['pages']:
+            for key, content in assets[page['id']].items():
+                assert manager.store.asset_path(project['id'], page[key]).read_bytes() == content
+        manifest = write_simulated_detection_stage(manager, record, name)
+        assert manifest['replace_existing'] is replace_existing
+        assert len(manifest['pages']) == 1
+        entry = manifest['pages'][0]
+        assert entry['id'] == selected['id']
+        assert Path(entry['source']).read_bytes() == assets[selected['id']]['source']
+        for key in ('overlay', 'other', 'edited'):
+            if replace_existing:
+                assert Path(entry[key]).is_relative_to(manager._task_dir(project['id'], record['id']) / 'inputs')
+                with Image.open(entry[key]) as image:
+                    assert not np.asarray(image).any()
+            else:
+                assert Path(entry[key]).read_bytes() == assets[selected['id']][key]
+
+    monkeypatch.setattr(manager, '_stage', stage)
+    async def run():
+        request = dict(expected_revision=project['revision'], page_ids=[selected['id']])
+        if replace_existing:
+            request['replace_existing'] = True
+        await manager.submit(project['id'], DetectionRequest(**request))
+        await manager.task
+    asyncio.run(run())
+    assert stages == ['check', 'rf', 'mangalens', 'classify']
+    assert manager.status(project['id'])['state'] == 'completed'
+    saved = manager.store.read(project['id'])
+    result = manager.store.page(saved, selected['id'])
+    assert manager.store.page(saved, unselected['id']) == unselected
+    assert result['edit_revision'] == selected['edit_revision'] + 1
+    assert result['detection']['replace_existing'] is replace_existing
+    for page in saved['pages']:
+        assert manager.store.asset_path(project['id'], page['source']).read_bytes() == assets[page['id']]['source']
+    for key in ('overlay', 'other', 'edited'):
+        with Image.open(manager.store.asset_path(project['id'], result[key])) as image:
+            if key == 'overlay':
+                assert image.getpixel((69, 69)) == (255, 255, 255, 255)
+                assert image.getpixel((10, 10)) == ((0, 0, 0, 0) if replace_existing else (12, 34, 56, 255))
+            elif key == 'other':
+                assert image.getpixel((11, 11)) == (0 if replace_existing else 255)
+            else:
+                assert image.getpixel((12, 12)) == (0 if replace_existing else 255)
+    with Image.open(manager.store.asset_path(project['id'], result['detected_text'])) as text:
+        assert text.getpixel((90, 90)) == 0
+        assert text.getpixel((69, 69)) == 255
+    assert manager.gpu_gate.owner is None
+
+
+@pytest.mark.parametrize('failure', ['stage_failure', 'invalid_second_output', 'cancel_before_publish'])
+def test_replacement_failure_or_cancellation_preserves_all_existing_assets(tmp_path, monkeypatch, failure):
+    manager, project, assets = edited_detection_project(tmp_path, monkeypatch)
+
+    async def stage(record, name):
+        if failure == 'stage_failure' and name == 'mangalens':
+            raise RuntimeError('simulated model failure')
+        manifest = write_simulated_detection_stage(manager, record, name)
+        if name == 'classify':
+            if failure == 'invalid_second_output':
+                Image.new('L', (1, 1)).save(Path(manifest['pages'][1]['output']) / 'other.png')
+            elif failure == 'cancel_before_publish':
+                await manager.cancel(project['id'])
+
+    monkeypatch.setattr(manager, '_stage', stage)
+    async def run():
+        await manager.submit(project['id'], DetectionRequest(expected_revision=project['revision'], replace_existing=True))
+        await manager.task
+    asyncio.run(run())
+    status = manager.status(project['id'])
+    assert status['state'] == ('cancelled' if failure == 'cancel_before_publish' else 'failed')
+    assert status['applied'] == []
+    saved = manager.store.read(project['id'])
+    assert saved['pages'] == project['pages']
+    assert saved['state'] == 'ready'
+    for page in saved['pages']:
+        for key, content in assets[page['id']].items():
+            assert manager.store.asset_path(project['id'], page[key]).read_bytes() == content
+    assert manager.gpu_gate.owner is None
+
+
+@pytest.mark.parametrize('change', [
+    {'mask_dilate': -1}, {'mask_dilate': 65}, {'mask_dilate': 1.5},
+    {'mask_mode': 'bubble'}, {'bubble_shrink_percent': -0.01},
+    {'bubble_shrink_percent': 10.01}, {'bubble_shrink_percent': float('nan')},
+    {'bubble_shrink_percent': float('inf')}, {'device': 'cpu'},
+    {'path': '/tmp/model'}, {'class_thresholds': {'text': 0}},
+])
+def test_detection_options_reject_invalid_or_unrelated_settings(change):
+    from pydantic import ValidationError
+    options = dict(mask_dilate=2, mask_mode='text_onomatopoeia', bubble_enabled=True, bubble_shrink_percent=2)
+    with pytest.raises(ValidationError):
+        DetectionRequest(expected_revision=0, options=options | change)
+
+
+@pytest.mark.parametrize('dilation,shrink', [(0, 0), (64, 10)])
+def test_detection_options_accept_exact_limits(dilation, shrink):
+    request = DetectionRequest(expected_revision=0, options=dict(mask_dilate=dilation,
+        mask_mode='all', bubble_enabled=False, bubble_shrink_percent=shrink))
+    assert request.options.mask_dilate == dilation
+    assert request.options.bubble_shrink_percent == shrink
+
+
+def test_availability_distinguishes_optional_bubble_model_and_returns_server_defaults(tmp_path):
+    manager, _ = setup_manager(tmp_path)
+    config = json.loads(manager.config_path.read_text())
+    config['rf'].update(path=str(tmp_path / 'rf.safetensors'), mask_dilate=5, mask_mode='onomatopoeia')
+    config['rf'].pop('path_env', None)
+    Path(config['rf']['path']).write_bytes(b'present')
+    config['mangalens'].update(path=str(tmp_path / 'missing.pt'), enabled=False, shrink_ratio=.06)
+    config['mangalens'].pop('path_env', None)
+    manager.config_path = tmp_path / 'settings.json'
+    manager.config_path.write_text(json.dumps(config))
+    manager.python = sys.executable
+    status = manager.availability()
+    assert status['available'] is False
+    assert status['available_without_bubbles'] is True
+    assert status['errors_without_bubbles'] == []
+    assert status['defaults'] == dict(mask_dilate=5, mask_mode='onomatopoeia', bubble_enabled=False, bubble_shrink_percent=6)
+
+
+@pytest.mark.parametrize('explicit', [False, True])
+def test_detection_options_frozen_and_remembered_without_changing_server_config(tmp_path, monkeypatch, explicit):
+    manager, project, _ = edited_detection_project(tmp_path, monkeypatch)
+    config = json.loads(manager.config_path.read_text())
+    config['rf'].update(mask_dilate=5, mask_mode='text')
+    config['mangalens'].update(enabled=False, shrink_ratio=.04)
+    manager.config_path = tmp_path / 'settings.json'
+    original = json.dumps(config)
+    manager.config_path.write_text(original)
+    chosen = dict(mask_dilate=0, mask_mode='all', bubble_enabled=False, bubble_shrink_percent=10)
+    expected = chosen if explicit else dict(mask_dilate=5, mask_mode='text', bubble_enabled=False, bubble_shrink_percent=4)
+    monkeypatch.setattr(manager, 'availability', lambda: {'available': False, 'errors': ['missing manga'],
+        'available_without_bubbles': True, 'errors_without_bubbles': []})
+    stages = []
+    async def stage(record, name):
+        stages.append(name)
+        root = manager._task_dir(project['id'], record['id'])
+        frozen = json.loads((root / 'config.json').read_text())
+        assert frozen['rf']['mask_mode'] == expected['mask_mode']
+        assert frozen['rf']['mask_dilate'] == expected['mask_dilate']
+        assert frozen['rf']['class_thresholds'] == config['rf']['class_thresholds']
+        assert frozen['device'] == config['device']
+        assert frozen['mangalens']['enabled'] is False
+        assert frozen['mangalens']['shrink_ratio'] == expected['bubble_shrink_percent'] / 100
+        manifest = write_simulated_detection_stage(manager, record, name)
+        assert manifest['options'] == expected
+    monkeypatch.setattr(manager, '_stage', stage)
+    async def run():
+        request = DetectionRequest(expected_revision=project['revision'], replace_existing=True,
+                                   options=chosen if explicit else None)
+        record = await manager.submit(project['id'], request)
+        assert record['options'] == expected
+        assert manager.store.read(project['id'])['detection_options'] == expected
+        await manager.task
+    asyncio.run(run())
+    assert stages == ['check', 'rf', 'mangalens', 'classify']
+    assert manager.config_path.read_text() == original
+    assert manager.status(project['id'])['state'] == 'completed'
+    assert manager.status(project['id'])['options'] == expected
+    for page in manager.store.read(project['id'])['pages']:
+        assert page['detection']['options'] == expected
+        assert page['detection']['models'] == ['rf']

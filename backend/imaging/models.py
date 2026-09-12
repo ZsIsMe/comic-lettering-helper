@@ -11,6 +11,25 @@ class DetectionUnavailable(RuntimeError):
     pass
 
 
+RF_MASK_MODES = {
+    'text_onomatopoeia': ('text', 'onomatopoeia'),
+    'text': ('text',),
+    'onomatopoeia': ('onomatopoeia',),
+    'all': ('text', 'onomatopoeia', 'bubble', 'panel'),
+}
+
+
+def bubbles_enabled(config):
+    return config.get('mangalens', {}).get('enabled', True)
+
+
+def detection_options(config):
+    return {'mask_dilate': config['rf'].get('mask_dilate', 2),
+            'mask_mode': config['rf'].get('mask_mode', 'text_onomatopoeia'),
+            'bubble_enabled': bubbles_enabled(config),
+            'bubble_shrink_percent': config['mangalens'].get('shrink_ratio', 0.02) * 100}
+
+
 def configured_device(config):
     device = config.get('device')
     if device not in ('cuda:0', 'mps', 'cpu'):
@@ -30,7 +49,7 @@ def load_config(path):
 
 
 def validate_weights(config, verify_hash=True):
-    for name in ('rf', 'mangalens'):
+    for name in (('rf', 'mangalens') if bubbles_enabled(config) else ('rf',)):
         entry = config[name]
         path = Path(entry['path'])
         if not path.is_file():
@@ -107,6 +126,9 @@ class RFDetector:
     def predict(self, rgb):
         np, cv2 = self.np, self.cv2
         thresholds = self.config['class_thresholds']
+        mode = self.config.get('mask_mode', 'text_onomatopoeia')
+        if mode not in RF_MASK_MODES:
+            raise ValueError(f'不支援的塗白範圍：{mode}')
         names = ('text', 'onomatopoeia', 'bubble', 'panel')
         size = self.config['resolution']
         detections = self.model.predict(rgb, threshold=min(thresholds.values()),
@@ -117,7 +139,7 @@ class RFDetector:
                 if not 0 <= int(class_id) < len(names):
                     continue
                 name = names[int(class_id)]
-                if name in ('text', 'onomatopoeia') and float(confidence) >= thresholds[name]:
+                if name in RF_MASK_MODES[mode] and float(confidence) >= thresholds[name]:
                     active = np.asarray(instance, dtype=bool)
                     if active.shape != result.shape:
                         raise ValueError('RF 輸出 Mask 尺寸不一致')

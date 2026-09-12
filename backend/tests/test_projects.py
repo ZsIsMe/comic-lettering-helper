@@ -366,3 +366,60 @@ def test_import_validates_optional_detected_text_asset(tmp_path, invalid):
     with pytest.raises(ValueError):
         import_project(store, repository, archive, 1000000)
     assert len(store.list()) == 1
+
+
+def test_create_project_detection_settings_survive_reopen_and_archive_without_running_models(tmp_path):
+    store = ProjectStore(tmp_path / 'projects')
+    repository, manager = JobRepository(tmp_path / 'jobs'), Manager()
+    app = FastAPI()
+    app.include_router(create_project_router(Settings(data_root=tmp_path), repository, manager, store))
+    options = dict(mask_dilate=7, mask_mode='onomatopoeia', bubble_enabled=False, bubble_shrink_percent=3.5)
+    with TestClient(app) as client:
+        response = client.post('/api/projects', data={'name': 'new settings', 'detection_options': json.dumps(options)},
+            files={'source_files': ('01.png', png_upload('RGB', 'white'), 'image/png')})
+        assert response.status_code == 201, response.text
+        project = response.json()
+        assert project['detection_options'] == options
+        assert client.get(f"/api/projects/{project['id']}").json()['detection_options'] == options
+    assert project['revision'] == 0
+    assert project['state'] == 'ready'
+    assert 'detection_id' not in project
+    assert not project['pages'][0]['mask_ready']
+    assert not (store.project_dir(project['id']) / 'detections').exists()
+    assert manager.enqueued == []
+    assert manager.gpu_gate.owner is None
+    reopened = ProjectStore(store.root).read(project['id'])
+    assert reopened['detection_options'] == options
+    archive = export_project(store, repository, project['id'])
+    new_store = ProjectStore(tmp_path / 'restored')
+    imported = import_project(new_store, repository, archive, 1000000)
+    assert imported['id'] != project['id']
+    assert imported['detection_options'] == options
+    assert new_store.read(imported['id'])['detection_options'] == options
+
+
+@pytest.mark.parametrize('settings', ['not json', 'null', '[]', '{}',
+    json.dumps(dict(mask_dilate=65, mask_mode='text', bubble_enabled=True, bubble_shrink_percent=2)),
+    json.dumps(dict(mask_dilate=2, mask_mode='text', bubble_enabled=True, bubble_shrink_percent=11)),
+    json.dumps(dict(mask_dilate=2, mask_mode='text', bubble_enabled=True, bubble_shrink_percent=2, device='cpu')),
+])
+def test_create_rejects_invalid_detection_settings_before_persisting_project(tmp_path, settings):
+    store = ProjectStore(tmp_path / 'projects')
+    app = FastAPI()
+    app.include_router(create_project_router(Settings(data_root=tmp_path), JobRepository(tmp_path / 'jobs'), Manager(), store))
+    with TestClient(app) as client:
+        response = client.post('/api/projects', data={'detection_options': settings},
+            files={'source_files': ('01.png', png_upload('RGB', 'white'), 'image/png')})
+    assert response.status_code == 400, response.text
+    assert store.list() == []
+    assert not list(store.root.iterdir())
+
+
+def test_create_without_detection_settings_retains_existing_api_behavior(tmp_path):
+    store = ProjectStore(tmp_path / 'projects')
+    app = FastAPI()
+    app.include_router(create_project_router(Settings(data_root=tmp_path), JobRepository(tmp_path / 'jobs'), Manager(), store))
+    with TestClient(app) as client:
+        response = client.post('/api/projects', files={'source_files': ('01.png', png_upload('RGB', 'white'), 'image/png')})
+    assert response.status_code == 201
+    assert 'detection_options' not in response.json()

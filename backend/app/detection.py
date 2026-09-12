@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+from copy import deepcopy
 import json
 import os
 from pathlib import Path
@@ -13,6 +14,7 @@ from fastapi import APIRouter, HTTPException
 from PIL import Image, ImageChops
 from pydantic import BaseModel, Field
 
+from .detection_options import DetectionOptions
 from .projects import ProjectConflict, atomic_json
 from .repository import now_iso
 
@@ -22,6 +24,8 @@ ACTIVE = {'queued', 'checking', 'rf', 'mangalens', 'classify', 'saving', 'cancel
 class DetectionRequest(BaseModel):
     expected_revision: int = Field(ge=0)
     page_ids: list[str] | None = None
+    replace_existing: bool = False
+    options: DetectionOptions | None = None
 
 
 def pid_alive(pid):
@@ -49,18 +53,31 @@ class DetectionManager:
 
     def availability(self):
         # This imports only the stdlib adapter configuration, not torch/cv2.
-        from imaging.models import load_config, validate_weights
-        errors = []
+        from imaging.models import load_config, validate_weights, detection_options
+        errors, errors_without_bubbles = [], []
         device = None
+        defaults = None
         try:
             config = load_config(self.config_path)
             device = config['device']
-            validate_weights(config, verify_hash=False)
+            defaults = DetectionOptions(**detection_options(config)).model_dump()
+            for enabled, target in ((True, errors), (False, errors_without_bubbles)):
+                candidate = deepcopy(config)
+                candidate['mangalens']['enabled'] = enabled
+                try:
+                    validate_weights(candidate, verify_hash=False)
+                except (OSError, KeyError, ValueError, RuntimeError) as exc:
+                    target.append(str(exc))
         except (OSError, KeyError, ValueError, RuntimeError) as exc:
             errors.append(str(exc))
+            errors_without_bubbles.append(str(exc))
         if not self.python or not Path(self.python).is_file() or not os.access(self.python, os.X_OK):
-            errors.append('請設定 COMIC_DETECTION_PYTHON 為獨立偵測環境的 Python 執行檔')
+            message = '請設定 COMIC_DETECTION_PYTHON 為獨立偵測環境的 Python 執行檔'
+            errors.append(message)
+            errors_without_bubbles.append(message)
         return {'available': not errors, 'errors': errors, 'gpu_verified': False,
+                'available_without_bubbles': not errors_without_bubbles,
+                'errors_without_bubbles': errors_without_bubbles, 'defaults': defaults,
                 'active_id': self.active_id, 'device': device}
 
     def _task_dir(self, project_id, detection_id):
@@ -124,8 +141,21 @@ class DetectionManager:
 
     async def submit(self, project_id, request):
         available = self.availability()
-        if not available['available']:
-            raise ValueError('；'.join(available['errors']))
+        from imaging.models import load_config, detection_options
+        try:
+            frozen_config = load_config(self.config_path)
+            options = request.options or DetectionOptions(**detection_options(frozen_config))
+        except (OSError, KeyError, ValueError, RuntimeError) as exc:
+            raise ValueError(str(exc)) from exc
+        enabled = options.bubble_enabled
+        ready = available['available'] if enabled else available.get('available_without_bubbles', available['available'])
+        if not ready:
+            errors = available['errors'] if enabled else available.get('errors_without_bubbles', available['errors'])
+            raise ValueError('；'.join(errors))
+        # These four user settings only affect this task's frozen configuration.
+        frozen_config['rf'].update(mask_dilate=options.mask_dilate, mask_mode=options.mask_mode)
+        frozen_config['mangalens'].update(enabled=enabled, shrink_ratio=options.bubble_shrink_percent / 100)
+        effective_options = options.model_dump()
         detection_id = uuid.uuid4().hex
         if not self.gpu_gate.claim(detection_id):
             raise ProjectConflict('GPU 正在處理其他任務')
@@ -150,19 +180,30 @@ class DetectionManager:
                     # Revisions/assets are immutable while the project is locked.
                     for key in ('source', 'overlay', 'other', 'edited'):
                         entry[key] = str(self.store.asset_path(project_id, page[key]))
+                    if request.replace_existing:
+                        # Reset only the isolated task input. Authoritative layers
+                        # remain intact until every output has been validated.
+                        inputs = root / 'inputs' / page['id']
+                        inputs.mkdir(parents=True)
+                        for key, mode in (('overlay', 'RGBA'), ('other', 'L'), ('edited', 'L')):
+                            path = inputs / f'{key}.png'
+                            Image.new(mode, (page['width'], page['height'])).save(path)
+                            entry[key] = str(path)
                     pages.append(entry)
-                atomic_json(root / 'manifest.json', {'version': 1, 'pages': pages})
+                atomic_json(root / 'manifest.json', {'version': 1, 'pages': pages,
+                                                   'replace_existing': request.replace_existing,
+                                                   'options': effective_options})
                 # Freeze config, including environment-resolved model paths.
-                from imaging.models import load_config
-                frozen_config = load_config(self.config_path)
                 for name in ('rf', 'mangalens'):
                     frozen_config[name].pop('path_env', None)
                 atomic_json(root / 'config.json', frozen_config)
                 record = {'id': detection_id, 'project_id': project_id, 'state': 'queued', 'pid': None,
                           'device': frozen_config['device'],
+                          'replace_existing': request.replace_existing,
+                          'options': effective_options,
                           'created_at': now_iso(), 'total': len(pages), 'error': None, 'applied': []}
                 self._write(record)
-                project.update(state='detecting', detection_id=detection_id)
+                project.update(state='detecting', detection_id=detection_id, detection_options=effective_options)
                 self.store.write(project)
             self.active_id, self.active_project = detection_id, project_id
             self.cancel_requested = False
@@ -231,8 +272,12 @@ class DetectionManager:
     def _apply(self, record):
         root = self._task_dir(record['project_id'], record['id'])
         device = record.get('device', 'cuda:0')
+        options = record.get('options')
+        models = ['rf', 'mangalens'] if options is None or options['bubble_enabled'] else ['rf']
         manifest = json.loads((root / 'manifest.json').read_text())
         with self.store.lock(record['project_id']):
+            if self.cancel_requested:
+                raise asyncio.CancelledError()
             project = self.store.read(record['project_id'])
             # Verify the whole batch before writing any authoritative edit.
             for entry in manifest['pages']:
@@ -253,7 +298,9 @@ class DetectionManager:
                 output = Path(entry['output'])
                 with Image.open(output / 'overlay.png') as overlay, Image.open(output / 'other.png') as other, Image.open(output / 'edited.png') as edited, Image.open(output / 'text_mask.png') as detected_text:
                     self.store.save_edit(record['project_id'], entry['id'], entry['expected_revision'], overlay, other, edited,
-                        detection_metadata={'id': record['id'], 'models': ['rf', 'mangalens'], 'device': device,
+                        detection_metadata={'id': record['id'], 'models': models, 'device': device,
+                            'options': options,
+                            'replace_existing': record.get('replace_existing', False),
                             'cache': str(output.relative_to(self.store.project_dir(record['project_id'])))},
                         detected_text=detected_text)
                 record['applied'].append(entry['id'])
@@ -267,6 +314,8 @@ class DetectionManager:
                 if self.cancel_requested:
                     raise asyncio.CancelledError()
                 await self._stage(record, stage)
+            if self.cancel_requested:
+                raise asyncio.CancelledError()
             record['state'] = 'saving'
             self._write(record)
             await asyncio.to_thread(self._apply, record)

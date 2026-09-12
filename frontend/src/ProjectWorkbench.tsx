@@ -2,8 +2,9 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { Alert, Button, Card, Checkbox, Empty, Input, InputNumber, List, Modal, Progress, Select, Space, Spin, Steps, Tag, Typography, message } from 'antd'
 import LegacyBatch from './App'
 import { ImagePicker } from './ImagePicker'
+import { DetectionSettings } from './DetectionSettings'
 import { RasterEditor, type RasterHandle, type RasterSave } from './RasterEditor'
-import { active, api, assetUrl, json, projectUrl, workflowOptions, type Composition, type Project, type Run, type Workflow } from './workbench-api'
+import { active, api, assetUrl, defaultDetectionOptions, json, projectUrl, workflowOptions, type Composition, type DetectionOptions, type Project, type Run, type Workflow } from './workbench-api'
 
 const { Title, Text } = Typography
 const remember = 'comic-workbench-project'
@@ -21,6 +22,8 @@ export default function ProjectWorkbench() {
   const [current, setCurrent] = useState<Project | null>(null)
   const [loading, setLoading] = useState(true)
   const [createOpen, setCreateOpen] = useState(false)
+  const [createDetectionOptions, setCreateDetectionOptions] = useState<DetectionOptions>(defaultDetectionOptions)
+  const createSettingsTouched = useRef(false)
   const [picking, setPicking] = useState(false)
   const [name, setName] = useState(''); const [sources, setSources] = useState<File[]>([]); const [masks, setMasks] = useState<File[]>([])
   const [busy, setBusy] = useState(false); const [error, setError] = useState('')
@@ -43,6 +46,13 @@ export default function ProjectWorkbench() {
       .then(h => setGpuOwner(h.gpu_owner || h.active_job_id)).catch(() => setGpuOwner('unavailable'))
     check(); const timer = setInterval(check, 3000); return () => clearInterval(timer)
   }, [])
+  useEffect(() => {
+    let live = true
+    void api<{ defaults?: DetectionOptions }>('/api/detection/availability').then(value => {
+      if (live && !createSettingsTouched.current && value.defaults) setCreateDetectionOptions(value.defaults)
+    }).catch(() => {})
+    return () => { live = false }
+  }, [])
   function open(project: Project) { localStorage.setItem(remember, project.id); setCurrent(project) }
   async function action(callback: () => Promise<void>) {
     setBusy(true); setError('')
@@ -52,6 +62,7 @@ export default function ProjectWorkbench() {
   async function create() {
     await action(async () => {
       const body = new FormData(); body.append('name', name || '未命名項目')
+      body.append('detection_options', JSON.stringify(createDetectionOptions))
       for (const f of sources) body.append('source_files', f, f.name)
       for (const f of masks) body.append('mask_files', f, f.name)
       const project = await api<Project>('/api/projects', { method: 'POST', body })
@@ -97,12 +108,19 @@ export default function ProjectWorkbench() {
       <p>將刪除此項目的原圖、編輯、修復及合成結果（{bytes(deleteTarget?.storage_bytes)}）。此操作無法復原。</p>
       {deleteError && <Alert type="error" showIcon message={deleteError} />}
     </Modal>
-    <Modal title="新建漫畫項目" open={createOpen} onCancel={() => { if (!busy && !picking) setCreateOpen(false) }} onOk={() => void create()} okText="建立項目" confirmLoading={busy} okButtonProps={{ disabled: !sources.length || !!gpuOwner || picking }}>
-      <Space direction="vertical" size="large" style={{ width: '100%' }}>
+    <Modal title="新建漫畫項目" width={700} styles={{ body: { maxHeight: '70vh', overflowY: 'auto' } }} open={createOpen} onCancel={() => { if (!busy && !picking) setCreateOpen(false) }} onOk={() => void create()} okText="建立項目" confirmLoading={busy} okButtonProps={{ disabled: !sources.length || !!gpuOwner || picking }}>
+      <Space direction="vertical" size="middle" style={{ width: '100%' }}>
         <Input aria-label="項目名稱" placeholder="項目名稱" value={name} onChange={e => setName(e.target.value)} maxLength={80} />
+        <div className="create-image-inputs">
         <div><p>原圖（必須）· 已選 {sources.length} 張</p><ImagePicker disabled={busy || picking || !!gpuOwner} onBusyChange={setPicking} label="原圖" onSelect={(files, folderName) => { setSources(files); if (!name) setName(folderName || files[0]?.name.replace(/\.[^.]+$/, '') || '') }} /></div>
         <div><p>Mask（可選）· 已選 {masks.length} 張</p><ImagePicker disabled={busy || picking || !!gpuOwner} onBusyChange={setPicking} label="Mask" mask onSelect={setMasks} /></div>
+        </div>
         <Text type="secondary">已有 Mask 可直接進入批量修復；只上傳原圖則先自動檢測或人工編輯。資料夾僅匯入第一層，每次選擇整批取代。</Text>
+        <section className="create-detection-settings" aria-label="新項目的自動檢測設定">
+          <h3>自動檢測設定</h3>
+          <Text type="secondary">設定會隨項目保存；建立後按「自動檢測」才開始執行。已有 Mask 可跳過檢測。</Text>
+          <DetectionSettings value={createDetectionOptions} onChange={value => { createSettingsTouched.current = true; setCreateDetectionOptions(value) }} disabled={busy || picking} />
+        </section>
       </Space>
     </Modal>
   </main>
@@ -118,8 +136,11 @@ function ProjectWorkspace({ initial, gpuOwner, onExit }: { initial: Project; gpu
   const [assignment, setAssignment] = useState<number[][] | null>(null)
   const [busy, setBusy] = useState(false); const [error, setError] = useState(''); const [dirty, setDirty] = useState(false)
   const [editorKey, setEditorKey] = useState(0)
-  const [availability, setAvailability] = useState<{ available?: boolean; ready?: boolean; errors?: string[]; message?: string; device?: string } | null>(null)
+  const [availability, setAvailability] = useState<{ available?: boolean; ready?: boolean; available_without_bubbles?: boolean; defaults?: DetectionOptions; errors?: string[]; message?: string } | null>(null)
   const [detection, setDetection] = useState<Detection | null>(null)
+  const [detectConfirmOpen, setDetectConfirmOpen] = useState(false)
+  const [detectError, setDetectError] = useState('')
+  const [detectionOptions, setDetectionOptions] = useState<DetectionOptions>(initial.detection_options || defaultDetectionOptions)
   const [feather, setFeather] = useState(1)
   const editor = useRef<RasterHandle>(null)
   const editRevision = useRef(initial.pages[0].edit_revision)
@@ -132,6 +153,9 @@ function ProjectWorkspace({ initial, gpuOwner, onExit }: { initial: Project; gpu
   const compUrl = `${url}/compositions/${runId}`
   const detecting = project.state === 'detecting' || !!(detection && detectionActive(detection.state))
   const running = !!(run && active(run.state))
+  const detectionReady = !!(availability?.available ?? availability?.ready)
+  const detectionCanConfigure = detectionReady || !!availability?.available_without_bubbles
+  const chosenDetectionReady = detectionReady || (!detectionOptions.bubble_enabled && !!availability?.available_without_bubbles)
 
   async function execute(fn: () => Promise<void>) {
     if (navigating.current) return
@@ -150,8 +174,11 @@ function ProjectWorkspace({ initial, gpuOwner, onExit }: { initial: Project; gpu
   }, [initial.id, runId])
 
   useEffect(() => {
-    void api<typeof availability>('/api/detection/availability').then(setAvailability).catch(() => setAvailability(null))
-  }, [])
+    void api<typeof availability>('/api/detection/availability').then(value => {
+      setAvailability(value)
+      if (!initial.detection_options && value?.defaults) setDetectionOptions(value.defaults)
+    }).catch(() => setAvailability(null))
+  }, [initial.detection_options])
   useEffect(() => {
     if (!runId) { setRun(null); return }
     let live = true
@@ -210,11 +237,15 @@ function ProjectWorkspace({ initial, gpuOwner, onExit }: { initial: Project; gpu
   }
   async function detect() {
     await execute(async () => {
-      if (!await flush()) return
-      const p = await reloadProject()
-      await api(`${url}/detect`, json('POST', { expected_revision: p.revision }))
-      wasDetecting.current = true
-      setProject({ ...p, state: 'detecting' }); setDetection({ state: 'queued', message: '等待偵測' })
+      setDetectError('')
+      try {
+        if (!await flush()) throw new Error('目前修改未能保存，尚未開始重新檢測。')
+        const p = await reloadProject()
+        await api(`${url}/detect`, json('POST', { expected_revision: p.revision, replace_existing: true, options: detectionOptions }))
+        wasDetecting.current = true
+        setProject({ ...p, state: 'detecting', detection_options: detectionOptions }); setDetection({ state: 'queued', message: '等待偵測' })
+        setDetectConfirmOpen(false)
+      } catch (err) { setDetectError(err instanceof Error ? err.message : String(err)) }
     })
   }
   async function submit() {
@@ -257,6 +288,16 @@ function ProjectWorkspace({ initial, gpuOwner, onExit }: { initial: Project; gpu
   })) || []
   return <main className="app-shell project-workspace">
     {modalHolder}
+    <Modal title="自動檢測設定" width={600} open={detectConfirmOpen} onCancel={() => { if (!busy) setDetectConfirmOpen(false) }}
+      onOk={() => void detect()} okText="覆蓋並重新檢測" cancelText="取消" confirmLoading={busy}
+      okButtonProps={{ danger: true, disabled: !!gpuOwner || detecting || !chosenDetectionReady }} cancelButtonProps={{ disabled: busy }} closable={!busy} maskClosable={!busy} keyboard={!busy}>
+      <DetectionSettings value={detectionOptions} onChange={setDetectionOptions} disabled={busy} />
+      {!chosenDetectionReady && <Alert type="info" showIcon message="氣泡辨識暫不可用，可關閉此選項後檢測。" />}
+      <p>將從原圖重新檢測「{project.name}」全部 {project.pages.length} 頁，不只目前這一頁。</p>
+      <p>新結果會覆蓋第一部分的純色填充、待修補 Mask、匯入 Mask 與人工修改。原圖及既有修復結果保留。</p>
+      <p>檢測結果完成並驗證後才回寫；取消此視窗不會啟動檢測。</p>
+      {detectError && <Alert type="error" showIcon message={detectError} />}
+    </Modal>
     <header className="project-header"><div><Button onClick={() => void execute(async () => { if (await flush()) await onExit() })}>← 項目列表</Button><Title level={2}>{project.name}</Title><Text>{project.pages.length} 頁 · {dirty ? '有未保存修改' : '項目保存在伺服器'}</Text></div>
       <Space wrap><Button onClick={() => { let nextName = project.name; modal.confirm({ title: '項目名稱', content: <Input defaultValue={nextName} onChange={e => { nextName = e.target.value }} />, onOk: async () => { if (!await flush()) throw new Error('請先保存'); const p = await reloadProject(); setProject(await api<Project>(url, json('PATCH', { name: nextName, expected_revision: p.revision }))) } }) }}>重命名</Button>
         <Button disabled={busy || !!gpuOwner || detecting} onClick={() => void download(`${url}/export`)}>導出項目</Button>
@@ -269,11 +310,11 @@ function ProjectWorkspace({ initial, gpuOwner, onExit }: { initial: Project; gpu
       </List.Item>} />
     </aside><section className="project-content">
       {step === 0 && <>
-        <Space wrap className="editor-toolbar"><Button type="primary" loading={detecting} disabled={!!gpuOwner || busy || detecting || !(availability?.available ?? availability?.ready)} onClick={() => void detect()}>自動檢測</Button>
+        <Space wrap className="editor-toolbar"><Button type="primary" loading={detecting} disabled={!!gpuOwner || busy || detecting || !detectionCanConfigure} onClick={() => { setDetectError(''); setDetectConfirmOpen(true) }}>自動檢測</Button>
           <Button disabled={detecting || !!gpuOwner} onClick={() => void download(`${url}/export-pair`)}>導出底圖＋Mask</Button>
           <Button onClick={() => void execute(() => navigate(1))}>前往批量修復 →</Button>
         </Space>
-        {!(availability?.available ?? availability?.ready) && <Alert type="info" message="自動檢測暫不可用，可先手動編輯。" />}
+        {!detectionCanConfigure && <Alert type="info" message="自動檢測暫不可用，可先手動編輯。" />}
         {detecting ? <Alert type="info" showIcon message={detection?.progress ? `${detectionLabels[detection.state] || detectionLabels[detection.progress.stage] || '自動檢測中'} · ${detection.progress.completed} / ${detection.progress.total} 頁` : detectionLabels[detection?.state || ''] || '自動檢測中，完成後即可編輯'} action={<Button danger onClick={() => void execute(async () => { await api(`${url}/detection/${detection?.state === 'recovery_required' ? 'recover' : 'cancel'}`, { method: 'POST' }); await reloadProject(); setEditorKey(k => k + 1) })}>{detection?.state === 'recovery_required' ? '檢查恢復' : '停止偵測'}</Button>} /> : <RasterEditor key={`${page.id}-${editorKey}`} ref={editor} width={page.width} height={page.height} mode="edit"
           baseUrl={assetUrl(project.id, page.source)} overlayUrl={`${assetUrl(project.id, page.overlay)}?v=${page.edit_revision}`} otherUrl={`${assetUrl(project.id, page.other)}?v=${page.edit_revision}`} editedUrl={`${assetUrl(project.id, page.edited)}?v=${page.edit_revision}`}
           detectedTextUrl={page.detected_text ? assetUrl(project.id, page.detected_text) : undefined}
