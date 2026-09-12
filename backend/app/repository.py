@@ -21,6 +21,8 @@ class JobRepository:
 
     def write(self, record: JobRecord) -> None:
         record.updated_at = now_iso()
+        if record.finished_at is None and record.state in {"completed", "failed", "abandoned"}:
+            record.finished_at = record.updated_at
         path = self.job_dir(record.id) / "job.json"
         path.parent.mkdir(parents=True, exist_ok=True)
         temporary = path.with_suffix(".tmp")

@@ -35,6 +35,7 @@ class JobRecord(BaseModel):
     error: str | None = None
     created_at: str
     updated_at: str
+    finished_at: str | None = None
     download_ready: bool = False
     results: dict[str, list[str]] = Field(default_factory=dict)
     result_directory: str | None = None

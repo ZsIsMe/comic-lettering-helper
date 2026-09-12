@@ -287,3 +287,8 @@ Image Runtime 1.1.0
 ### 0.2.2 網頁升級
 
 0.2.2 加入 6008 網頁安裝器：保存編輯後確認升級，只接受固定 GitHub 倉庫的較新正式 Tag。獨立程序下載 application.zip 與 SHA-256，逐檔校驗並檢查執行環境需求；只更新 backend/app、backend/imaging、backend/prelayout_core、frontend/dist，不覆蓋模型、環境、設定或資料。更新時封鎖其他應用 API，已有請求／GPU 任務時拒絕；備份後只重啟 6008，新版啟動失敗自動回復。狀態與備份存於資料根 updates/。發布前先 build，再用 deploy/build-update.py 產生更新附件並上傳該 Tag 的 Release。0.2.1 需先部署此安裝器一次，後續由網頁更新。
+
+
+### 0.2.3 批量修復計時
+
+批量修復顯示每秒更新的「已運行」，從任務建立起包含準備、模型載入、生成與打包；完成、失敗、放棄時固定「總耗時」。後端保存 finished_at，之後修改其他 metadata 不會延長耗時，舊紀錄使用 updated_at 相容。計時由模擬任務測試驗證，不需要實際執行 ComfyUI；此版作為 0.2.2 → 0.2.3 網頁升級驗收目標。
