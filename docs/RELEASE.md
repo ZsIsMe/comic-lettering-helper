@@ -249,3 +249,7 @@ Image Runtime 1.1.0
 資料分別位於 `<COMIC_DATA_ROOT>/projects`、`prelayout`、`edgewhite`，API 使用獨立路徑；合併不搬移其他工作樹的試用資料。預排版自訂根目錄不得重疊修圖、jobs 或 edgewhite。CTD／OCR 與修圖偵測／ComfyUI 共用 ResourceGate，程序恢復時保留全部仍存活的佔用。原修圖工作流、批次器、輸入轉換與合成核心未改。
 
 整合驗收：前端 lint／build 與 58 項測試通過；後端 194 項測試通過。隔離瀏覽器使用合成圖片驗證三個入口與編輯頁、預排版文字修改跨模組返回後仍保存、返回修圖仍停在批量修復步驟。三個 API 清單各只包含自己的測試項目；無 GPU 任務。`make verify-local` 的倉庫工作流與前端通過，本機 /root/ComfyUI 缺 19 項外部環境；未做新的 CUDA 驗收。
+
+## 手塗工作流副本
+
+新增「Flux手塗去字」、「FireRed手塗去字」、「Qwen手塗去字」，使用 ComfyUI 原生遮罩編輯器。原三套生產工作流及網頁批次配置保持不變；使用與部署方式見[手塗工作流說明](../workflows/handpaint/README.md)。目前完成結構檢查，GPU 推理驗收待有卡環境執行。
