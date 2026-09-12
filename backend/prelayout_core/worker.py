@@ -77,6 +77,15 @@ def run_ctd(folder, record, images, models):
     atomic_json(images / 'ctd' / 'measure.json', measure)
     atomic_json(images / 'ctd' / 'measure.debug.json', debug)
     progress(folder, 'measuring', len(names), len(names))
+    # The upstream inpainted PNG is an alpha patch, not a complete background.
+    from .preview import composite_inpainted
+    progress(folder, 'previewing', 0, len(names))
+    print('生成 inpainted 預覽（OpenCV Telea，radius=3，mask_expansion=5）', flush=True)
+    core._write_inpainted_images(str(images), paths, names, block)
+    for index, name in enumerate(names, 1):
+        composite_inpainted(images / name, Path(paths['inpainted']) / f'{Path(name).stem}.png',
+                            images / 'ctd' / 'backgrounds' / f'{Path(name).stem}.png')
+        progress(folder, 'previewing', index, len(names))
 
 
 def run_ocr(folder, record, images, models):
@@ -136,7 +145,7 @@ def main():
     for page in record['pages']:
         atomic_json(images / 'ctd' / 'page-measures' / f'{page["id"]}.json', measure['pages'][page['name']])
     (images / 'ctd').rename(folder / 'output')
-    atomic_json(folder / 'output' / 'complete.json', {'pages': [page['name'] for page in record['pages']]})
+    atomic_json(folder / 'output' / 'complete.json', {'pages': [page['name'] for page in record['pages']], 'inpainted': True})
 
 
 if __name__ == '__main__':

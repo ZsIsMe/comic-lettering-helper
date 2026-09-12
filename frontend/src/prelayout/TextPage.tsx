@@ -4,6 +4,14 @@ import { type Item, type Page, uid } from './types'
 import { EditorState } from './editor-state'
 import { PreviewLayer } from './PreviewLayer'
 import { color, moved, resized, transform, type Selection, type PagePointer, type VisibleRegion } from './geometry'
+import { adjustedItems } from './shortcuts'
+
+const rotationCorners = [
+  { x: 'left', y: 'top', delta: 1, label: '左上：逆時針旋轉' },
+  { x: 'right', y: 'top', delta: -1, label: '右上：順時針旋轉' },
+  { x: 'left', y: 'bottom', delta: 1, label: '左下：逆時針旋轉' },
+  { x: 'right', y: 'bottom', delta: -1, label: '右下：順時針旋轉' },
+] as const
 
 export const TextPage = memo(function TextPage({ project, page, scale, edge, clean, readonly, controller, selection, onSelect, onInteracting, showMeasure, onMeasure, region, detailed, interacting, onPointer }: {
   project: string; page: Page; scale: number; edge: number; clean: boolean; readonly?: boolean;
@@ -47,6 +55,7 @@ export const TextPage = memo(function TextPage({ project, page, scale, edge, cle
   function down(event: ReactPointer, item: Item, mode = 'move') {
     if (readonly || event.button !== 0 || !scene.current || !state) return
     event.stopPropagation(); event.preventDefault()
+    scene.current.closest<HTMLElement>('.pl-viewport')?.focus({ preventScroll: true })
     let ids = selection.page === page.id && selection.ids.includes(item._id) ? selection.ids : [item._id]
     if (event.shiftKey) ids = selection.page === page.id ? [...new Set([...selection.ids, item._id])] : [item._id]
     onSelect({ page: page.id, ids }); onInteracting(page.id)
@@ -96,18 +105,36 @@ export const TextPage = memo(function TextPage({ project, page, scale, edge, cle
     const item: Item = { _id: uid(), text: '新文字', x: (event.clientX - rect.left) / (page.width * scale), y: (event.clientY - rect.top) / (page.height * scale), 'font-size': 40, rotation: 0, orientation: 'vertical', color: '#000000', 'stroke-color': '#ffffff', 'stroke-weight': 0, match_status: 'manual' }
     controller.edit(page.id, [...state.data.items, item]); onSelect({ page: page.id, ids: [item._id] })
   }
+  function rotate(delta: number) {
+    const state = controller.pages.get(page.id)
+    if (readonly || interacting || dragging.current || !state || selection.page !== page.id) return
+    const items = adjustedItems(state.data.items, selection.ids, { kind: 'rotate', delta }, page.width, page.height)
+    if (items !== state.data.items) controller.edit(page.id, items)
+  }
   const selected = selection.page === page.id ? selection.ids : []
   return <div className="pl-page" data-page={page.id} data-readonly={!!readonly} style={{ width: page.width * scale, height: page.height * scale }} onPointerMove={event => {
     if (readonly || dragging.current) return
     const rect = event.currentTarget.getBoundingClientRect()
     onPointer({ page: page.id, x: (event.clientX - rect.left) / (page.width * scale), y: (event.clientY - rect.top) / (page.height * scale) })
   }} onPointerLeave={() => { if (!readonly && !dragging.current) onPointer(null) }}>
-    <div className="pl-scene" ref={scene} style={{ width: page.width, height: page.height, transform: `scale(${scale})` }} onDoubleClick={add} onPointerDown={() => !readonly && onSelect({ page: page.id, ids: [] })}>
+    <div className="pl-scene" ref={scene} style={{ width: page.width, height: page.height, transform: `scale(${scale})` }} onDoubleClick={add} onPointerDown={event => {
+      if (readonly || event.button !== 0) return
+      scene.current?.closest<HTMLElement>('.pl-viewport')?.focus({ preventScroll: true })
+      onSelect({ page: page.id, ids: [] })
+    }}>
       <PreviewLayer project={project} page={page} edge={edge} scale={scale} clean={clean} region={region} detailed={detailed} interacting={interacting} />
       {!readonly && state?.data.items.map(item => <div key={item._id} data-item={item._id} className={`pl-text ${selected.includes(item._id) ? 'selected' : ''}`} style={{ left: item.x * page.width, top: item.y * page.height, transform: transform(item), fontSize: item['font-size'], writingMode: item.orientation === 'vertical' ? 'vertical-rl' : 'horizontal-tb', color: color(item.color), WebkitTextStroke: `${item['stroke-weight']}px ${color(item['stroke-color'])}`, outlineWidth: selected.includes(item._id) ? 1.5 / scale : 0 }}
         onPointerDown={event => down(event, item)} onPointerMove={move} onPointerUp={event => end(event)} onPointerCancel={event => end(event, true)} onDoubleClick={event => event.stopPropagation()}>
         {item.text || '\u200b'}
         {selected.includes(item._id) && <>
+          {rotationCorners.map(corner => <button key={`${corner.x}-${corner.y}`} type="button" className="pl-rotate-step" aria-label={corner.label} title={`${corner.label} 1°；Option／Alt 點擊 5°（套用所有選取文字）`} style={{
+            width: 22 / scale, height: 22 / scale, fontSize: 17 / scale, borderWidth: 1 / scale,
+            [corner.x]: -6 / scale, [corner.y]: -6 / scale,
+            transform: `translate(${corner.x === 'left' ? '-100%' : '100%'}, ${corner.y === 'top' ? '-100%' : '100%'}) rotate(${item.rotation}deg)`,
+          }} onPointerDown={event => {
+            event.stopPropagation(); event.preventDefault()
+            scene.current?.closest<HTMLElement>('.pl-viewport')?.focus({ preventScroll: true })
+          }} onClick={event => { event.stopPropagation(); rotate(corner.delta * (event.altKey ? 5 : 1)) }}>{corner.delta > 0 ? '↶' : '↷'}</button>)}
           <span className="pl-handle pl-rotate" title="拖曳旋轉" role="button" aria-label="旋轉文字" style={{ width: 12 / scale, height: 12 / scale, top: -26 / scale }} onPointerDown={event => down(event, item, 'rotate')} />
           <span className="pl-source-box" style={{ width: item.xyxy_pixel ? item.xyxy_pixel[2] - item.xyxy_pixel[0] : 60, height: item.xyxy_pixel ? item.xyxy_pixel[3] - item.xyxy_pixel[1] : 60, borderWidth: 1 / scale }}>
             <span className="pl-handle pl-resize" title="調整參考框" style={{ width: 10 / scale, height: 10 / scale }} onPointerDown={event => down(event, item, 'resize')} />

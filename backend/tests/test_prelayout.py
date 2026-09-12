@@ -21,6 +21,28 @@ def picture(size=(300, 400), fill='white'):
     out = io.BytesIO(); Image.new('RGB', size, fill).save(out, 'PNG'); return out.getvalue()
 
 
+def test_inpainted_overlay_preserves_transparent_pixels_and_checks_size(tmp_path):
+    from prelayout_core.preview import composite_inpainted
+    source, overlay, output = (tmp_path / name for name in ('source.png', 'overlay.png', 'preview.png'))
+    source.write_bytes(picture((30, 40)))
+    patch = Image.new('RGBA', (30, 40), (0, 0, 0, 0))
+    patch.putpixel((5, 5), (20, 40, 60, 255))
+    patch.putpixel((6, 5), (0, 0, 0, 128))
+    patch.save(overlay)
+    original = source.read_bytes()
+    composite_inpainted(source, overlay, output)
+    with Image.open(output) as image:
+        assert image.mode == 'RGB' and image.size == (30, 40)
+        assert image.getpixel((0, 0)) == (255, 255, 255)
+        assert image.getpixel((5, 5)) == (20, 40, 60)
+        assert image.getpixel((6, 5)) == (127, 127, 127)
+    assert source.read_bytes() == original
+    Image.new('RGBA', (31, 40)).save(overlay)
+    with pytest.raises(ValueError, match='同尺寸'):
+        composite_inpainted(source, overlay, tmp_path / 'bad.png')
+    assert not (tmp_path / 'bad.png').exists()
+
+
 @pytest.fixture
 def store(tmp_path):
     return PrelayoutStore(tmp_path / 'prelayout')
@@ -194,6 +216,31 @@ def test_matching_transaction_preserves_manual_and_rejects_stale(store, project)
     assert store.page(pid, page['id'])['items'][1]['match_status'] != 'manual'
     assert json.loads((folder / 'output' / 'measure.json').read_text()) == original_measure
     assert store.read(pid)['detection_id'] == did
+
+
+def test_inpainted_publication_requires_all_pages_and_keeps_text(store, project):
+    pid = project['id']; page = project['pages'][0]
+    store.save_page(pid, page['id'], 0, [item(match_status='manual')], 'existing-edit')
+    did, folder, _ = install_measure(store, project)
+    record = store.read(pid); record['detection_id'] = None; store.write(record)
+    before = store.read(pid); text = store.translation(pid)
+    detector = PrelayoutDetection(Settings(), store, ResourceGate())
+    atomic_json(folder / 'output' / 'complete.json', {'pages': [p['name'] for p in project['pages']], 'inpainted': True})
+    backgrounds = folder / 'output' / 'backgrounds'; backgrounds.mkdir()
+    (backgrounds / '2.png').write_bytes(picture(fill='#506070'))
+    with pytest.raises(FileNotFoundError): detector.publish(pid, did)
+    assert store.read(pid) == before
+    (backgrounds / '10.png').write_bytes(picture(fill='#506070'))
+    detector.publish(pid, did)
+    result = store.read(pid)
+    assert result['detection_id'] == did
+    assert all(p['clean_kind'] == 'inpainted' and p['clean'].startswith('clean/') for p in result['pages'])
+    assert store.translation(pid) == text
+    clean, clean_key = store.preview(pid, page['id'], 384, True)
+    _, source_key = store.preview(pid, page['id'], 384, False)
+    assert clean_key != source_key
+    with Image.open(io.BytesIO(clean)) as image:
+        assert max(abs(a - b) for a, b in zip(image.getpixel((0, 0)), (80, 96, 112))) <= 2
 
 
 def test_reader_allows_save_but_prevents_deletion_and_excludes_unpublished(store, project):

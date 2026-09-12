@@ -5,6 +5,7 @@ import { type Availability, type Detection, type Item, type Project, activeDetec
 import { EditorState } from './editor-state'
 import { ContinuousPages } from './ContinuousPages'
 import { type Selection, type PagePointer, color, moved, measureStyle } from './geometry'
+import { adjustedItems, textShortcut, shortcutHelp, type TextAdjustment } from './shortcuts'
 import './styles.css'
 
 export default function PrelayoutWorkbench({ onExit }: { onExit: () => void }) {
@@ -74,6 +75,8 @@ function Workspace({ project: initial, onExit }: { project: Project; onExit: () 
   const refreshingDetection = useRef(false)
   const pointer = useRef<PagePointer | null>(null)
   const pointerChanged = useCallback((value: PagePointer | null) => { pointer.current = value }, [])
+  const interacting = useRef(false)
+  const interactionChanged = useCallback((value: boolean) => { interacting.current = value }, [])
   const fileInput = useRef<HTMLInputElement>(null), importKind = useRef('bt')
   const state = controller.pages.get(selection.page)
   const selected = state?.data.items.filter(item => selection.ids.includes(item._id)) || []
@@ -147,31 +150,53 @@ function Workspace({ project: initial, onExit }: { project: Project; onExit: () 
     }
     notices.info('沒有待處理的未匹配或重複匹配文字')
   }
+  function shortcutBlocked(event: Event) {
+    const editing = (target: EventTarget | null) => target instanceof Element && !!target.closest('input,textarea,select,[contenteditable]:not([contenteditable="false"]),[role="combobox"],[role="textbox"],[role="spinbutton"]')
+    return busy || interacting.current || event.defaultPrevented || !!document.querySelector('.ant-modal-wrap:not([style*="display: none"])') || editing(event.target) || editing(document.activeElement)
+  }
+  function adjust(adjustment: TextAdjustment, continuing = false) {
+    const state = controller.pages.get(selection.page)
+    if (!state || !selection.ids.length) return false
+    const items = adjustedItems(state.data.items, selection.ids, adjustment, state.data.width, state.data.height)
+    const group = `${JSON.stringify(adjustment)}:${selection.ids.join(',')}`
+    if (items !== state.data.items) controller.edit(selection.page, items, true, group, continuing)
+    return true
+  }
+  function fontWheel(event: WheelEvent) {
+    if (shortcutBlocked(event) || !event.deltaY) return false
+    return adjust({ kind: 'font', delta: event.deltaY < 0 ? 2 : -2 })
+  }
   useEffect(() => {
     function key(event: KeyboardEvent) {
-      const target = event.target as HTMLElement
-      if (busy || document.querySelector('.ant-modal-wrap:not([style*="display: none"])') || target.closest('input,textarea,select,[contenteditable=true]')) return
+      if (shortcutBlocked(event) || event.isComposing || event.keyCode === 229) return
+      const meta = event.metaKey || event.ctrlKey
+      if (meta && !event.altKey && event.key.toLowerCase() === 's') { event.preventDefault(); void controller.flush(); return }
+      if (meta && !event.altKey && event.key.toLowerCase() === 'z') { event.preventDefault(); controller.undo(selection.page, event.shiftKey); return }
+      if (event.key === 'Escape') { setSelection(value => ({ ...value, ids: [] })); return }
+      if (!meta && !event.altKey && !event.shiftKey && event.key.toLowerCase() === 'q') { event.preventDefault(); if (!event.repeat) setClean(value => !value); return }
+      if (!meta && !event.altKey && !event.shiftKey && ['PageUp', 'PageDown'].includes(event.key)) {
+        event.preventDefault()
+        const index = project.pages.findIndex(page => page.id === current) + (event.key === 'PageUp' ? -1 : 1)
+        const page = project.pages[index]
+        if (page) go(page.id)
+        return
+      }
       const state = controller.pages.get(selection.page)
       if (!state) return
-      const meta = event.metaKey || event.ctrlKey
-      if (meta && event.key.toLowerCase() === 's') { event.preventDefault(); void controller.flush(); return }
-      if (meta && event.key.toLowerCase() === 'z') { event.preventDefault(); controller.undo(selection.page, event.shiftKey); return }
-      if (event.key === 'Escape') { setSelection(value => ({ ...value, ids: [] })); return }
       if (event.key === 'F1' && first) { event.preventDefault(); setMemory(structuredClone(first)); return }
       if (event.key === 'F2' && memory) { event.preventDefault(); add(memory, true); return }
-      if (meta && event.key.toLowerCase() === 'n') { event.preventDefault(); add(undefined, true); return }
-      if (meta && event.key.toLowerCase() === 'd') { event.preventDefault(); duplicate(); return }
+      if (meta && !event.altKey && event.key.toLowerCase() === 'n') { event.preventDefault(); add(undefined, true); return }
+      if (meta && !event.altKey && event.key.toLowerCase() === 'd') { event.preventDefault(); duplicate(); return }
       if (!selection.ids.length) return
       if (['Delete', 'Backspace'].includes(event.key)) { event.preventDefault(); controller.edit(selection.page, state.data.items.filter(item => !selection.ids.includes(item._id))); setSelection(value => ({ ...value, ids: [] })); return }
-      const delta = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1] }[event.key]
-      if (delta) {
-        event.preventDefault(); const multiplier = meta && event.shiftKey ? 50 : event.shiftKey ? 10 : 1
-        controller.edit(selection.page, state.data.items.map(item => selection.ids.includes(item._id) ? moved(item, delta[0] * multiplier, delta[1] * multiplier, state.data.width, state.data.height) : item), true, `nudge:${selection.ids.join(',')}`)
-      }
-      if (meta && ['[', ']'].includes(event.key) && first) { event.preventDefault(); patch({ rotation: Math.max(-180, Math.min(180, first.rotation + (event.key === '[' ? 1 : -1) * (event.altKey ? 5 : 1))) }) }
+      const adjustment = textShortcut(event)
+      if (adjustment) { event.preventDefault(); adjust(adjustment, event.repeat) }
     }
+    const end = () => controller.endGroup(selection.page)
     window.addEventListener('keydown', key)
-    return () => window.removeEventListener('keydown', key)
+    window.addEventListener('keyup', end)
+    window.addEventListener('blur', end)
+    return () => { window.removeEventListener('keydown', key); window.removeEventListener('keyup', end); window.removeEventListener('blur', end) }
   })
   async function importFile(list: File[]) {
     if (!list.length || !await controller.flush()) return
@@ -196,7 +221,7 @@ function Workspace({ project: initial, onExit }: { project: Project; onExit: () 
   }, [controller, first, patch, selection, notices])
   return <main className="pl-shell pl-workspace">{modalContext}{noticesContext}
     <header className="pl-toolbar"><div className="pl-title"><Button onClick={() => void execute(async () => { if (await controller.flush()) await onExit() })}>項目列表</Button><strong>{project.name}</strong><Tag color={errors.length ? 'red' : controller.dirty ? 'orange' : 'green'}>{saving ? '保存中' : controller.dirty ? '尚未保存' : '已保存'}</Tag></div>
-      <Space wrap><Button onClick={() => void execute(async () => { await controller.flush() })}>保存</Button><Button onClick={downloadBt}>匯出 BT</Button></Space>
+      <Space wrap><Button onClick={() => modal.info({ title: '預排版快捷鍵', width: 650, content: <div className="pl-shortcut-help"><p>先點選文字，再使用移動、字級與旋轉快捷鍵。多選時每條文字分別調整；長按可連續操作，放開後記為一次撤銷。編輯輸入框或中文組字期間不攔截按鍵。</p><p>Mac 使用 ⌘／Option，Windows 使用 Ctrl／Alt。移動以原圖像素計算，與畫面縮放無關。</p><dl>{shortcutHelp.map(([action, keys]) => <div key={action}><dt>{action}</dt><dd>{keys}</dd></div>)}</dl></div> })}>快捷鍵</Button><Button onClick={() => void execute(async () => { await controller.flush() })}>保存</Button><Button onClick={downloadBt}>匯出 BT</Button></Space>
     </header>
     <div className="pl-tool-row"><Space wrap>
       {(['bt', 'labelplus', 'clean'] as const).map(kind => <Button key={kind} disabled={busy} onClick={() => { importKind.current = kind; if (fileInput.current) { fileInput.current.accept = kind === 'bt' ? '.json' : kind === 'labelplus' ? '.txt' : '.png,.jpg,.jpeg'; fileInput.current.multiple = kind === 'clean'; fileInput.current.click() } }}>{kind === 'bt' ? '開啟 BT' : kind === 'labelplus' ? '匯入 LabelPlus' : '上傳去字圖'}</Button>)}
@@ -208,7 +233,7 @@ function Workspace({ project: initial, onExit }: { project: Project; onExit: () 
     {(error || errors.length > 0) && <Alert type="error" message={error || errors[0]} closable onClose={() => setError('')} />}
     <div className="pl-layout">
       <aside className="pl-pages-nav"><div className="pl-section-label">{project.pages.length} 頁</div>{project.pages.map((page, index) => <button key={page.id} className={current === page.id ? 'active' : ''} onClick={() => go(page.id)}><span>{String(index + 1).padStart(2, '0')}</span><span>{page.name}</span></button>)}</aside>
-      <ContinuousPages project={project} controller={controller} selection={selection} onSelect={select} zoom={zoom} onZoom={setZoom} compare={compare} clean={clean} showMeasure={showMeasure} jump={jump} onCurrent={currentPage} onMeasure={onMeasure} onPointer={pointerChanged} />
+      <ContinuousPages project={project} controller={controller} selection={selection} onSelect={select} zoom={zoom} onZoom={setZoom} compare={compare} clean={clean} showMeasure={showMeasure} jump={jump} onCurrent={currentPage} onMeasure={onMeasure} onPointer={pointerChanged} onFontWheel={fontWheel} onInteractionChange={interactionChanged} />
       <aside className="pl-inspector">
         <h2>文字編輯</h2>{state?.conflict && <Space wrap><Button onClick={() => void execute(() => controller.resolve(selection.page, true))}>保留我的草稿</Button><Button onClick={() => void execute(() => controller.resolve(selection.page, false))}>載入伺服器版</Button></Space>}
         {first ? <><label>文字 {selected.length > 1 && `· 已選 ${selected.length} 條`}<Input.TextArea rows={5} value={first.text} onChange={e => patch({ text: e.target.value })} /></label>
@@ -224,7 +249,7 @@ function Workspace({ project: initial, onExit }: { project: Project; onExit: () 
           <Select value={method} onChange={setMethod} options={[{ value: 'ocr_aligned', label: 'OCR 對齊逐字計算' }, { value: 'single_char', label: '單字框計算' }]} />
           <div className="pl-two-fields"><label>預設字級<InputNumber value={fontBase} min={1} max={999} onChange={v => v !== null && setFontBase(v)} /></label><label>字級步長<InputNumber value={fontStep} min={.1} max={100} onChange={v => v !== null && setFontStep(v)} /></label></div>
           <Button disabled={!availability?.methods[method] || !!availability?.gpu_owner || activeDetection(task)} onClick={() => void execute(async () => { setTask(await request<Detection>(`${projectPath(project.id)}/detections`, body({ method, font_size: fontBase, step: fontStep }))) })}>生成 CTD／字級</Button>
-          {task && <p>{({ queued: '等候開始', validating: '檢查環境', detecting: '偵測文字', aligning: '對齊文字框', measuring: '量測字框', calibrating: '計算字級', publishing: '保存偵測結果', completed: '偵測完成', failed: '偵測失敗', cancelling: '正在停止', cancelled: '已取消', recovery_required: '恢復任務中' } as Record<string, string>)[task.state] || task.state}{task.progress ? ` · ${task.progress.completed}／${task.progress.total} 頁` : ''} · {task.message}</p>}{activeDetection(task) && <Button danger onClick={() => void execute(async () => { setTask(await request<Detection>(`${projectPath(project.id)}/detections/cancel`, body({}))) })}>取消偵測</Button>}
+          {task && <p>{({ queued: '等候開始', validating: '檢查環境', detecting: '偵測文字', aligning: '對齊文字框', measuring: '量測字框', previewing: '生成去字預覽', calibrating: '計算字級', publishing: '保存偵測結果', completed: '偵測完成', failed: '偵測失敗', cancelling: '正在停止', cancelled: '已取消', recovery_required: '恢復任務中' } as Record<string, string>)[task.state] || task.state}{task.progress ? ` · ${task.progress.completed}／${task.progress.total} 頁` : ''} · {task.message}</p>}{activeDetection(task) && <Button danger onClick={() => void execute(async () => { setTask(await request<Detection>(`${projectPath(project.id)}/detections/cancel`, body({}))) })}>取消偵測</Button>}
           {task && <Button onClick={() => void execute(async () => {
             const response = await fetch(`${projectPath(project.id)}/detections/${task.id}/log`)
             if (!response.ok) { const error = await response.json(); throw new Error(error.detail || '無法下載日誌') }
@@ -245,7 +270,7 @@ function Workspace({ project: initial, onExit }: { project: Project; onExit: () 
             } })
           })}>匹配譯文</Button>
         </details>
-        <p className="pl-muted pl-shortcuts">⌘／Ctrl＋S 保存 · Z 撤銷<br />方向鍵微移 · Shift＋方向鍵 10 px<br />F1 暫存複製 · F2 貼到指標位置</p>
+        <p className="pl-muted pl-shortcuts">方向鍵移動 · Shift 加速<br />⌘／Ctrl＋＋／－ 調字級<br />⌘／Ctrl＋[／] 旋轉<br />加 Option／Alt 可大步調整字級與角度<br />完整說明見頂部「快捷鍵」</p>
         {!fontReady && <p className="pl-muted">目前使用系統替代字型。鏡像準備固定預覽字型後，可取得一致的文字外觀。</p>}
       </aside>
     </div>

@@ -4,14 +4,17 @@ from __future__ import annotations
 import asyncio
 import os
 import signal
+import shutil
 import subprocess
 import urllib.request
 from pathlib import Path
 
+from PIL import Image
+
 from prelayout_core.data import identifier, read_json, validate_measure
 from .store import Conflict, atomic_json, now
 
-ACTIVE = {'queued', 'validating', 'detecting', 'aligning', 'measuring', 'calibrating', 'publishing', 'cancelling', 'recovery_required'}
+ACTIVE = {'queued', 'validating', 'detecting', 'aligning', 'measuring', 'previewing', 'calibrating', 'publishing', 'cancelling', 'recovery_required'}
 
 
 class PrelayoutDetection:
@@ -293,6 +296,19 @@ class PrelayoutDetection:
             if complete['pages'] != [p['name'] for p in project['pages']]:
                 raise ValueError('偵測輸出頁面不完整')
             validate_measure(read_json((folder / 'measure.json').read_bytes()), project['pages'])
+            if complete.get('inpainted') is True:
+                pending = []
+                for page in project['pages']:
+                    background = folder / 'backgrounds' / f'{Path(page["name"]).stem}.png'
+                    with Image.open(background) as image:
+                        image.load()
+                        if image.format != 'PNG' or image.mode != 'RGB' or image.size != (page['width'], page['height']):
+                            raise ValueError('inpainted 預覽尺寸或格式不符')
+                    pending.append((page, background, f'clean/{identifier()}.png'))
+                (self.store.directory(pid) / 'clean').mkdir(exist_ok=True)
+                for page, background, relative in pending:
+                    shutil.copyfile(background, self.store.directory(pid) / relative)
+                    page.update(clean=relative, clean_kind='inpainted')
             project['detection_id'] = did
             project['revision'] += 1
             self.store.write(project)

@@ -6,15 +6,17 @@ import type { PagePointer, Selection, VisibleRegion } from './geometry'
 type Row = { page: Page; top: number; height: number; scale: number }
 type Anchor = { id: string; offset: number; x: number; side: number; viewX: number; viewY: number }
 
-export function ContinuousPages({ project, controller, selection, onSelect, zoom, compare, clean, showMeasure, jump, onCurrent, onMeasure, onZoom, onPointer }: {
+export function ContinuousPages({ project, controller, selection, onSelect, zoom, compare, clean, showMeasure, jump, onCurrent, onMeasure, onZoom, onPointer, onFontWheel, onInteractionChange }: {
   project: Project; controller: EditorState; selection: Selection; onSelect: (value: Selection) => void;
   zoom: number; compare: boolean; clean: boolean; showMeasure: boolean; jump: { id: string; version: number; y?: number } | null;
   onCurrent: (id: string) => void; onMeasure: (index: number, page: string) => void; onZoom: (value: number) => void;
   onPointer: (pointer: PagePointer | null) => void;
+  onFontWheel: (event: WheelEvent) => boolean; onInteractionChange: (value: boolean) => void;
 }) {
   const viewport = useRef<HTMLDivElement>(null)
   const [area, setArea] = useState({ top: 0, left: 0, width: 900, height: 800 })
   const [interacting, setInteracting] = useState<string | null>(null)
+  const interactionChanged = useCallback((id: string | null) => { setInteracting(id); onInteractionChange(id !== null) }, [onInteractionChange])
   const [settled, setSettled] = useState(false)
   const scrollFrame = useRef(0), lastJump = useRef(0)
   const idle = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
@@ -34,6 +36,7 @@ export function ContinuousPages({ project, controller, selection, onSelect, zoom
   const wide = Math.max(area.width, (rows[0]?.page.width || 0) * (rows[0]?.scale || 0) * (compare ? 2 : 1) + (compare ? 20 : 0) + 48)
   const currentCallback = useRef(onCurrent); currentCallback.current = onCurrent
   const zoomCallback = useRef(onZoom); zoomCallback.current = onZoom
+  const fontWheelCallback = useRef(onFontWheel); fontWheelCallback.current = onFontWheel
   const context = useRef({ rows, wide, compare, zoom, interacting }); context.current = { rows, wide, compare, zoom, interacting }
   function idleLater() { setSettled(false); clearTimeout(idle.current); idle.current = setTimeout(() => setSettled(true), 250) }
   useEffect(() => {
@@ -41,6 +44,11 @@ export function ContinuousPages({ project, controller, selection, onSelect, zoom
     const resize = new ResizeObserver(() => setArea(value => ({ ...value, width: element.clientWidth, height: element.clientHeight })))
     resize.observe(element)
     const wheel = (event: WheelEvent) => {
+      if (event.defaultPrevented) return
+      if (event.altKey) {
+        if (fontWheelCallback.current(event)) event.preventDefault()
+        return
+      }
       if (!event.ctrlKey && !event.metaKey) return
       event.preventDefault()
       const { rows, wide, compare, zoom, interacting } = context.current
@@ -128,9 +136,9 @@ export function ContinuousPages({ project, controller, selection, onSelect, zoom
           const right = Math.min(row.page.width, (area.left + area.width - left - side * (width + 20)) / row.scale), bottom = Math.min(row.page.height, (area.top + area.height - row.top - 28) / row.scale)
           return right > x && bottom > y ? { x, y, width: right - x, height: bottom - y } : null
         }
-        const common = { project: project.id, page: row.page, scale: row.scale, edge, controller, selection, onSelect, onInteracting: setInteracting, onMeasure, onPointer, detailed: settled, interacting: !!interacting }
+        const common = { project: project.id, page: row.page, scale: row.scale, edge, controller, selection, onSelect, onInteracting: interactionChanged, onMeasure, onPointer, detailed: settled, interacting: !!interacting }
         return <section className="pl-page-row" key={row.page.id} style={{ top: row.top, height: row.height, width: wide }}>
-          <div className="pl-page-caption">{row.page.name}{compare ? ' · 左：原圖與偵測框　右：預排版' : clean && !row.page.clean ? ' · 原圖（未上傳去字圖）' : clean ? ' · 去字圖' : ' · 原圖'}</div>
+          <div className="pl-page-caption">{row.page.name}{compare ? ' · 左：原圖與偵測框　右：預排版' : clean && !row.page.clean ? ' · 原圖（尚無去字預覽）' : clean && row.page.clean_kind === 'inpainted' ? ' · inpainted 預覽' : clean ? ' · 去字圖' : ' · 原圖'}</div>
           <div className="pl-page-pair">
             {compare && <TextPage {...common} clean={false} readonly showMeasure={showMeasure} region={region(0)} />}
             <TextPage {...common} clean={clean} showMeasure={!compare && showMeasure} region={region(compare ? 1 : 0)} />

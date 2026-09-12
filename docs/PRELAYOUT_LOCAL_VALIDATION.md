@@ -6,7 +6,7 @@
 
 後續輸出需求調整：預排版移除「導出項目」及 `/export/archive`，僅匯出 `bt.json`；既有項目與伺服器保存保留。此調整已重新通過 lint、build、77 項後端測試及正式本機 API 檢查（BT 為 HTTP 200、下載名 `bt.json`；ZIP 匯出為 HTTP 404）。既有瀏覽器資料測試已改為 BT 往返；本次未重跑瀏覽器腳本，因瀏覽器工具對本機 origin 的存取被自動審核拒絕。下方四組瀏覽器及 MPS 效能數據為此前完成的驗收。
 
-本地功能、77 項後端測試及四組合成資料瀏覽器驗收通過；追加的使用者 17 頁漫畫 CTD／OCR 真實 MPS 推理及瀏覽器驗收也已通過。真實 CUDA 推理、目標 Linux 環境、顯存交接和乾淨鏡像驗收尚未完成，不能以本報告代替。
+本地功能、79 項後端測試及四組合成資料瀏覽器驗收通過；追加的使用者 17 頁漫畫 CTD／OCR 真實 MPS 推理及瀏覽器驗收也已通過。真實 CUDA 推理、目標 Linux 環境、顯存交接和乾淨鏡像驗收尚未完成，不能以本報告代替。
 
 初次功能驗收使用自行生成的灰色格線圖片與合成文字。CTD 核心探針以固定假偵測器替代神經網路輸出，實際執行對齊、字框量測、樣式分析和 OCR 裁切流程；該探針無 GPU 推理。後續依使用者要求新增真實 MPS 測試，資料與結果另列於下節。五項模型／字型資產從參考工程讀取校驗，未複製進本工程。
 
@@ -23,19 +23,38 @@
 
 耗時由 API 提交至一秒輪詢觀察到完成，包含資產預檢、模型載入、對齊／量測、OCR（如適用）和發布，不是純神經網路執行時間。兩次任務均未改動既有譯文；完成後 GPU gate 已釋放。17 張原圖及 `total.txt` 的 SHA-256 與測試前一致，模型仍在工程外。
 
-經網頁套用 OCR 結果後，135 條譯文中有 110 條自動匹配、13 條未匹配、12 條重複匹配待確認；待處理條目保留給人工檢查。API 摘要的 `automatic: 135` 表示參與自動匹配的條目數，不表示 135 條全部成功。尚未提供去字底圖，預覽使用原圖並疊加譯文；這次沒有執行修圖。
+經網頁套用 OCR 結果後，135 條譯文中有 110 條自動匹配、13 條未匹配、12 條重複匹配待確認；待處理條目保留給人工檢查。API 摘要的 `automatic: 135` 表示參與自動匹配的條目數，不表示 135 條全部成功。初次測試尚無去字底圖，預覽使用原圖並疊加譯文；後續已補接下節的 `inpainted` 預覽。
 
 同批資料在 Chrome 153.0.8010.36、1440 × 1000、DPR 1 測試：10 秒文字移動的 P95 幀間隔 16.8 ms，10 秒旋轉為 16.7 ms；兩者 pointer-to-rAF P95 約 0.2 ms，手勢期間沒有保存或底圖請求。測試修改已撤銷還原。上下捲動及首尾頁切換通過，最多掛載 4 頁，估算圖片解碼快取約 33.2 MiB，低於 256 MiB 預算；量測資料保持唯讀，無瀏覽器執行錯誤。這是本機條件下的測試值，不代表所有裝置或真實螢幕延遲。
 
 報告、輸入雜湊、逐方法日誌與截圖位於 Git 忽略的 `var-test/prelayout-local-models/`；測試項目位於 `var-test/prelayout-browser/runtime/prelayout/projects/`。本機 6018 服務目前使用外部 `/private/tmp/comic-prelayout-local-models` 連結目錄，指向 README 資產表列出的現有檔案；服務使用期間保留這些連結。重開機後如目錄消失，須先重建連結或指定另一個持久外置目錄。
+
+## 追加 inpainted 預覽驗證
+
+接入來源核心的 OpenCV Telea（radius 3、mask expansion 5），先用合成文字頁＋空白頁跑正式 CTD／OCR 與預覽發布，再跑使用者既有 17 頁項目。兩次都使用明確 MPS 配置，沒有上傳去字圖、執行 ComfyUI 或新增模型；合成測試項目已清除。
+
+17 頁共生成 17 份 RGBA `inpainted` 覆蓋層與 17 份合成底圖，全部原尺寸驗證及 768 級別預覽請求通過。CTD／OCR／預覽／發布約 45.30 秒完成，連同全部產物和預覽讀取檢查約 45.889 秒。空白頁覆蓋層全透明，合成底圖像素與原圖相同；17 頁文字修訂及 BT 內容與執行前一致，原圖 SHA-256 保持一致。GPU gate 已釋放。
+
+新增後端檢查覆蓋透明與半透明 Alpha 合成、尺寸拒絕、缺頁時保留舊發布、原有人工文字保留，以及新底圖的預覽快取鍵。lint、build 與 79 項後端測試通過。此次沒有重跑瀏覽器效能測試；先前 browser-use 的本機 origin 存取限制仍未解除，不把原圖底圖的歷史效能數據當作新底圖實測。
+
+紀錄保存在 Git 忽略的 `var-test/prelayout-local-models/inpainted-report.json`、`inpainted-backend-tests.txt` 及 `*-inpainted.log`。生成圖片位於該項目偵測的 `output/inpainted/`、`output/backgrounds/`，已發布底圖透過新的 `clean/` 引用使用既有預覽 API；排版匯出仍只有 `bt.json`。
+
+## 追加文字快捷鍵驗證
+
+新增 `npm --prefix frontend run test:prelayout-shortcuts`，8 組離線測試直接執行正式 TypeScript 快捷鍵處理、座標變換及 EditorState 撤銷邏輯。涵蓋移動 1／10／50 原圖像素、多選不同字級與角度、Mac Option 改變符號、Control／Command 及數字鍵盤、字級上下限、角度跨界、IME 組字避讓、650 ms 初始長按延遲後仍一次撤銷、放開／切換操作拆分及重做。
+
+測試只用記憶體合成文字與受控時鐘；IndexedDB 和保存排程為測試替身，不開啟瀏覽器、不接觸使用者漫畫或服務。頁面另恢復 Option／Alt 滾輪調字級、PageUp／PageDown、Q，並加入快捷鍵說明及選框四角的 1°／5° 旋轉按鈕（共用已測試的旋轉運算）。此次瀏覽器 origin 限制仍未解除，因此未驗證實際瀏覽器按鍵、焦點、滾輪、四角按鈕排布與點擊或快捷鍵效能；既有拖曳歷史數據不代表此次驗收。
+
+本輪重新通過 lint、build、8 組快捷鍵測試及 79 項後端回歸。以唯讀 HTTP 檢查確認本機 6018 健康回應 200、GPU gate 空閒，所提供的 HTML、預排版 JS 與 CSS 雜湊和本次構建一致；使用者刷新可載入更新。未重啟服務、執行模型、提交或部署遠端。
 
 ## 自動檢查
 
 | 檢查 | 本機結果與限制 |
 | --- | --- |
 | `npm --prefix frontend run lint` | 通過 |
-| `npm --prefix frontend run build` | 通過；預排版為約 40 kB 的按需載入分塊，既有主 bundle 仍有大於 500 kB 的 Vite 提示 |
-| `.venv/bin/python -m pytest -q backend/tests` | 77 passed；包含 CUDA 預設、MPS 外部程序、設備不可由請求覆寫、CPU 拒絕及缺資產失敗；一項既有 Starlette／AnyIO 棄用提示 |
+| `npm --prefix frontend run test:prelayout-shortcuts` | 8 passed；離線邏輯與撤銷測試，未啟動瀏覽器或使用本地模型 |
+| `npm --prefix frontend run build` | 通過；預排版為約 45 kB 的按需載入分塊，既有主 bundle 仍有大於 500 kB 的 Vite 提示 |
+| `.venv/bin/python -m pytest -q backend/tests` | 79 passed；包含 inpainted 合成與完整發布、CUDA 預設、MPS 外部程序、設備不可由請求覆寫、CPU 拒絕及缺資產失敗；一項既有 Starlette／AnyIO 棄用提示 |
 | `make verify-local` | 已執行，19 項外部環境缺失：本機沒有 `/root/ComfyUI`、六個 custom nodes、三個已安裝工作流及九個正式修復模型；倉庫工作流雜湊和前端构建通過 |
 | `prelayout_core.check`（未加 `--require-cuda`） | 五項 SHA-256、核心依賴及字型指標通過；`cuda_available=false`、`inference_verified=false` |
 | `prelayout_core_probe.py` | 兩種字級方法的合成對齊／量測及 OCR 裁切契約通過，包含空白頁；非模型成功證據 |

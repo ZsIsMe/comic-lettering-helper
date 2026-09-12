@@ -360,7 +360,11 @@ cd /root/comic-inpaint
 
 ## 預排版部署準備
 
+文字快捷鍵更新只需重建前端，不增加模型、Python 依賴或資料遷移。先執行 `npm --prefix frontend run test:prelayout-shortcuts`、lint、build 及既有後端測試；同步前端後在目標瀏覽器人工確認方向鍵 1／10／50 px、字級 2／10、旋轉 1°／5°、Option／Alt 符號鍵與滾輪、多選差值、輸入框／組字避讓、長按撤銷及普通上下捲動；選框四角旋轉按鈕須確認 1°／5°、多選、縮放後點擊大小及不誤觸拖曳。離線邏輯測試不代表各平台瀏覽器的原生保留鍵已驗收。
+
 預排版排版輸出只提供 `bt.json`，不提供項目 ZIP 匯出或 `/export/archive` API。更新後確認頂部僅有「匯出 BT」，下載前完成保存；關閉及重新開啟網頁仍從伺服器恢復原有項目。既有封存匯入保留相容性，修圖模組的匯出行為不受此設定影響。
+
+偵測任務另自動生成 OpenCV `inpainted` 預覽，無需新增權重或先上傳去字圖。驗收須包括 RGBA 覆蓋層與原圖合成、空白頁原樣保留、全批底圖完成後才發布、文字修訂不變，以及分級預覽讀取。舊任務沒有此產物時沿用原圖或已上傳底圖，重新偵測後取得生成預覽；此變更不啟動 ComfyUI 修圖流程。
 
 本地模型測試與鏡像驗收分開：可用工程外已有 CTD／OCR、字型及 Python，Apple Silicon 明確設定 `COMIC_PRELAYOUT_DEVICE=mps`，執行 `prelayout_core.check --device mps` 後，透過網頁 API 測試完整流程。這種模式保持 GPU 任務互斥，不需要啟動 CUDA ComfyUI，也不會自動回退 CPU。鏡像使用預設 `COMIC_PRELAYOUT_DEVICE=cuda`，仍須完成下列 CUDA 和顯存交接驗收；本地 MPS 結果不能代替。資產清單及設定集中於 [README](../README.md#預排版模型與配套資產)。
 

@@ -29,7 +29,7 @@ The following source-only modules were adapted (no checkpoint, model cache, font
 - `ctd_overlay_processor/mit48px_ocr.py`
 - `ctd_overlay_processor/vendor/mit48px_ctc.py`
 
-Imports are scoped under prelayout_core.vendor; legacy executable entry points and path injection are removed. Asset paths are external. Training logging dependencies are omitted. Torch loads use weights_only=True. The worker calls only detection, alignment, measurement and OCR stages, not the legacy inpainting/preview pipeline.
+Imports are scoped under prelayout_core.vendor; legacy executable entry points and path injection are removed. Asset paths are external. Training logging dependencies are omitted. Torch loads use weights_only=True. The worker runs detection, alignment, measurement and OCR, and calls the upstream OpenCV Telea inpainted-preview helper with its original defaults. Its transparent RGBA patches are composited over project originals for web previews; this does not invoke the legacy GUI pipeline or ComfyUI repair workflows.
 
 `lp_to_meo.py` and `build_text_rect_update.py` are copied from the same source commit for format and matching compatibility. The vendored mit48 implementation originates from BallonsTranslator and manga-image-translator; upstream notices in the source are retained.
 

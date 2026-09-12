@@ -279,6 +279,7 @@ class PrelayoutStore:
                 (root / 'clean').mkdir(exist_ok=True)
                 (root / relative).write_bytes(data)
                 page['clean'] = relative
+                page['clean_kind'] = 'uploaded'
             project['revision'] += 1
             self.write(project)
             return project
