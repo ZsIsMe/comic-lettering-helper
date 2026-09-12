@@ -25,7 +25,7 @@ export function applyCategoryMask(layers: EditLayers, before: Uint8Array, after:
   for (let n = 0; n < before.length; n++) if ((before[n] !== after[n] || (paintSelection?.[n] && after[n])) && (!clip || clip[n])) write(out, n, category, !!after[n], color)
   return out
 }
-export function applySpecialSelection(layers: EditLayers, selection: Uint8Array, action: 'clear' | 'transfer', category: EditCategory, color: readonly number[]): EditLayers {
+export function applySpecialSelection(layers: EditLayers, selection: Uint8Array, action: 'clear' | 'swap', color: readonly number[]): EditLayers {
   const out = cloneLayers(layers)
   for (let n = 0; n < selection.length; n++) {
     if (!selection[n]) continue
@@ -33,7 +33,12 @@ export function applySpecialSelection(layers: EditLayers, selection: Uint8Array,
     if (action === 'clear') {
       // Record the explicit exclusion even when no detected mask is present yet.
       out.overlay.set([0, 0, 0, 0], i); out.other.set([0, 0, 0, 255], i); out.edited.set([255, 255, 255, 255], i)
-    } else if (category === 'solid' ? layers.other[i] >= 128 : layers.overlay[i + 3] > 0) write(out, n, category, true, color)
+    } else {
+      // Read both categories from the original snapshot, so one gesture swaps once.
+      if (layers.overlay[i + 3] > 0) write(out, n, 'other', true, color)
+      else if (layers.other[i] >= 128) write(out, n, 'solid', true, color)
+      // Empty pixels, including their manual-edit flags, stay untouched.
+    }
   }
   return out
 }

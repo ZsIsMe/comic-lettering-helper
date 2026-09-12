@@ -283,7 +283,7 @@ footer { padding: 20px 0; color: #746e63; font-size: 12px; }
 .shortcut-actions { border-left: 1px solid #d7d0c3; padding-left: 12px; }
 .edit-control-footer { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px 16px; padding: 8px 12px; border-top: 1px solid #e8e2d8; }
 .editor-context-hint { display: flex; flex-direction: column; gap: 3px; }
-.transfer-direction { color: #2d6671; font-size: 12px; font-weight: 600; }
+.mask-action-hint { color: #2d6671; font-size: 12px; font-weight: 600; }
 .editor-context-hint small { color: #746e63; font-size: 11px; }
 @media(max-width:1100px) { .editor-history-controls { margin-left: 40px; flex-basis: calc(100% - 40px); } }
 @media(max-width:760px) { .edit-control-row { gap: 8px; } .shortcut-actions { border-left: 0; padding-left: 36px; } .editor-history-controls { margin-left: 36px; } }

@@ -72,7 +72,7 @@ function replaceLayers(p: Pixels, next: EditLayers, width: number, height: numbe
   return { ...p, overlay: new ImageData(next.overlay as Uint8ClampedArray<ArrayBuffer>, width, height), other: new ImageData(next.other as Uint8ClampedArray<ArrayBuffer>, width, height), edited: new ImageData(next.edited as Uint8ClampedArray<ArrayBuffer>, width, height) }
 }
 type Point = { x: number; y: number }
-type Gesture = Point & { lastX: number; lastY: number; code: number; before: Pixels; panX: number; panY: number; kind: string; operation: SelectionOperation | 'clear' | 'transfer'; target: EditCategory; fillColor: string; selection: Uint8Array; edge?: string; roi?: EditRect }
+type Gesture = Point & { lastX: number; lastY: number; code: number; before: Pixels; panX: number; panY: number; kind: string; operation: SelectionOperation | 'clear' | 'swap'; target: EditCategory; fillColor: string; selection: Uint8Array; edge?: string; roi?: EditRect }
 type LocalDraft = { rect: EditRect; overlayUrl: string; otherUrl: string; editedUrl: string }
 
 
@@ -108,7 +108,7 @@ export const RasterEditor = forwardRef<RasterHandle, Props>(function RasterEdito
   const [saveState, setSaveState] = useState('已保存')
   const [tool, setTool] = useState('brush'); const [category, setCategory] = useState<EditCategory>(() => props.initialCategory || (previewPreference<string>('edit-category', 'other') === 'solid' ? 'solid' : 'other'))
   const [operation, setOperation] = useState<SelectionOperation>('add')
-  const [special, setSpecial] = useState<'clear' | 'transfer' | null>(null)
+  const [special, setSpecial] = useState<'clear' | null>(null)
   const [tolerance, setTolerance] = useState(28)
   const [expand, setExpand] = useState(0)
   const [intersectOffset, setIntersectOffset] = useState(0)
@@ -301,7 +301,7 @@ export const RasterEditor = forwardRef<RasterHandle, Props>(function RasterEdito
   }
   function editedSelection(before: Pixels, selection: Uint8Array, op: Gesture['operation'], target = category, fillColor = color): Pixels {
     const data = layers(before)
-    if (op === 'clear' || op === 'transfer') return replaceLayers(before, applySpecialSelection(data, selection, op, target, rgb(fillColor)), width, height)
+    if (op === 'clear' || op === 'swap') return replaceLayers(before, applySpecialSelection(data, selection, op, rgb(fillColor)), width, height)
     const current = categoryMask(data, target)
     const next = combineSelection(current, selection, width, height, op, intersectOffset)
     const paint = ['add', 'selection_inner', 'add_selection_inner'].includes(op) ? combineSelection(new Uint8Array(width * height), selection, width, height, op) : undefined
@@ -408,7 +408,7 @@ export const RasterEditor = forwardRef<RasterHandle, Props>(function RasterEdito
     if (!pan && event.button === 0 && !special && tool === 'lasso') { lasso.current.push(p); hover.current = p; redraw(); return }
     const right = mode === 'edit' && event.button === 2
     const kind = pan ? 'pan' : right || special ? 'rectangle' : tool
-    const op = right ? (event.metaKey || event.ctrlKey ? 'transfer' : 'clear') : special || operation
+    const op = right ? (event.metaKey || event.ctrlKey ? 'swap' : 'clear') : special || operation
     const g: Gesture = { ...p, lastX: p.x, lastY: p.y, code: mode === 'compose' ? (event.button === 2 ? 1 : code || sourceCode) : 0, before: copy(pixels.current), panX: event.clientX, panY: event.clientY, kind, operation: op, target: category, fillColor: color, selection: new Uint8Array(width * height) }
     if (kind === 'bounds' && props.clipRect) {
       const r = props.clipRect
@@ -483,7 +483,6 @@ export const RasterEditor = forwardRef<RasterHandle, Props>(function RasterEdito
     changed()
   }
   const categoryName = category === 'solid' ? '純色填充' : '待修補'
-  const transferDirection = category === 'solid' ? '待修補 → 純色填充' : '純色填充 → 待修補'
   const historyControls = <div className="editor-history-controls">
     <Button size="small" disabled={disabled || !historyState[0]} onClick={() => undo()}>撤銷</Button>
     <Button size="small" disabled={disabled || !historyState[1]} onClick={() => undo(true)}>重做</Button>
@@ -506,7 +505,6 @@ export const RasterEditor = forwardRef<RasterHandle, Props>(function RasterEdito
       if (tools[event.key]) { event.preventDefault(); chooseTool(tools[event.key]) }
       const ops: Record<string, SelectionOperation> = {F9:'add',F10:'subtract',F11:'local_intersect'}
       if (ops[event.key] && (tool !== 'magic' || event.key !== 'F11')) { event.preventDefault(); setSpecial(null); setOperation(ops[event.key]) }
-      if (event.key === 'F12') { event.preventDefault(); setSpecial('transfer'); lasso.current=[] }
     }
     if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'z') { event.preventDefault(); undo(event.shiftKey) }
   }}>
@@ -540,14 +538,13 @@ export const RasterEditor = forwardRef<RasterHandle, Props>(function RasterEdito
         </div>}
         {!props.local && <div className="selection-tools shortcut-actions" role="group" aria-label="框選快捷操作">
           <Button disabled={disabled} aria-pressed={special === 'clear'} type={special === 'clear' ? 'primary' : 'default'} title="右鍵框選清除兩類 Mask" onClick={() => { setSpecial(special === 'clear' ? null : 'clear'); lasso.current=[] }}>清除框內 Mask</Button>
-          <Button disabled={disabled} aria-pressed={special === 'transfer'} type={special === 'transfer' ? 'primary' : 'default'} title={`Cmd／Ctrl＋右鍵：${transferDirection}`} onClick={() => { setSpecial(special === 'transfer' ? null : 'transfer'); lasso.current=[] }}>從其他轉入</Button>
         </div>}
         {operation === 'local_intersect' && ['rectangle', 'brush', 'lasso'].includes(tool) && !special && <label className="tool-setting">偏移 <InputNumber size="small" aria-label="交集偏移" disabled={disabled} min={-80} max={80} value={intersectOffset} onChange={v => setIntersectOffset(v ?? 0)} /> px</label>}
       </div>
       <div className="edit-control-footer">
         <div className="editor-context-hint">
-          <span className="transfer-direction" aria-label="轉入方向">轉入：{transferDirection}</span>
-          <small>{special === 'transfer' ? `左鍵框選，轉入目前「${categoryName}」` : special === 'clear' ? '左鍵框選，同時清除兩類 Mask' : tool === 'lasso' ? '逐點選取 · Enter 閉合 · Backspace 退點 · Esc 取消' : tool === 'local' ? '框選局部範圍，套用才回寫' : tool === 'bounds' ? '拖動藍色範圍四邊' : tool === 'magic' ? '綠色預覽添加，紅色預覽減去；點擊套用' : '右鍵清除 · Cmd＋右鍵轉入'}</small>
+          <span className="mask-action-hint" aria-label="Mask 互換">純色填充 ↔ 待修補</span>
+          <small>{special === 'clear' ? '左鍵框選，同時清除兩類 Mask' : tool === 'lasso' ? '逐點選取 · Enter 閉合 · Backspace 退點 · Esc 取消' : tool === 'local' ? '框選局部範圍，套用才回寫' : tool === 'bounds' ? '拖動藍色範圍四邊' : tool === 'magic' ? '綠色預覽添加，紅色預覽減去；點擊套用' : '右鍵清除 · Cmd／Ctrl＋右鍵拖框互換'}</small>
         </div>
         {zoomControls}
       </div>
