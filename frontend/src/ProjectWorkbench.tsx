@@ -73,6 +73,7 @@ export default function ProjectWorkbench() {
   if (current) return <ProjectWorkspace key={current.id} initial={current} gpuOwner={gpuOwner} onExit={async () => { localStorage.removeItem(remember); setCurrent(null); await reload() }} />
   return <main className="app-shell project-home">
     <header className="project-header"><div><Text className="eyebrow">COMIC WORKSPACE</Text><Title>漫畫修圖項目</Title><Text>保存原圖、修補與合成進度，下次打開接著編輯。</Text></div><Space wrap>
+      <Button href="#/edgewhite">邊緣塗白</Button>
       <Button onClick={() => setLegacy(true)}>舊版批次與歷史</Button>
       <label className={`file-picker ${busy || gpuOwner ? 'disabled' : ''}`}>匯入項目<input type="file" accept=".zip" disabled={busy || !!gpuOwner} onChange={e => { const f = e.target.files?.[0]; if (f) void importArchive(f); e.target.value = '' }} /></label>
       <Button type="primary" disabled={!!gpuOwner} onClick={() => setCreateOpen(true)}>新建項目</Button>

@@ -268,3 +268,22 @@ PNG 已是壓縮格式，ZIP 使用 store 模式以降低打包 CPU 與傳輸文
 - 不並行運行三個大型模型。
 - 不對 Qwen 生成結果做內容品質閾值、自動篩除或自動拒絕；只驗證輸入與任務是否完整成功。
 - 不因工作流可以載入就宣稱環境可發佈；模型、節點、輸入轉換、輸出數量和顯存都必須通過實際 GPU 測試。
+
+## 邊緣塗白獨立模組
+
+`WorkspaceRouter.tsx` 在工作台記住的項目恢復之前處理 `#/edgewhite[/<id>]`。`EdgeWhitePage.tsx` 管理獨立集合；`edgewhite/GuideCanvas.tsx` 使用 SVG 原尺寸座標、四邊標尺與雙欄預覽。離開編輯頁或換頁前等待草稿保存；瀏覽器重載按集合保存的頁 ID 續編。
+
+搜尋函數位於 `guide-snap.ts`，來源為使用者提供的 Mac EdgeWhite commit `bdfbe8b8b42008b40e52ec0427ff9a9c62f637ed`。Web Worker 只持有目前頁的原尺寸灰階快取；RGBA 以 transferable buffer 傳入，換頁終止 Worker。請求世代、頁面／來源雜湊鍵及活動線限制避免過期結果回寫。搜尋評分為完整空白段數，不作語義或內容品質判斷。原圖規範化和輸出使用 `backend/imaging/edgewhite.py`，半開網格矩形與 SVG 相同。
+
+資料集合位於 `<COMIC_DATA_ROOT>/edgewhite/<id>/`：`collection.json` 包含原件／工作圖雜湊、頁序、草稿與輸出修訂；各頁子目錄保存原件、`source.png` 和不可變輸出檔。新集合先寫入 `.upload-<id>`，完成後整體重命名；編輯及輸出完成後原子更新清單。歷史輸出修訂隨集合刪除；ZIP 在回應結束後移除。保存／刪除共用集合 RLock，圖片和 ZIP 回應持有 reader 引用，傳輸失敗也釋放。
+
+`/api/edgewhite` 提供集合建立／列出；`/{id}` 讀取／刪除；`/{id}/pages/{page}/source` 讀取工作圖；`PUT /{id}/pages/{page}` 以預期修訂號保存草稿或輸出；`/{id}/guides` 提供桌面 JSON 導出、JSON PUT 或 multipart POST 匯入；`/{id}/download` 打包所有已確認頁。未更新輸出的草稿回傳 409，舊修訂保存同樣回傳 409。CPU 操作限兩個併發，不佔 GPU gate；建立／匯入與整批下載沿用 GPU 忙碌限制，已載入頁的普通編輯與保存仍可使用。
+
+目錄匯入採 File System Access `values()` 或拖放目錄的 `readEntries()`，只遍歷根目錄的檔案，對子目錄不呼叫任何讀取方法。後者重複讀取同一個 root reader 的分批結果，直到空批次，避免超過 100 個第一層檔案被漏掉。`webkitdirectory` 已從此功能移除。參考：[DirectoryHandle.values](https://developer.mozilla.org/en-US/docs/Web/API/FileSystemDirectoryHandle/values)、[DirectoryReader.readEntries](https://developer.mozilla.org/en-US/docs/Web/API/FileSystemDirectoryReader/readEntries)。
+
+
+### 2026-09-12 匯入入口修訂（取代此前非遞歸選取器方案）
+
+使用者已允許瀏覽器掃描子目錄。新建集合改為單一匯入區：點擊唯一匯入區後，在選單選擇「多張圖片」或「單個資料夾」，也可直接拖入；資料夾模式使用標準 `input webkitdirectory`，不再呼叫 `showDirectoryPicker`。瀏覽器可列舉子目錄，應用只匯入第一層圖片，避免包含 deal 成品。因瀏覽器原生檔案選擇器區分圖片多選及目錄模式，兩種模式由同一入口的選單選取，不再有獨立資料夾按鈕。
+
+內建瀏覽器實測：經資料夾選擇器指定第 82 話目錄，顯示 21 張並略過 1 個子資料夾；點擊主區開啟多選選擇器，選入 2 張測試圖片成功。此前 showDirectoryPicker 的阻塞不再適用於新版入口。lint、build、18 項前端及 61 項後端測試通過。

@@ -24,6 +24,7 @@ from .projects import ProjectStore
 from .project_api import create_project_router, project_download
 from .composition import build_composition_router
 from .detection import DetectionManager, create_detection_router
+from .edgewhite_api import create_edgewhite_router
 
 
 repository = JobRepository(settings.jobs_root)
@@ -234,6 +235,7 @@ def download_job(job_id: str) -> FileResponse:
 app.include_router(create_project_router(settings, repository, manager, project_store))
 app.include_router(build_composition_router(project_store, repository))
 app.include_router(create_detection_router(detection_manager))
+app.include_router(create_edgewhite_router(settings, manager.gpu_gate))
 
 frontend_dist = settings.app_root / "frontend" / "dist"
 if frontend_dist.is_dir():
