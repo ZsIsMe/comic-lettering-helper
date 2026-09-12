@@ -1,0 +1,11 @@
+.local-edit-window .ant-modal-body { max-height: calc(100vh - 180px); overflow: auto; }
+.local-edit-range { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; }
+.local-edit-range label { display: inline-flex; align-items: center; gap: 6px; }
+.local-edit-range .ant-input-number { width: 82px; }
+.local-edit-hint { color: #69645d; margin: 10px 0 0; font-size: 13px; }
+.local-edit-window .canvas-scroll { height: clamp(240px, 36vh, 500px); }
+.local-edit-window .editor-toolbar { padding: 8px 0; }
+@media (max-width: 700px) {
+  .local-edit-window .ant-modal-content { padding: 16px; }
+  .local-edit-window .canvas-scroll { height: 36vh; }
+}

@@ -1,6 +1,6 @@
 # AutoDL 部署與重建手冊
 
-文件夾按鈕需瀏覽器支援 File System Access 的目錄選擇 API，且頁面處於安全上下文（例如 HTTPS 或 localhost）。部署後應檢查實際瀏覽器及授權；按鈕無法取得目錄時可拖入文件夾（使用 Entries API）或多選圖片，不會改用遞歸讀取。參見 [MDN 目錄選擇](https://developer.mozilla.org/en-US/docs/Web/API/Window/showDirectoryPicker)與 [Entries 讀取](https://developer.mozilla.org/en-US/docs/Web/API/FileSystemDirectoryReader/readEntries)。
+新工作台的新建項目使用標準資料夾輸入與多圖輸入，不依賴 `showDirectoryPicker`，配合單一匯入選單。瀏覽器可能枚舉子目錄，但只匯入第一層圖片；拖放資料夾則不枚舉子目錄。舊版批次的資料夾按鈕仍需安全上下文及 File System Access 支援，可改用拖入或多圖。部署後檢查原圖／可選 Mask 選取、第一層過濾與取消行為；確認編輯頁只顯示「自動檢測」，沒有外部 Mask 匯入。此次為靜態頁變更，不需重啟模型服務。
 
 **2026-09-12 狀態：**新的項目工作台、第一／第三部分畫布及封存功能已完成本機實作整合，尚未部署到 AutoDL、未建立新 Tag／鏡像；RF＋MangaLens CUDA 與切換顯存仍待真實 GPU 驗收。不要把下面保留的三工作流歷史基線，或本機 CPU 測試，視為新偵測環境已可發布。
 
@@ -360,3 +360,9 @@ cd /root/comic-inpaint
 - 若只修改 Web UI 且不影響輸入與批次器，可做 API／介面回歸；若觸及工作流、節點、模型或格式轉換，按受影響邊界做真實 GPU 回歸。新增 RF／MangaLens 不能沿用三修復模型的歷史結論，須独立驗收並測試共享 GPU 切換。
 - 若 AutoDL 公共庫路徑失效，先更新來源映射並驗證實際文件，再建立新鏡像版本；不要在使用者啟動時臨時下載數十 GB 模型。
 - 保留每次成功基線的測試報告，速度比較始終分開記錄冷載入與暖機推理。
+
+React 19 的確認視窗使用受控 Modal 或 Modal.useModal。更新前端構建後應檢查刪除視窗能開啟及取消；不需重啟後端或模型服務。
+
+第一部分工具更新只需重新構建前端；不更改權重或執行 GPU。部署後檢查矩形／畫筆操作、魔法棒四種模式與預覽、套索 Enter／Esc、右鍵與 Cmd／Ctrl＋右鍵、局部範圍套用／取消／撤銷。長按拖曳使用 Pointer Capture，瀏覽器畫布右鍵選單停用。局部視窗先保存副本，只有套用後主頁才保存到伺服器；詳見 [EDITOR_TOOLS.md](EDITOR_TOOLS.md)。
+
+工具列整理後須檢查 F1／F2 常駐按鈕、重新開頁保留選擇與方向提示；以各一組轉入測試確認 F1 接收待修補、F2 接收純色填充。仍只更新靜態前端，不重啟模型。

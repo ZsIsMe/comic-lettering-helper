@@ -43,8 +43,8 @@ export const json = (method: string, body: unknown): RequestInit => ({ method, h
 export const projectUrl = (id: string) => `/api/projects/${encodeURIComponent(id)}`
 export const assetUrl = (id: string, path: string | null) => path ? `${projectUrl(id)}/assets/${path.split('/').map(encodeURIComponent).join('/')}` : ''
 export const active = (state: string) => ['queued', 'validating', 'running', 'packaging', 'abandoning'].includes(state)
-export function selectedFiles(files: FileList | null, mask = false): File[] {
+export function selectedFiles(files: FileList | readonly File[] | null, mask = false): File[] {
   return Array.from(files || []).filter(file => !file.name.startsWith('._')
-    && (!file.webkitRelativePath || file.webkitRelativePath.split('/').length <= 2)
+    && (!file.webkitRelativePath || file.webkitRelativePath.replace(/\\/g, '/').split('/').length <= 2)
     && (mask ? /\.png$/i : /\.(png|jpe?g)$/i).test(file.name))
 }

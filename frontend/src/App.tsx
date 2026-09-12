@@ -163,6 +163,7 @@ function sshDownloadCommand(archivePath: string): string {
 }
 
 export default function App() {
+  const [modal, modalHolder] = Modal.useModal()
   const [sourceFiles, setSourceFiles] = useState<File[]>([])
   const [maskFiles, setMaskFiles] = useState<File[]>([])
   const [selected, setSelected] = useState<WorkflowId[]>(['flux2klein_lanpaint'])
@@ -287,7 +288,7 @@ export default function App() {
   }
 
   function confirmAbandon() {
-    Modal.confirm({
+    modal.confirm({
       title: '確定放棄目前任務？',
       content: '系統會中止目前推理並清除尚未完成的部分；已完成的圖片仍可下載。停止可能需要數秒。',
       okText: '確認放棄',
@@ -316,6 +317,7 @@ export default function App() {
 
   return (
     <main className="app-shell">
+      {modalHolder}
       <div className="paper-grain" aria-hidden="true" />
       <header className="masthead">
         <div>

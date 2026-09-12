@@ -1,28 +1,27 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Alert, Button, Card, Checkbox, Empty, Input, InputNumber, List, Modal, Progress, Select, Space, Spin, Steps, Tag, Typography, message } from 'antd'
 import LegacyBatch from './App'
-import { DirectoryPicker } from './DirectoryPicker'
+import { ImagePicker } from './ImagePicker'
 import { RasterEditor, type RasterHandle, type RasterSave } from './RasterEditor'
-import { active, api, assetUrl, json, projectUrl, selectedFiles, workflowOptions, type Composition, type Project, type Run, type Workflow } from './workbench-api'
+import { active, api, assetUrl, json, projectUrl, workflowOptions, type Composition, type Project, type Run, type Workflow } from './workbench-api'
 
 const { Title, Text } = Typography
 const remember = 'comic-workbench-project'
 type Detection = { state: string; message?: string; error?: string; progress?: { stage: string; completed: number; total: number } }
+const detectionLabels: Record<string, string> = { queued: '等待檢測', check: '準備檢測', checking: '準備檢測', rf: '識別文字區域', mangalens: '識別文字範圍', classify: '整理檢測結果', saving: '保存檢測結果', cancelling: '正在停止檢測', recovery_required: '檢查上次檢測狀態' }
 const detectionActive = (state: string) => ['queued', 'checking', 'rf', 'mangalens', 'classify', 'saving', 'cancelling', 'recovery_required'].includes(state)
 function bytes(value = 0) { return value > 1024 ** 3 ? `${(value / 1024 ** 3).toFixed(1)} GB` : `${(value / 1024 ** 2).toFixed(1)} MB` }
-function Picker({ label, mask, onSelect, disabled }: { label: string; mask?: boolean; onSelect: (files: File[], folderName?: string) => void; disabled?: boolean }) {
-  return <Space wrap>
-    <DirectoryPicker disabled={disabled} mask={mask} onSelect={onSelect}>{label}文件夾</DirectoryPicker>
-    <label className="file-picker">多選{label}<input disabled={disabled} type="file" multiple accept={mask ? '.png' : '.png,.jpg,.jpeg'} onChange={e => { onSelect(selectedFiles(e.target.files, mask)); e.target.value = '' }} /></label>
-  </Space>
-}
 
 export default function ProjectWorkbench() {
+  const [deleteTarget, setDeleteTarget] = useState<Project | null>(null)
+  const [deleting, setDeleting] = useState(false)
+  const [deleteError, setDeleteError] = useState('')
   const [legacy, setLegacy] = useState(false)
   const [projects, setProjects] = useState<Project[]>([])
   const [current, setCurrent] = useState<Project | null>(null)
   const [loading, setLoading] = useState(true)
   const [createOpen, setCreateOpen] = useState(false)
+  const [picking, setPicking] = useState(false)
   const [name, setName] = useState(''); const [sources, setSources] = useState<File[]>([]); const [masks, setMasks] = useState<File[]>([])
   const [busy, setBusy] = useState(false); const [error, setError] = useState('')
   const [gpuOwner, setGpuOwner] = useState<string | null>(null)
@@ -66,9 +65,16 @@ export default function ProjectWorkbench() {
       await reload(); open(project)
     })
   }
-  function deleteProject(project: Project) {
-    Modal.confirm({ title: `刪除「${project.name}」？`, content: `將刪除此項目的原圖、編輯、修復及合成結果（${bytes(project.storage_bytes)}）。此操作無法復原。`, okText: '刪除項目', cancelText: '保留', okButtonProps: { danger: true },
-      onOk: async () => { await api(`${projectUrl(project.id)}?confirm=true`, { method: 'DELETE' }); await reload() } })
+  async function deleteProject() {
+    if (!deleteTarget || deleting) return
+    setDeleting(true); setDeleteError('')
+    try {
+      await api(`${projectUrl(deleteTarget.id)}?confirm=true`, { method: 'DELETE' })
+      setProjects(items => items.filter(item => item.id !== deleteTarget.id))
+      setDeleteTarget(null)
+    } catch (err) {
+      setDeleteError(err instanceof Error ? err.message : '刪除失敗，請重試')
+    } finally { setDeleting(false) }
   }
   if (legacy) return <><div className="legacy-back"><Button onClick={() => setLegacy(false)}>返回項目工作台</Button></div><LegacyBatch /></>
   if (current) return <ProjectWorkspace key={current.id} initial={current} gpuOwner={gpuOwner} onExit={async () => { localStorage.removeItem(remember); setCurrent(null); await reload() }} />
@@ -83,20 +89,27 @@ export default function ProjectWorkbench() {
     {loading || busy ? <Spin><div style={{ height: 120 }} /></Spin> : projects.length ? <div className="project-grid">{projects.map(project => <Card key={project.id} title={project.name} extra={<Tag>{project.pages.length} 頁</Tag>}>
       {project.pages[0] && <img className="project-cover" src={assetUrl(project.id, project.pages[0].thumbnail || project.pages[0].source)} alt={`${project.name} 封面`} loading="lazy" />}
       <p>{new Date(project.updated_at).toLocaleString()} · {bytes(project.storage_bytes)}</p>
-      <Space wrap><Button type="primary" onClick={() => open(project)}>繼續編輯</Button><Button disabled={!!gpuOwner} href={`${projectUrl(project.id)}/export`}>導出項目</Button><Button danger onClick={() => deleteProject(project)}>刪除</Button></Space>
+      <Space wrap><Button type="primary" onClick={() => open(project)}>繼續編輯</Button><Button disabled={!!gpuOwner} href={`${projectUrl(project.id)}/export`}>導出項目</Button><Button danger disabled={busy || deleting} onClick={() => { setDeleteError(''); setDeleteTarget(project) }}>刪除</Button></Space>
     </Card>)}</div> : <Empty description="還沒有項目，先上傳一組漫畫原圖" />}
-    <Modal title="新建漫畫項目" open={createOpen} onCancel={() => setCreateOpen(false)} onOk={() => void create()} okText="建立項目" confirmLoading={busy} okButtonProps={{ disabled: !sources.length || !!gpuOwner }}>
+    <Modal title={deleteTarget ? `刪除「${deleteTarget.name}」？` : '刪除項目'} open={!!deleteTarget}
+      onCancel={() => { if (!deleting) setDeleteTarget(null) }} onOk={() => void deleteProject()}
+      okText="刪除項目" cancelText="保留" confirmLoading={deleting} okButtonProps={{ danger: true }} cancelButtonProps={{ disabled: deleting }} closable={!deleting} maskClosable={!deleting} keyboard={!deleting}>
+      <p>將刪除此項目的原圖、編輯、修復及合成結果（{bytes(deleteTarget?.storage_bytes)}）。此操作無法復原。</p>
+      {deleteError && <Alert type="error" showIcon message={deleteError} />}
+    </Modal>
+    <Modal title="新建漫畫項目" open={createOpen} onCancel={() => { if (!busy && !picking) setCreateOpen(false) }} onOk={() => void create()} okText="建立項目" confirmLoading={busy} okButtonProps={{ disabled: !sources.length || !!gpuOwner || picking }}>
       <Space direction="vertical" size="large" style={{ width: '100%' }}>
         <Input aria-label="項目名稱" placeholder="項目名稱" value={name} onChange={e => setName(e.target.value)} maxLength={80} />
-        <div><p>原圖（必須）· 已選 {sources.length} 張</p><Picker label="原圖" onSelect={(files, folderName) => { setSources(files); if (!name) setName(folderName || files[0]?.name.replace(/\.[^.]+$/, '') || '') }} /></div>
-        <div><p>Mask（可選）· 已選 {masks.length} 張</p><Picker label="Mask" mask onSelect={setMasks} /></div>
-        <Text type="secondary">已有 Mask 可直接進入批量修復；只上傳原圖則先偵測或人工編輯。文件夾只讀第一層，每次選擇整批取代。</Text>
+        <div><p>原圖（必須）· 已選 {sources.length} 張</p><ImagePicker disabled={busy || picking || !!gpuOwner} onBusyChange={setPicking} label="原圖" onSelect={(files, folderName) => { setSources(files); if (!name) setName(folderName || files[0]?.name.replace(/\.[^.]+$/, '') || '') }} /></div>
+        <div><p>Mask（可選）· 已選 {masks.length} 張</p><ImagePicker disabled={busy || picking || !!gpuOwner} onBusyChange={setPicking} label="Mask" mask onSelect={setMasks} /></div>
+        <Text type="secondary">已有 Mask 可直接進入批量修復；只上傳原圖則先自動檢測或人工編輯。資料夾僅匯入第一層，每次選擇整批取代。</Text>
       </Space>
     </Modal>
   </main>
 }
 
 function ProjectWorkspace({ initial, gpuOwner, onExit }: { initial: Project; gpuOwner: string | null; onExit: () => Promise<void> }) {
+  const [modal, modalHolder] = Modal.useModal()
   const [project, setProject] = useState(initial)
   const [pageIndex, setPageIndex] = useState(0); const [step, setStep] = useState(0)
   const [workflow, setWorkflow] = useState<Workflow[]>(['flux2klein_lanpaint'])
@@ -212,16 +225,6 @@ function ProjectWorkspace({ initial, gpuOwner, onExit }: { initial: Project; gpu
       setRun(next); setRunId(next.id); setStep(1); await reloadProject()
     })
   }
-  async function importMasks(files: File[]) {
-    if (!files.length || !await flush()) return
-    Modal.confirm({ title: '替換項目的待修補 Mask？', content: '將保留原圖與純色填充，按檔名套用整組 Mask。與既有填色重疊的範圍保留填色；其餘新增和擦除會記為人工決定。新增修訂不改變已有修復結果。', okText: '替換 Mask', cancelText: '取消', onOk: async () => {
-      const p = await reloadProject(); const body = new FormData()
-      body.append('expected_revision', String(p.revision)); body.append('confirm_replace', 'true')
-      for (const file of files) body.append('mask_files', file, file.name)
-      const next = await api<Project>(`${url}/masks`, { method: 'POST', body }); setProject(next)
-      editRevision.current = next.pages[pageIndex].edit_revision; setEditorKey(k => k + 1)
-    } })
-  }
   async function confirmPage(all = false) {
     await execute(async () => {
       if (!await flush()) return
@@ -253,8 +256,9 @@ function ProjectWorkspace({ initial, gpuOwner, onExit }: { initial: Project; gpu
     url: `${compUrl}/pages/${page.id}/image?source=${item.workflow}`, diffUrl: `${compUrl}/pages/${page.id}/image?source=diff:${item.workflow}`,
   })) || []
   return <main className="app-shell project-workspace">
+    {modalHolder}
     <header className="project-header"><div><Button onClick={() => void execute(async () => { if (await flush()) await onExit() })}>← 項目列表</Button><Title level={2}>{project.name}</Title><Text>{project.pages.length} 頁 · {dirty ? '有未保存修改' : '項目保存在伺服器'}</Text></div>
-      <Space wrap><Button onClick={() => { let nextName = project.name; Modal.confirm({ title: '項目名稱', content: <Input defaultValue={nextName} onChange={e => { nextName = e.target.value }} />, onOk: async () => { if (!await flush()) throw new Error('請先保存'); const p = await reloadProject(); setProject(await api<Project>(url, json('PATCH', { name: nextName, expected_revision: p.revision }))) } }) }}>重命名</Button>
+      <Space wrap><Button onClick={() => { let nextName = project.name; modal.confirm({ title: '項目名稱', content: <Input defaultValue={nextName} onChange={e => { nextName = e.target.value }} />, onOk: async () => { if (!await flush()) throw new Error('請先保存'); const p = await reloadProject(); setProject(await api<Project>(url, json('PATCH', { name: nextName, expected_revision: p.revision }))) } }) }}>重命名</Button>
         <Button disabled={busy || !!gpuOwner || detecting} onClick={() => void download(`${url}/export`)}>導出項目</Button>
       </Space></header>
     {error && <Alert type="error" showIcon closable onClose={() => setError('')} message={error} />}
@@ -265,24 +269,23 @@ function ProjectWorkspace({ initial, gpuOwner, onExit }: { initial: Project; gpu
       </List.Item>} />
     </aside><section className="project-content">
       {step === 0 && <>
-        <Space wrap className="editor-toolbar"><Button type="primary" loading={detecting} disabled={!!gpuOwner || busy || detecting || !(availability?.available ?? availability?.ready)} onClick={() => void detect()}>RF＋MangaLens 偵測{availability?.available && availability.device ? `（${availability.device.toUpperCase()}）` : ''}</Button>
-          <Picker label="Mask" mask disabled={!!gpuOwner || busy || detecting} onSelect={files => void importMasks(files)} />
+        <Space wrap className="editor-toolbar"><Button type="primary" loading={detecting} disabled={!!gpuOwner || busy || detecting || !(availability?.available ?? availability?.ready)} onClick={() => void detect()}>自動檢測</Button>
           <Button disabled={detecting || !!gpuOwner} onClick={() => void download(`${url}/export-pair`)}>導出底圖＋Mask</Button>
           <Button onClick={() => void execute(() => navigate(1))}>前往批量修復 →</Button>
         </Space>
-        {!(availability?.available ?? availability?.ready) && <Alert type="info" message="偵測模型尚未就緒；可先匯入 Mask 或人工編輯" description={<details><summary>查看模型配置狀態</summary>{availability?.message || availability?.errors?.join('、')}</details>} />}
-        {detecting ? <Alert type="info" showIcon message={detection?.progress ? `${detection.progress.stage} · ${detection.progress.completed} / ${detection.progress.total} 頁` : detection?.message || 'GPU 偵測中，完成後即可編輯'} action={<Button danger onClick={() => void execute(async () => { await api(`${url}/detection/${detection?.state === 'recovery_required' ? 'recover' : 'cancel'}`, { method: 'POST' }); await reloadProject(); setEditorKey(k => k + 1) })}>{detection?.state === 'recovery_required' ? '檢查恢復' : '停止偵測'}</Button>} /> : <RasterEditor key={`${page.id}-${editorKey}`} ref={editor} width={page.width} height={page.height} mode="edit"
+        {!(availability?.available ?? availability?.ready) && <Alert type="info" message="自動檢測暫不可用，可先手動編輯。" />}
+        {detecting ? <Alert type="info" showIcon message={detection?.progress ? `${detectionLabels[detection.state] || detectionLabels[detection.progress.stage] || '自動檢測中'} · ${detection.progress.completed} / ${detection.progress.total} 頁` : detectionLabels[detection?.state || ''] || '自動檢測中，完成後即可編輯'} action={<Button danger onClick={() => void execute(async () => { await api(`${url}/detection/${detection?.state === 'recovery_required' ? 'recover' : 'cancel'}`, { method: 'POST' }); await reloadProject(); setEditorKey(k => k + 1) })}>{detection?.state === 'recovery_required' ? '檢查恢復' : '停止偵測'}</Button>} /> : <RasterEditor key={`${page.id}-${editorKey}`} ref={editor} width={page.width} height={page.height} mode="edit"
           baseUrl={assetUrl(project.id, page.source)} overlayUrl={`${assetUrl(project.id, page.overlay)}?v=${page.edit_revision}`} otherUrl={`${assetUrl(project.id, page.other)}?v=${page.edit_revision}`} editedUrl={`${assetUrl(project.id, page.edited)}?v=${page.edit_revision}`}
           detectedTextUrl={page.detected_text ? assetUrl(project.id, page.detected_text) : undefined}
           onSave={saveEdit} onDirty={setDirty} disabled={busy} />}
-        {detection?.error && <Alert type="error" message={detection.error} />}
+        {detection?.error && <Alert type="error" message="自動檢測未完成，請重試；若持續失敗，請聯絡管理員查看檢測日誌。" />}
       </>}
       {step === 1 && <>
         <Title level={3}>批量修復</Title><p>確認後固定本次底圖與 Mask。全黑 Mask 直接沿用底圖，最終仍輸出全部 {project.pages.length} 頁。</p>
         {project.runs.length > 0 && <Select className="run-select" aria-label="修復記錄" value={runId} onChange={id => { setRunId(id); setComposition(null) }} options={project.runs.map(r => ({ value: r.id, label: `${new Date(r.created_at).toLocaleString()} · ${r.workflows.length} 套流程` }))} />}
         {run && <Card title={run.name} className="run-card"><Tag>{run.state}</Tag><Progress percent={Math.round(run.completed_total / Math.max(1, run.total_runs) * 100)} /><p>{run.message}</p>{run.error && <Alert type="error" message={run.error} />}
           <Space wrap>{run.download_ready && <Button disabled={!!gpuOwner} href={`/api/jobs/${run.id}/download`}>下載候選結果</Button>}
-            {running && <><Button disabled={!run.completed_total} href={`/api/jobs/${run.id}/download-current`}>下載目前結果</Button><Button danger onClick={() => Modal.confirm({ title: '放棄修復任務？', content: '已完成圖片會保留。', onOk: async () => { setRun(await api<Run>(`/api/jobs/${run.id}/abandon`, { method: 'POST' })) } })}>放棄任務</Button></>}
+            {running && <><Button disabled={!run.completed_total} href={`/api/jobs/${run.id}/download-current`}>下載目前結果</Button><Button danger onClick={() => modal.confirm({ title: '放棄修復任務？', content: '已完成圖片會保留。', onOk: async () => { setRun(await api<Run>(`/api/jobs/${run.id}/abandon`, { method: 'POST' })) } })}>放棄任務</Button></>}
             {run.state === 'completed' && <Button type="primary" onClick={() => void execute(() => navigate(2))}>比較與局部合成 →</Button>}
           </Space>{run.archive_path && <p className="server-path">伺服器下載路徑：{run.archive_path}</p>}
         </Card>}

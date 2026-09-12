@@ -164,6 +164,13 @@ button, input { font: inherit; }
 .directory-picker { display: flex; flex-direction: column; gap: 6px; }
 .directory-drop { padding: 12px; border: 1px dashed #b8b0a2; border-radius: 7px; color: #746e63; text-align: center; background: rgba(255,255,255,.3); }
 .directory-drop.disabled { opacity: .5; }
+.image-picker { width: 100%; }
+.image-import-main { display: flex; flex-direction: column; gap: 8px; width: 100%; padding: 22px 12px; border: 1px dashed #b8b0a2; border-radius: 8px; background: rgba(255,255,255,.3); color: inherit; cursor: pointer; font: inherit; }
+.image-import-main strong, .image-import-main span { width: 100%; text-align: center; }
+.image-import-main span { color: #746e63; font-size: 13px; }
+.image-import-main:hover:not(:disabled), .image-import-main:focus-visible { border-color: #9b4d2c; background: rgba(255,255,255,.65); }
+.image-import-main:disabled { opacity: .5; cursor: default; }
+.image-picker [role="alert"] { display: block; color: #b42318; margin-top: 8px; }
 .mask-drop.ant-upload-wrapper .ant-upload-drag { background-image: repeating-linear-gradient(135deg, rgba(37,35,31,.025) 0 8px, transparent 8px 16px); }
 .upload-choice { display: grid; gap: 10px; }
 .upload-choice > .ant-upload-wrapper,
@@ -259,3 +266,24 @@ footer { padding: 20px 0; color: #746e63; font-size: 12px; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; transition: none !important; animation: none !important; }
 }
+
+.selection-tools { display: flex; flex-wrap: wrap; gap: 6px; }
+
+.edit-control-panel { margin: 8px 0 16px; border: 1px solid #d7d0c3; border-radius: 10px; background: #f8f5ef; overflow: hidden; }
+.edit-control-row { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 12px; padding: 9px 12px; }
+.edit-control-row + .edit-control-row { border-top: 1px solid #e8e2d8; }
+.edit-row-label { color: #746e63; font-size: 12px; width: 28px; flex-shrink: 0; }
+.category-row { background: #eee9df; }
+.category-buttons, .editor-history-controls, .editor-zoom-controls, .tool-settings { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
+.editor-history-controls { margin-left: auto; }
+.editor-save-state { color: #746e63; font-size: 12px; min-width: 40px; }
+.edit-control-panel label, .editor-zoom-controls label, .tool-settings label { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; }
+.edit-control-panel input[type=color] { width: 28px; height: 28px; padding: 0; border: 0; background: none; }
+.edit-control-panel .ant-input-number, .editor-zoom-controls .ant-input-number { width: 62px; }
+.shortcut-actions { border-left: 1px solid #d7d0c3; padding-left: 12px; }
+.edit-control-footer { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px 16px; padding: 8px 12px; border-top: 1px solid #e8e2d8; }
+.editor-context-hint { display: flex; flex-direction: column; gap: 3px; }
+.transfer-direction { color: #2d6671; font-size: 12px; font-weight: 600; }
+.editor-context-hint small { color: #746e63; font-size: 11px; }
+@media(max-width:1100px) { .editor-history-controls { margin-left: 40px; flex-basis: calc(100% - 40px); } }
+@media(max-width:760px) { .edit-control-row { gap: 8px; } .shortcut-actions { border-left: 0; padding-left: 36px; } .editor-history-controls { margin-left: 36px; } }
