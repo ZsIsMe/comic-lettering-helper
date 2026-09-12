@@ -377,3 +377,34 @@ React 19 的確認視窗使用受控 Modal 或 Modal.useModal。更新前端構�
 ### 自動檢測設定驗收（2026-09-12）
 
 需同步更新後端與前端，Web 重啟前確認沒有執行中的任務。新建視窗的圖片匯入區下方應顯示四項設定；建立只保存設定，不啟動模型。重新開啟項目後，檢測視窗應帶回設定，並在同一視窗提示覆蓋範圍；取消不得提交。匯出／重新匯入項目應保留設定。關閉氣泡辨識後，缺少 MangaLens 不應阻擋 RF；既有裝置選擇仍由伺服器配置決定。
+
+
+## 預排版部署準備
+
+「上傳去字圖」目前只隱藏前端入口，底層 API 與既有圖片保留。此介面調整只需更新前端構建，不需重啟後端或重新生成底圖。
+
+原圖對照改為左編輯、右原圖；單字框提示需要本次前後端一起更新。舊偵測資料的 `page-characters/` 快取由首次頁面讀取建立，不須重新跑模型；服務帳號須能寫入預排版資料目錄。驗收單字框座標與縮放、W／H／FS、hover 不修改文字、關閉偵測框及多頁連續捲動。
+
+文字快捷鍵更新只需重建前端，不增加模型、Python 依賴或資料遷移。先執行 `npm --prefix frontend run test:prelayout-shortcuts`、lint、build 及既有後端測試；同步前端後在目標瀏覽器人工確認方向鍵 1／10／50 px、字級 2／10、旋轉 1°／5°、Option／Alt 符號鍵與滾輪、多選差值、輸入框／組字避讓、長按撤銷及普通上下捲動；選框四角旋轉按鈕須確認 1°／5°、多選、縮放後點擊大小及不誤觸拖曳。離線邏輯測試不代表各平台瀏覽器的原生保留鍵已驗收。
+
+預排版排版輸出只提供 `bt.json`，不提供項目 ZIP 匯出或 `/export/archive` API。更新後確認頂部僅有「匯出 BT」，下載前完成保存；關閉及重新開啟網頁仍從伺服器恢復原有項目。既有封存匯入保留相容性，修圖模組的匯出行為不受此設定影響。
+
+偵測任務另自動生成 OpenCV `inpainted` 預覽，無需新增權重或先上傳去字圖。驗收須包括 RGBA 覆蓋層與原圖合成、空白頁原樣保留、全批底圖完成後才發布、文字修訂不變，以及分級預覽讀取。舊任務沒有此產物時沿用原圖或已上傳底圖，重新偵測後取得生成預覽；此變更不啟動 ComfyUI 修圖流程。
+
+本地模型測試與鏡像驗收分開：可用工程外已有 CTD／OCR、字型及 Python，Apple Silicon 明確設定 `COMIC_PRELAYOUT_DEVICE=mps`，執行 `prelayout_core.check --device mps` 後，透過網頁 API 測試完整流程。這種模式保持 GPU 任務互斥，不需要啟動 CUDA ComfyUI，也不會自動回退 CPU。鏡像使用預設 `COMIC_PRELAYOUT_DEVICE=cuda`，仍須完成下列 CUDA 和顯存交接驗收；本地 MPS 結果不能代替。資產清單及設定集中於 [README](../README.md#預排版模型與配套資產)。
+
+本節是本地開發完成後的準備清單，尚未在 AutoDL 執行。預排版與圖片修復共用 6008 服務，模型與資料各自位於工程外。模型資產、來源、精確雜湊和環境變數以 [README 的預排版區塊](../README.md#預排版模型與配套資產)為準。
+
+1. 確認本地工作樹驗證結果，依使用者的發布安排選定 `codex/prelayout-web` 的明確 commit；本次僅本地提交，未推送或部署。發行內容使用該 commit 的原始碼與成功構建的 `frontend/dist`，不要直接同步整個開發目錄。排除 `.venv`、`node_modules`、`var-test`、測試圖片、報告、日誌及模型；保留核心來源授權文件。
+2. 將 README 列出的五項資產直接上傳到 `/root/models/comic-prelayout`，不經 Git。保留所用模型、字型的來源授權材料。單字框偵測只要求 CTD；要提供預設 OCR 字級功能，必須準備全部五項。
+3. 在 `/root/comic-prelayout-venv` 建立隔離環境。先按 [PyTorch 官方安裝說明](https://pytorch.org/get-started/locally/)選擇與目標驅動／Python 相容的 CUDA PyTorch 和 torchvision，再安裝 `backend/requirements-prelayout.txt`。這份檔案是本機 macOS 來源版本記錄，目標 Linux wheel 或依賴不相容時需在此隔離環境調整並重新驗證，不能改 ComfyUI 環境或宣稱已具備可重建的 CUDA 鎖定組合。系統須提供 `ps`／程序群組信號能力。
+4. 在服務 `.env` 設定三個 `COMIC_PRELAYOUT_*` 變數；資料根預設 `/root/autodl-tmp/comic-inpaint/prelayout`。確認服務帳號可讀模型與字型、執行外部 Python、寫入預排版資料目錄。不要使用修圖 projects／jobs 目錄作預排版根目錄。
+5. 執行 README 的 `prelayout_core.check --require-cuda`；必須同時通過五項資產雜湊、核心依賴、字型指標與 CUDA。再執行既有 `deploy/verify.py` 檢查 ComfyUI／工作流資源。兩個工具責任不同，都不是實際推理成功證據。
+6. 同步程式前讀取 `/api/health`，確認 `active_job_id`、`gpu_owner` 都為空，並確認沒有活動預排版工作／下載。Web 更新只用 `deploy/restart-web.sh`，核對 6008 回應與新前端資產，確認 6006 PID 沒有改變。
+7. 在新環境先以一頁真實漫畫做 CTD＋OCR smoke test，再測兩種字級方法及含無文字頁的多頁批次。保存任務日誌，核對全部頁面、量測位置、字級、顏色、方向與 BT 匹配，測試重新偵測不覆蓋人工排版。
+8. 驗收預排版偵測 → 修復 → 預排版偵測、RF／MangaLens → 預排版的互斥與切換；記錄 CUDA、顯存、模型載入與階段耗時。測試取消、worker 異常退出和 Web 重啟，確認子程序退出後才允許下一個 GPU 任務。不要在此期間繞過應用向 6006 手動提交。
+9. 在 6008 真實瀏覽器測試連續捲動、移動／旋轉、固定字型、弱網保存與封存重開。完成後保存 Python／pip／CUDA 環境清單、資產雜湊和測試報告，再按發行流程決定 Tag／鏡像。
+
+發布公開鏡像前，先取回使用者資料，停止服務並執行清理預覽。`deploy/prepublish_clean.py` 現在也列出預排版 `projects/`、`preferences/` 和暫存 `prelayout-*.zip`，不刪除外置模型；自訂資料根使用同一個 `COMIC_PRELAYOUT_DATA_ROOT` 或 `--prelayout-root`。此腳本不自動載入 `.env`，需在執行環境提供實際資料根，核對列出的精確路徑後才按既有規則 `--apply`。本次只以臨時合成資料測試清理契約，未清理任何使用者或遠端資料。
+
+若 GPU／CUDA 驗收尚未完成，仍可部署供測試的人工預排版介面並保持模型功能不可用；不能將該狀態發布為「CTD／OCR 已可用」的完整鏡像。

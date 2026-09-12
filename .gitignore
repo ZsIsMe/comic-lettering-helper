@@ -2,11 +2,13 @@
 ._*
 .env
 .venv/
+.venv
 .pytest_cache/
 __pycache__/
 *.py[cod]
 *.tsbuildinfo
 node_modules/
+node_modules
 frontend/dist/
 frontend/vite.config.js
 frontend/vite.config.d.ts
@@ -15,3 +17,8 @@ var-test/
 models/
 .venv-detection/
 *.log
+*.pt
+*.pth
+*.ckpt
+*.safetensors
+*.onnx

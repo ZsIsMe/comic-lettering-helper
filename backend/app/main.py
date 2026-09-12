@@ -24,21 +24,30 @@ from .projects import ProjectStore
 from .project_api import create_project_router, project_download
 from .composition import build_composition_router
 from .detection import DetectionManager, create_detection_router
+from .prelayout.store import PrelayoutStore
+from .prelayout.detection import PrelayoutDetection
+from .prelayout.api import router as prelayout_router
+import os
 
 
 repository = JobRepository(settings.jobs_root)
 manager = JobManager(settings, repository)
 project_store = ProjectStore(settings.data_root / "projects")
 detection_manager = DetectionManager(settings, project_store, manager.gpu_gate)
+prelayout_store = PrelayoutStore(Path(os.getenv('COMIC_PRELAYOUT_DATA_ROOT', str(settings.data_root / 'prelayout'))),
+                               forbidden=(settings.data_root / 'projects', settings.jobs_root))
+prelayout_detection = PrelayoutDetection(settings, prelayout_store, manager.gpu_gate)
 
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     settings.jobs_root.mkdir(parents=True, exist_ok=True)
     await detection_manager.start()
+    await prelayout_detection.start()
     await manager.start()
     yield
     await manager.stop()
+    await prelayout_detection.stop()
     await detection_manager.stop()
 
 
@@ -234,6 +243,7 @@ def download_job(job_id: str) -> FileResponse:
 app.include_router(create_project_router(settings, repository, manager, project_store))
 app.include_router(build_composition_router(project_store, repository))
 app.include_router(create_detection_router(detection_manager))
+app.include_router(prelayout_router(prelayout_store, prelayout_detection, settings.max_upload_mb * 1024 * 1024))
 
 frontend_dist = settings.app_root / "frontend" / "dist"
 if frontend_dist.is_dir():

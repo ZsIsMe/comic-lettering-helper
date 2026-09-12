@@ -1,0 +1,13 @@
+# Source runtime versions verified by the local headless import/checkpoint-load probe.
+# Install in an EXTERNAL Python environment; do not install into ComfyUI.
+# torch + torchvision CUDA wheels are selected separately for the target image.
+Pillow==12.3.0
+numpy==2.5.1
+opencv-python==5.0.0.93
+tqdm==4.68.4
+pyclipper==1.4.0
+shapely==2.1.2
+einops==0.8.2
+packaging==26.2
+PyYAML==6.0.3
+requests==2.34.2
