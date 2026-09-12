@@ -23,6 +23,8 @@ export default function ProjectWorkbench({ onReadyToLeave }: { onReadyToLeave?: 
   const [loading, setLoading] = useState(true)
   const [createOpen, setCreateOpen] = useState(false)
   const [createDetectionOptions, setCreateDetectionOptions] = useState<DetectionOptions>(defaultDetectionOptions)
+  const [detectOnCreate, setDetectOnCreate] = useState(true)
+  const [createDetectionError, setCreateDetectionError] = useState('')
   const createSettingsTouched = useRef(false)
   const [picking, setPicking] = useState(false)
   const [name, setName] = useState(''); const [sources, setSources] = useState<File[]>([]); const [masks, setMasks] = useState<File[]>([])
@@ -66,7 +68,15 @@ export default function ProjectWorkbench({ onReadyToLeave }: { onReadyToLeave?: 
       for (const f of sources) body.append('source_files', f, f.name)
       for (const f of masks) body.append('mask_files', f, f.name)
       const project = await api<Project>('/api/projects', { method: 'POST', body })
-      setCreateOpen(false); setSources([]); setMasks([]); setName(''); await reload(); open(project)
+      setCreateDetectionError('')
+      if (detectOnCreate) {
+        try {
+          await api(`${projectUrl(project.id)}/detect`, json('POST', { expected_revision: project.revision, replace_existing: true, options: createDetectionOptions }))
+        } catch (err) {
+          setCreateDetectionError(`項目已建立，但自動檢測未啟動：${err instanceof Error ? err.message : String(err)}。可在此重試自動檢測。`)
+        }
+      }
+      setCreateOpen(false); setSources([]); setMasks([]); setName(''); open(project); await reload()
     })
   }
   async function importArchive(file: File) {
@@ -88,7 +98,7 @@ export default function ProjectWorkbench({ onReadyToLeave }: { onReadyToLeave?: 
     } finally { setDeleting(false) }
   }
   if (legacy) return <><div className="legacy-back"><Button onClick={() => setLegacy(false)}>返回項目工作台</Button></div><LegacyBatch /></>
-  if (current) return <ProjectWorkspace key={current.id} initial={current} gpuOwner={gpuOwner} onReadyToLeave={onReadyToLeave} onExit={async () => { localStorage.removeItem(remember); setCurrent(null); await reload() }} />
+  if (current) return <ProjectWorkspace key={current.id} initial={current} initialError={createDetectionError} gpuOwner={gpuOwner} onReadyToLeave={onReadyToLeave} onExit={async () => { localStorage.removeItem(remember); setCreateDetectionError(''); setCurrent(null); await reload() }} />
   return <main className="app-shell project-home">
     <header className="project-header"><div><Text className="eyebrow">COMIC WORKSPACE</Text><Title>漫畫修圖項目</Title><Text>保存原圖、修補與合成進度，下次打開接著編輯。</Text></div><Space wrap>
       <Button href="#/edgewhite">邊緣塗白</Button>
@@ -120,7 +130,9 @@ export default function ProjectWorkbench({ onReadyToLeave }: { onReadyToLeave?: 
         <Text type="secondary">已有 Mask 可直接進入批量修復；只上傳原圖則先自動檢測或人工編輯。資料夾僅匯入第一層，每次選擇整批取代。</Text>
         <section className="create-detection-settings" aria-label="新項目的自動檢測設定">
           <h3>自動檢測設定</h3>
-          <Text type="secondary">設定會隨項目保存；建立後按「自動檢測」才開始執行。已有 Mask 可跳過檢測。</Text>
+          <Checkbox checked={detectOnCreate} disabled={busy || picking} onChange={e => setDetectOnCreate(e.target.checked)}>建立後立即自動檢測</Checkbox>
+          {detectOnCreate && masks.length > 0 && <Alert type="warning" message="自動檢測將重建全部頁面的圖層並取代匯入 Mask；要保留 Mask，請取消勾選。" />}
+          <Text type="secondary">設定會隨項目保存；勾選後在圖片上傳並建立項目完成時立即執行，無須再次按「自動檢測」。</Text>
           <DetectionSettings value={createDetectionOptions} onChange={value => { createSettingsTouched.current = true; setCreateDetectionOptions(value) }} disabled={busy || picking} />
         </section>
       </Space>
@@ -128,7 +140,7 @@ export default function ProjectWorkbench({ onReadyToLeave }: { onReadyToLeave?: 
   </main>
 }
 
-function ProjectWorkspace({ initial, gpuOwner, onExit, onReadyToLeave }: { initial: Project; gpuOwner: string | null; onExit: () => Promise<void>; onReadyToLeave?: (handler: () => Promise<boolean>) => void }) {
+function ProjectWorkspace({ initial, initialError, gpuOwner, onExit, onReadyToLeave }: { initial: Project; initialError: string; gpuOwner: string | null; onExit: () => Promise<void>; onReadyToLeave?: (handler: () => Promise<boolean>) => void }) {
   const [modal, modalHolder] = Modal.useModal()
   const [project, setProject] = useState(initial)
   const workspaceRoot = useRef<HTMLElement>(null)
@@ -142,7 +154,7 @@ function ProjectWorkspace({ initial, gpuOwner, onExit, onReadyToLeave }: { initi
   const [run, setRun] = useState<Run | null>(null); const [runId, setRunId] = useState(initial.current_run_id)
   const [composition, setComposition] = useState<Composition | null>(null)
   const [assignment, setAssignment] = useState<number[][] | null>(null)
-  const [busy, setBusy] = useState(false); const [error, setError] = useState(''); const [dirty, setDirty] = useState(false)
+  const [busy, setBusy] = useState(false); const [error, setError] = useState(initialError); const [dirty, setDirty] = useState(false)
   const [editorKey, setEditorKey] = useState(0)
   const [availability, setAvailability] = useState<{ available?: boolean; ready?: boolean; available_without_bubbles?: boolean; defaults?: DetectionOptions; errors?: string[]; message?: string } | null>(null)
   const [clock, setClock] = useState(Date.now())

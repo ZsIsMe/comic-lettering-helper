@@ -14,6 +14,7 @@ export default function PrelayoutWorkbench({ onExit, onReadyToLeave }: { onExit:
   const [modal, modalContext] = Modal.useModal()
   const [projects, setProjects] = useState<Project[]>([]), [current, setCurrent] = useState<Project | null>(null)
   const [error, setError] = useState(''), [busy, setBusy] = useState(false), [createOpen, setCreateOpen] = useState(false)
+  const [newProjectId, setNewProjectId] = useState<string | null>(null)
   const [name, setName] = useState(''), [images, setImages] = useState<File[]>([])
   const reload = useCallback(async () => setProjects(await request<Project[]>(`${base}/projects`)), [])
   useEffect(() => {
@@ -26,7 +27,7 @@ export default function PrelayoutWorkbench({ onExit, onReadyToLeave }: { onExit:
     setBusy(true); setError('')
     try { await fn() } catch (e) { setError((e as Error).message) } finally { setBusy(false) }
   }
-  if (current) return <Workspace key={current.id} project={current} onReadyToLeave={onReadyToLeave} onExit={async () => { localStorage.removeItem('pl-last-project'); setCurrent(null); await reload() }} />
+  if (current) return <Workspace key={current.id} project={current} promptDetection={newProjectId === current.id} onReadyToLeave={onReadyToLeave} onExit={async () => { localStorage.removeItem('pl-last-project'); setNewProjectId(null); setCurrent(null); await reload() }} />
   return <main className="pl-shell pl-home">{modalContext}
     <header className="pl-home-header"><div><span className="pl-kicker">LETTERING STUDIO</span><h1>漫畫預排版</h1><p>匯入譯文，在連續漫畫頁上調整文字與樣式。</p></div><Space wrap>
       <Button onClick={onExit}>返回圖片修復</Button>
@@ -48,7 +49,7 @@ export default function PrelayoutWorkbench({ onExit, onReadyToLeave }: { onExit:
     </article>)}</div> : <Empty description="建立預排版項目，先上傳漫畫原圖" />}
     <Modal title="新建預排版項目" open={createOpen} onCancel={() => setCreateOpen(false)} okText="建立項目" confirmLoading={busy} okButtonProps={{ disabled: !images.length }} onOk={() => void action(async () => {
       const data = new FormData(); data.append('name', name); images.forEach(file => data.append('source_files', file, file.name))
-      setCurrent(await request<Project>(`${base}/projects`, { method: 'POST', body: data })); setCreateOpen(false); setImages([]); setName('')
+      const created = await request<Project>(`${base}/projects`, { method: 'POST', body: data }); setNewProjectId(created.id); setCurrent(created); setCreateOpen(false); setImages([]); setName('')
     })}>
       <Input placeholder="項目名稱" value={name} onChange={e => setName(e.target.value)} />
       <p>原圖 · 已選 {images.length} 張</p><Space>
@@ -59,7 +60,7 @@ export default function PrelayoutWorkbench({ onExit, onReadyToLeave }: { onExit:
   </main>
 }
 
-function Workspace({ project: initial, onExit, onReadyToLeave }: { project: Project; onExit: () => Promise<void>; onReadyToLeave?: (handler: () => Promise<boolean>) => void }) {
+function Workspace({ project: initial, promptDetection, onExit, onReadyToLeave }: { project: Project; promptDetection: boolean; onExit: () => Promise<void>; onReadyToLeave?: (handler: () => Promise<boolean>) => void }) {
   const [modal, modalContext] = Modal.useModal()
   const [notices, noticesContext] = message.useMessage()
   const [project, setProject] = useState(initial)
@@ -71,6 +72,7 @@ function Workspace({ project: initial, onExit, onReadyToLeave }: { project: Proj
   const [jump, setJump] = useState<{ id: string; version: number; y?: number } | null>(null), [error, setError] = useState(''), [busy, setBusy] = useState(false)
   const [pendingOnly, setPendingOnly] = useState(false)
   const [availability, setAvailability] = useState<Availability | null>(null), [task, setTask] = useState<Detection | null>(null)
+  const [detectOpen, setDetectOpen] = useState(promptDetection)
   const [method, setMethod] = useState('ocr_aligned'), [fontBase, setFontBase] = useState(24), [fontStep, setFontStep] = useState(2)
   const [clipboard, setClipboard] = useState<Item[]>([]), [memory, setMemory] = useState<Item | null>(null)
   const [fontReady, setFontReady] = useState(false)
@@ -227,6 +229,18 @@ function Workspace({ project: initial, onExit, onReadyToLeave }: { project: Proj
     patch({ x: center[0], y: center[1], xyxy_pixel: box, 'font-size': size, orientation: measure.orientation === 'horizontal' ? 'horizontal' : 'vertical', ...measureStyle(measure, size) })
   }, [controller, first, patch, selection, notices])
   return <main className="pl-shell pl-workspace">{modalContext}{noticesContext}
+    <Modal title="圖片已匯入，是否進行 CTD 識別？" open={detectOpen} okText="開始識別" cancelText="稍後再說" confirmLoading={busy}
+      okButtonProps={{ disabled: !availability?.methods[method] || !!availability?.gpu_owner || activeDetection(task) }}
+      onCancel={() => { if (!busy) setDetectOpen(false) }} onOk={() => void execute(async () => {
+        if (!await controller.flush()) return
+        setTask(await request<Detection>(`${projectPath(project.id)}/detections`, body({ method, font_size: fontBase, step: fontStep })))
+        setDetectOpen(false)
+      })}>
+      <p>識別整個項目的文字框與字級。完成後匯入 LP.txt，會自動匹配譯文。</p>
+      <Select aria-label="CTD 識別方式" value={method} onChange={setMethod} options={[{ value: 'ocr_aligned', label: 'OCR 對齊逐字計算' }, { value: 'single_char', label: '單字框計算' }]} />
+      <p>{!availability ? '正在檢查識別環境…' : !availability.methods[method] ? '尚未準備模型，可稍後再識別。' : availability.gpu_owner ? 'GPU 正忙，請稍後開始。' : '識別環境已就緒。'}</p>
+      {error && <Alert type="error" message={error} />}
+    </Modal>
     <header className="pl-toolbar"><div className="pl-title"><Button onClick={() => void execute(async () => { if (await controller.flush()) await onExit() })}>項目列表</Button><strong>{project.name}</strong><Tag color={errors.length ? 'red' : controller.dirty ? 'orange' : 'green'}>{saving ? '保存中' : controller.dirty ? '尚未保存' : '已保存'}</Tag></div>
       <Space wrap><Button onClick={() => modal.info({ title: '預排版快捷鍵', width: 650, content: <div className="pl-shortcut-help"><p>先點選文字，再使用移動、字級與旋轉快捷鍵。多選時每條文字分別調整；長按可連續操作，放開後記為一次撤銷。編輯輸入框或中文組字期間不攔截按鍵。</p><p>Mac 使用 ⌘／Option，Windows 使用 Ctrl／Alt。移動以原圖像素計算，與畫面縮放無關。</p><dl>{shortcutHelp.map(([action, keys]) => <div key={action}><dt>{action}</dt><dd>{keys}</dd></div>)}</dl></div> })}>快捷鍵</Button><Button onClick={() => void execute(async () => { await controller.flush() })}>保存</Button><Button onClick={downloadMeo}>匯出 Meo.json</Button><Button href="/downloads/LabelPlus_Ps_Script_ZS-1.8.0.zip" download="LabelPlus_Ps_Script_ZS-1.8.0.zip">配套PS腳本</Button></Space>
     </header>

@@ -1,6 +1,7 @@
 import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react'
 import { Alert, Spin } from 'antd'
 import ProjectWorkbench from './ProjectWorkbench'
+import { UpdateChecker } from './UpdateChecker'
 
 const EdgeWhitePage = lazy(() => import('./EdgeWhitePage'))
 const PrelayoutWorkbench = lazy(() => import('./prelayout/PrelayoutWorkbench'))
@@ -43,6 +44,7 @@ export default function WorkspaceRouter() {
   const module = moduleFor(route)
   const edge = route.match(/^\/edgewhite(?:\/([0-9a-f]{32}))?\/?$/)
   return <>
+    <UpdateChecker />
     {error && <Alert type="error" showIcon message={error} closable onClose={() => setError('')} />}
     {/* Preserve repair page, step and edits across optional module visits. Inert blocks hidden-editor input. */}
     <div hidden={module !== 'repair'} inert={module !== 'repair'}><ProjectWorkbench onReadyToLeave={registerRepair} /></div>

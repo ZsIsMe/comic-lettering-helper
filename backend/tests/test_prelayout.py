@@ -553,3 +553,26 @@ def test_publish_cleanup_lists_only_prelayout_data_and_preserves_external_assets
     subprocess.run(command + ['--apply'], env=env, text=True, capture_output=True, check=True)
     assert not (prelayout / 'projects').exists()
     assert (models / 'asset.pt').read_bytes() == b'synthetic model sentinel'
+
+
+def test_labelplus_import_auto_matches_completed_detection_only_imported_pages(store, project):
+    pid = project['id']; page, untouched = project['pages']; did = identifier('d')
+    store.save_page(pid, untouched['id'], 0, [item(match_status='manual')], 'manual')
+    project = store.read(pid)
+    measure = {'pages': {page['name']: [{'xyxy_pixel': [120, 100, 180, 300],
+               'center_normalized': [.5, .5], 'font_size': 28.5, 'orientation': 'vertical'}]}}
+    path = store.directory(pid) / 'detections' / did / 'output' / 'measure.json'
+    atomic_json(path, measure)
+    project['detection_id'] = did; store.write(project)
+    before = store.page(pid, untouched['id'])
+    raw = '1, 0\n-\n對話\n-\n備註\n>>>>>>>>[2.jpg]<<<<<<<<\n----------------[1]----------------[0.5,0.5,1]\n譯文\n'.encode()
+    store.import_translation(pid, raw, 'labelplus', project['revision'])
+    assert not store.page(pid, page['id'])['items']
+    result = store.import_translation(pid, raw, 'labelplus', project['revision'], True)
+    imported = store.page(pid, page['id'])['items'][0]
+    assert imported['match_status'] == 'auto'
+    assert imported['font-size'] == 29
+    assert imported['text'] == '譯文'
+    assert result['revision'] == project['revision'] + 1
+    assert store.page(pid, untouched['id']) == before
+    assert json.loads(path.read_text()) == measure

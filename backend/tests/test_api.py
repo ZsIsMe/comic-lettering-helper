@@ -36,3 +36,15 @@ def test_mismatched_upload_is_rejected_before_queueing() -> None:
         )
     assert response.status_code == 400
     assert "配對失敗" in response.json()["detail"]
+
+
+def test_health_without_executable_gpu_driver(monkeypatch):
+    from app import main
+    def no_driver(*args, **kwargs):
+        raise OSError(8, "Exec format error")
+    monkeypatch.setattr(main.subprocess, "run", no_driver)
+    monkeypatch.setattr(main, "comfy_ready", lambda: False)
+    health = main.health()
+    assert health.app == "ok"
+    assert health.gpu_name is None
+    assert health.gpu_memory_total_mib is None

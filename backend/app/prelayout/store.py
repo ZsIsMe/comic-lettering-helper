@@ -241,14 +241,23 @@ class PrelayoutStore:
                        'groups': data.get('groupList', []), 'project_revision': project['revision']}
             if not apply:
                 return summary
+            if kind == 'labelplus':
+                for items in mapping.values():
+                    for item in items:
+                        item['match_status'] = 'unmatched'
+                if project.get('detection_id'):
+                    path = self.directory(pid) / 'detections' / project['detection_id'] / 'output' / 'measure.json'
+                    imported = {**data, 'transMap': {page['name']: mapping[page['id']]
+                                for page in project['pages'] if page['id'] in mapping}}
+                    matched = match_translation(imported, read_json(path.read_bytes()), self.directory(pid) / 'originals')
+                    for page in project['pages']:
+                        if page['id'] in mapping:
+                            mapping[page['id']] = validate_items(matched['transMap'][page['name']], page['width'], page['height'])
             # Build every immutable page revision first, then publish a single manifest.
             for page in project['pages']:
                 if page['id'] not in mapping:
                     continue
                 items = mapping[page['id']]
-                if kind == 'labelplus':
-                    for item in items:
-                        item['match_status'] = 'unmatched'
                 revision = page['revision'] + 1
                 relative = f'pages/{page["id"]}/{revision}-{identifier()}.json'
                 atomic_json(self.directory(pid) / relative, {'revision': revision, 'items': items, 'operations': []})

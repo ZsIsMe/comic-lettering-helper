@@ -29,6 +29,7 @@ from .prelayout.detection import PrelayoutDetection
 from .prelayout.api import router as prelayout_router
 import os
 from .edgewhite_api import create_edgewhite_router
+from .updates import APP_VERSION, router as updates_router
 
 
 repository = JobRepository(settings.jobs_root)
@@ -52,7 +53,8 @@ async def lifespan(_: FastAPI):
     await detection_manager.stop()
 
 
-app = FastAPI(title="漫畫去字工作台", version="0.1.0", lifespan=lifespan)
+app = FastAPI(title="漫畫去字工作台", version=APP_VERSION, lifespan=lifespan)
+app.include_router(updates_router)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://127.0.0.1:5173", "http://localhost:5173"],
@@ -114,7 +116,7 @@ def gpu_stats() -> tuple[str | None, int | None, int | None, int | None]:
         )
         name, used, total, utilization = [part.strip() for part in result.stdout.splitlines()[0].split(",")]
         return name, int(float(used)), int(float(total)), int(float(utilization))
-    except (FileNotFoundError, subprocess.SubprocessError, ValueError, IndexError):
+    except (OSError, subprocess.SubprocessError, ValueError, IndexError):
         return None, None, None, None
 
 
