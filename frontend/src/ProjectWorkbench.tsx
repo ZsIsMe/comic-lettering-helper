@@ -91,6 +91,8 @@ export default function ProjectWorkbench({ onReadyToLeave }: { onReadyToLeave?: 
   if (current) return <ProjectWorkspace key={current.id} initial={current} gpuOwner={gpuOwner} onReadyToLeave={onReadyToLeave} onExit={async () => { localStorage.removeItem(remember); setCurrent(null); await reload() }} />
   return <main className="app-shell project-home">
     <header className="project-header"><div><Text className="eyebrow">COMIC WORKSPACE</Text><Title>漫畫修圖項目</Title><Text>保存原圖、修補與合成進度，下次打開接著編輯。</Text></div><Space wrap>
+      <Button href="#/edgewhite">邊緣塗白</Button>
+      <Button href="#/prelayout">預排版</Button>
       <Button onClick={() => setLegacy(true)}>舊版批次與歷史</Button>
       <label className={`file-picker ${busy || gpuOwner ? 'disabled' : ''}`}>匯入項目<input type="file" accept=".zip" disabled={busy || !!gpuOwner} onChange={e => { const f = e.target.files?.[0]; if (f) void importArchive(f); e.target.value = '' }} /></label>
       <Button type="primary" disabled={!!gpuOwner} onClick={() => setCreateOpen(true)}>新建項目</Button>
@@ -166,7 +168,7 @@ function ProjectWorkspace({ initial, gpuOwner, onExit, onReadyToLeave }: { initi
   }
   async function flush() { return !editor.current || await editor.current.flush() }
   useEffect(() => {
-    onReadyToLeave?.(async () => !editor.current || await editor.current.flush())
+    onReadyToLeave?.(async () => !navigating.current && (!editor.current || await editor.current.flush()))
     return () => onReadyToLeave?.(async () => true)
   }, [onReadyToLeave])
   async function reloadProject() { const p = await api<Project>(url); setProject(p); return p }

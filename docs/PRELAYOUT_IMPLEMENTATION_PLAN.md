@@ -2,6 +2,8 @@
 
 日期：2026-09-12
 
+**合併更新：兩個功能分支現已整合至本地 `codex/project-workbench`；下文工作樹及分支狀態保留為歷史記錄。未部署 AutoDL。**
+
 **狀態：依啟用的本地開發目標，已在 `codex/prelayout-web` 工作樹完成本地實作、功能驗收及後續 17 頁真實 MPS 模型測試。** 工作樹從目前分支 `codex/project-workbench` 的 `ad7bfc0` 建立，路徑為 `/Users/zhongsheng/Documents/ChatGPT/autodl/worktrees/comic-prelayout`。原工作台分支未合併本次功能。
 
 本地功能與驗證結果見 [本地驗證記錄](PRELAYOUT_LOCAL_VALIDATION.md)；目標 CUDA、GPU 顯存交接及乾淨鏡像驗收仍待部署環境完成。本文保留完整需求與發布門檻，不把合成資料、資產預檢或本機程序測試當作真實 GPU 驗收。部署準備見 [部署文件](DEPLOYMENT.md#預排版部署準備)。

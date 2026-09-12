@@ -337,3 +337,27 @@ PNG 已是壓縮格式，ZIP 使用 store 模式以降低打包 CPU 與傳輸文
 新建項目與檢測確認視窗共用 `DetectionSettings`。建立 API 接受 multipart `detection_options` JSON，保存於項目 manifest，並隨封存匯出／匯入；建立不要求模型可用，也不提交推理。`DetectionRequest.options` 固定當次設定：`mask_dilate` 0–64 px、`mask_mode` 四種範圍、`bubble_enabled`、`bubble_shrink_percent` 0–10%。舊項目未保存時使用 availability 回傳的伺服器預設。
 
 提交時將選項寫入任務配置副本、狀態及項目，不修改維護者的配置原檔。關閉氣泡辨識時不載入 MangaLens，不要求其權重或 ultralytics，並忽略舊氣泡快取；availability 的 `available_without_bubbles` 允許僅 RF 準備好的環境開啟設定。裝置及模型路徑仍只由維護配置控制。
+## 邊緣塗白獨立模組
+
+`WorkspaceRouter.tsx` 在工作台記住的項目恢復之前處理 `#/edgewhite[/<id>]`。`EdgeWhitePage.tsx` 管理獨立集合；`edgewhite/GuideCanvas.tsx` 使用 SVG 原尺寸座標、四邊標尺與雙欄預覽。離開編輯頁或換頁前等待草稿保存；瀏覽器重載按集合保存的頁 ID 續編。
+
+搜尋函數位於 `guide-snap.ts`，來源為使用者提供的 Mac EdgeWhite commit `bdfbe8b8b42008b40e52ec0427ff9a9c62f637ed`。Web Worker 只持有目前頁的原尺寸灰階快取；RGBA 以 transferable buffer 傳入，換頁終止 Worker。請求世代、頁面／來源雜湊鍵及活動線限制避免過期結果回寫。搜尋評分為完整空白段數，不作語義或內容品質判斷。原圖規範化和輸出使用 `backend/imaging/edgewhite.py`，半開網格矩形與 SVG 相同。
+
+資料集合位於 `<COMIC_DATA_ROOT>/edgewhite/<id>/`：`collection.json` 包含原件／工作圖雜湊、頁序、草稿與輸出修訂；各頁子目錄保存原件、`source.png` 和不可變輸出檔。新集合先寫入 `.upload-<id>`，完成後整體重命名；編輯及輸出完成後原子更新清單。歷史輸出修訂隨集合刪除；ZIP 在回應結束後移除。保存／刪除共用集合 RLock，圖片和 ZIP 回應持有 reader 引用，傳輸失敗也釋放。
+
+`/api/edgewhite` 提供集合建立／列出；`/{id}` 讀取／刪除；`/{id}/pages/{page}/source` 讀取工作圖；`PUT /{id}/pages/{page}` 以預期修訂號保存草稿或輸出；`/{id}/guides` 提供桌面 JSON 導出、JSON PUT 或 multipart POST 匯入；`/{id}/download` 打包所有已確認頁。未更新輸出的草稿回傳 409，舊修訂保存同樣回傳 409。CPU 操作限兩個併發，不佔 GPU gate；建立／匯入與整批下載沿用 GPU 忙碌限制，已載入頁的普通編輯與保存仍可使用。
+
+目錄匯入採 File System Access `values()` 或拖放目錄的 `readEntries()`，只遍歷根目錄的檔案，對子目錄不呼叫任何讀取方法。後者重複讀取同一個 root reader 的分批結果，直到空批次，避免超過 100 個第一層檔案被漏掉。`webkitdirectory` 已從此功能移除。參考：[DirectoryHandle.values](https://developer.mozilla.org/en-US/docs/Web/API/FileSystemDirectoryHandle/values)、[DirectoryReader.readEntries](https://developer.mozilla.org/en-US/docs/Web/API/FileSystemDirectoryReader/readEntries)。
+
+
+### 2026-09-12 匯入入口修訂（取代此前非遞歸選取器方案）
+
+使用者已允許瀏覽器掃描子目錄。新建集合改為單一匯入區：點擊唯一匯入區後，在選單選擇「多張圖片」或「單個資料夾」，也可直接拖入；資料夾模式使用標準 `input webkitdirectory`，不再呼叫 `showDirectoryPicker`。瀏覽器可列舉子目錄，應用只匯入第一層圖片，避免包含 deal 成品。因瀏覽器原生檔案選擇器區分圖片多選及目錄模式，兩種模式由同一入口的選單選取，不再有獨立資料夾按鈕。
+
+內建瀏覽器實測：經資料夾選擇器指定第 82 話目錄，顯示 21 張並略過 1 個子資料夾；點擊主區開啟多選選擇器，選入 2 張測試圖片成功。此前 showDirectoryPicker 的阻塞不再適用於新版入口。lint、build、18 項前端及 61 項後端測試通過。
+
+## 三個工作區合併（2026-09-12）
+
+`codex/prelayout-web`（8cdc3c7）及 `codex/edgewhite-web`（74b4ec8）合入 `codex/project-workbench`。修圖仍為預設入口，首頁增加預排版和邊緣塗白；三部分沒有強制前後依賴。統一的 hash 路由在離開編輯頁前保存，失敗則留在原頁。修圖頁保持掛載並在隱藏時禁止互動，返回時保留原圖片與步驟；附加模組按需載入。
+
+資料分別位於 `<COMIC_DATA_ROOT>/projects`、`prelayout`、`edgewhite`，API 使用獨立路徑；合併不搬移其他工作樹的試用資料。預排版自訂根目錄不得重疊修圖、jobs 或 edgewhite。CTD／OCR 與修圖偵測／ComfyUI 共用 ResourceGate，程序恢復時保留全部仍存活的佔用。原修圖工作流、批次器、輸入轉換與合成核心未改。

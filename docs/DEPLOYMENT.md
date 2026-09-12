@@ -408,3 +408,27 @@ React 19 的確認視窗使用受控 Modal 或 Modal.useModal。更新前端構�
 發布公開鏡像前，先取回使用者資料，停止服務並執行清理預覽。`deploy/prepublish_clean.py` 現在也列出預排版 `projects/`、`preferences/` 和暫存 `prelayout-*.zip`，不刪除外置模型；自訂資料根使用同一個 `COMIC_PRELAYOUT_DATA_ROOT` 或 `--prelayout-root`。此腳本不自動載入 `.env`，需在執行環境提供實際資料根，核對列出的精確路徑後才按既有規則 `--apply`。本次只以臨時合成資料測試清理契約，未清理任何使用者或遠端資料。
 
 若 GPU／CUDA 驗收尚未完成，仍可部署供測試的人工預排版介面並保持模型功能不可用；不能將該狀態發布為「CTD／OCR 已可用」的完整鏡像。
+## 邊緣塗白頁面
+
+本功能沿用單一 6008 FastAPI 服務，無需新增模型、Swift 環境、GPU 任務或對外端口。部署需包含新增的 `backend/app/edgewhite*.py`、`backend/imaging/edgewhite.py` 及完整前端正式建置；建置會產生獨立 `guide-snap.worker-*.js`，不可只更新主 JS 而遺漏 Worker。
+
+資料目錄新增 `<COMIC_DATA_ROOT>/edgewhite/`，應可持久寫入，並納入備份與發布前的使用者資料清理範圍。原件、草稿與輸出皆屬使用者資料，不能帶入公開鏡像。不要將本機測試目錄或來源 Mac 工程路徑部署上線。
+
+一般資料夾選取使用瀏覽器支援的目錄 API；不支援時用拖入資料夾或多選圖片。讀取只到第一層，不使用 `webkitdirectory`。反向代理須允許既有 `/api/*`、multipart 請求及靜態 Worker 資產。Hash 路由不需要額外服務端 SPA 路徑回退。
+
+這次僅完成本機開發；實際部署仍須按既有規範先檢查 GPU 空閒、建置成功，僅重啟 6008，並驗證 6006 未受影響。
+
+
+### 2026-09-12 匯入入口修訂（取代此前非遞歸選取器方案）
+
+使用者已允許瀏覽器掃描子目錄。新建集合改為單一匯入區：點擊唯一匯入區後，在選單選擇「多張圖片」或「單個資料夾」，也可直接拖入；資料夾模式使用標準 `input webkitdirectory`，不再呼叫 `showDirectoryPicker`。瀏覽器可列舉子目錄，應用只匯入第一層圖片，避免包含 deal 成品。因瀏覽器原生檔案選擇器區分圖片多選及目錄模式，兩種模式由同一入口的選單選取，不再有獨立資料夾按鈕。
+
+內建瀏覽器實測：經資料夾選擇器指定第 82 話目錄，顯示 21 張並略過 1 個子資料夾；點擊主區開啟多選選擇器，選入 2 張測試圖片成功。此前 showDirectoryPicker 的阻塞不再適用於新版入口。lint、build、18 項前端及 61 項後端測試通過。
+
+## 三個工作區合併（2026-09-12）
+
+`codex/prelayout-web`（8cdc3c7）及 `codex/edgewhite-web`（74b4ec8）合入 `codex/project-workbench`。修圖仍為預設入口，首頁增加預排版和邊緣塗白；三部分沒有強制前後依賴。統一的 hash 路由在離開編輯頁前保存，失敗則留在原頁。修圖頁保持掛載並在隱藏時禁止互動，返回時保留原圖片與步驟；附加模組按需載入。
+
+資料分別位於 `<COMIC_DATA_ROOT>/projects`、`prelayout`、`edgewhite`，API 使用獨立路徑；合併不搬移其他工作樹的試用資料。預排版自訂根目錄不得重疊修圖、jobs 或 edgewhite。CTD／OCR 與修圖偵測／ComfyUI 共用 ResourceGate，程序恢復時保留全部仍存活的佔用。原修圖工作流、批次器、輸入轉換與合成核心未改。
+
+整合驗收：前端 lint／build 與 58 項測試通過；後端 194 項測試通過。隔離瀏覽器使用合成圖片驗證三個入口與編輯頁、預排版文字修改跨模組返回後仍保存、返回修圖仍停在批量修復步驟。三個 API 清單各只包含自己的測試項目；無 GPU 任務。`make verify-local` 的倉庫工作流與前端通過，本機 /root/ComfyUI 缺 19 項外部環境；未做新的 CUDA 驗收。

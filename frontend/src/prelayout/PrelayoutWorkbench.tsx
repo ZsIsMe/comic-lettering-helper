@@ -10,7 +10,7 @@ import './styles.css'
 
 const showCleanUpload = false
 
-export default function PrelayoutWorkbench({ onExit }: { onExit: () => void }) {
+export default function PrelayoutWorkbench({ onExit, onReadyToLeave }: { onExit: () => void; onReadyToLeave?: (handler: () => Promise<boolean>) => void }) {
   const [modal, modalContext] = Modal.useModal()
   const [projects, setProjects] = useState<Project[]>([]), [current, setCurrent] = useState<Project | null>(null)
   const [error, setError] = useState(''), [busy, setBusy] = useState(false), [createOpen, setCreateOpen] = useState(false)
@@ -26,7 +26,7 @@ export default function PrelayoutWorkbench({ onExit }: { onExit: () => void }) {
     setBusy(true); setError('')
     try { await fn() } catch (e) { setError((e as Error).message) } finally { setBusy(false) }
   }
-  if (current) return <Workspace key={current.id} project={current} onExit={async () => { localStorage.removeItem('pl-last-project'); setCurrent(null); await reload() }} />
+  if (current) return <Workspace key={current.id} project={current} onReadyToLeave={onReadyToLeave} onExit={async () => { localStorage.removeItem('pl-last-project'); setCurrent(null); await reload() }} />
   return <main className="pl-shell pl-home">{modalContext}
     <header className="pl-home-header"><div><span className="pl-kicker">LETTERING STUDIO</span><h1>漫畫預排版</h1><p>匯入譯文，在連續漫畫頁上調整文字與樣式。</p></div><Space wrap>
       <Button onClick={onExit}>返回圖片修復</Button>
@@ -58,7 +58,7 @@ export default function PrelayoutWorkbench({ onExit }: { onExit: () => void }) {
   </main>
 }
 
-function Workspace({ project: initial, onExit }: { project: Project; onExit: () => Promise<void> }) {
+function Workspace({ project: initial, onExit, onReadyToLeave }: { project: Project; onExit: () => Promise<void>; onReadyToLeave?: (handler: () => Promise<boolean>) => void }) {
   const [modal, modalContext] = Modal.useModal()
   const [notices, noticesContext] = message.useMessage()
   const [project, setProject] = useState(initial)
@@ -79,6 +79,10 @@ function Workspace({ project: initial, onExit }: { project: Project; onExit: () 
   const pointerChanged = useCallback((value: PagePointer | null) => { pointer.current = value }, [])
   const interacting = useRef(false)
   const interactionChanged = useCallback((value: boolean) => { interacting.current = value }, [])
+  useEffect(() => {
+    onReadyToLeave?.(async () => !busy && !interacting.current && await controller.flush())
+    return () => onReadyToLeave?.(async () => true)
+  }, [busy, controller, onReadyToLeave])
   const fileInput = useRef<HTMLInputElement>(null), importKind = useRef('bt')
   const state = controller.pages.get(selection.page)
   const selected = state?.data.items.filter(item => selection.ids.includes(item._id)) || []
