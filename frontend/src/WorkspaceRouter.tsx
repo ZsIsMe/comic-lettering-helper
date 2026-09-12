@@ -44,7 +44,10 @@ export default function WorkspaceRouter() {
   const module = moduleFor(route)
   const edge = route.match(/^\/edgewhite(?:\/([0-9a-f]{32}))?\/?$/)
   return <>
-    <UpdateChecker />
+    <UpdateChecker beforeInstall={async () => {
+      for (const guard of Object.values(guards.current)) if (!await guard()) return false
+      return true
+    }} />
     {error && <Alert type="error" showIcon message={error} closable onClose={() => setError('')} />}
     {/* Preserve repair page, step and edits across optional module visits. Inert blocks hidden-editor input. */}
     <div hidden={module !== 'repair'} inert={module !== 'repair'}><ProjectWorkbench onReadyToLeave={registerRepair} /></div>

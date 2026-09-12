@@ -193,3 +193,8 @@ F1 純色填充與 F2 待修補以常駐按鈕切換，記住上次選擇。工�
 新增所有工作區共用「檢查更新」，目前應用版本 0.2.1；按鈕只查詢固定 GitHub 倉庫的正式數字 Tag，按語義版本比較，排除預覽版，不自動安裝。結果快取 60 秒，網路失敗明示無法檢查。此次應用升級包含新建時啟動檢測及 LP 匯入自動匹配；版本以 0.2.1 Tag 對應此次應用發布。部署更新 backend/app 及前端 dist，保留模型、環境、使用者資料；確認無活動任務後只重啟 Web。
 
 無卡開機的 nvidia-smi 可能拋出 OSError（Exec format error）；健康檢查將其視為 GPU 不可用，仍回傳正常應用狀態。驗證：lint、build、62 項前端測試、199 項後端測試通過；AutoDL 無卡 6008 重啟及健康檢查正常，未執行新 GPU 推理。
+
+
+### 0.2.2 網頁升級
+
+0.2.2 加入 6008 網頁安裝器：保存編輯後確認升級，只接受固定 GitHub 倉庫的較新正式 Tag。獨立程序下載 application.zip 與 SHA-256，逐檔校驗並檢查執行環境需求；只更新 backend/app、backend/imaging、backend/prelayout_core、frontend/dist，不覆蓋模型、環境、設定或資料。更新時封鎖其他應用 API，已有請求／GPU 任務時拒絕；備份後只重啟 6008，新版啟動失敗自動回復。狀態與備份存於資料根 updates/。發布前先 build，再用 deploy/build-update.py 產生更新附件並上傳該 Tag 的 Release。0.2.1 需先部署此安裝器一次，後續由網頁更新。

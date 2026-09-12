@@ -30,6 +30,7 @@ from .prelayout.api import router as prelayout_router
 import os
 from .edgewhite_api import create_edgewhite_router
 from .updates import APP_VERSION, router as updates_router
+from .update_install import Installer, MaintenanceMiddleware, router as install_router
 
 
 repository = JobRepository(settings.jobs_root)
@@ -54,7 +55,10 @@ async def lifespan(_: FastAPI):
 
 
 app = FastAPI(title="漫畫去字工作台", version=APP_VERSION, lifespan=lifespan)
+installer = Installer(settings, manager)
 app.include_router(updates_router)
+app.include_router(install_router(installer))
+app.add_middleware(MaintenanceMiddleware, installer=installer)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://127.0.0.1:5173", "http://localhost:5173"],
