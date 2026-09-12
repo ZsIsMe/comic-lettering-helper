@@ -66,23 +66,23 @@ export default function EdgeWhitePage({ id, registerGuard }: { id: string; regis
   return <main className="app-shell ew-shell">
     {modalHolder}
     <header className="ew-header"><div><Text className="eyebrow">COMIC WORKSPACE / EDGE WHITE</Text><Title level={2}>邊緣塗白</Title><Text>用參考線尋找空白分界，逐格清理圖片邊緣。</Text></div>
-      <Space><Button onClick={() => { window.location.hash = id ? '/edgewhite' : '' }}>{id ? '← 集合列表' : '← 漫畫工作台'}</Button>{!id && <Button type="primary" disabled={gpuBusy || busy} onClick={() => setCreateOpen(true)}>新建集合</Button>}</Space>
+      <Space><Button onClick={() => { window.location.hash = id ? '/edgewhite' : '' }}>{id ? '← 項目列表' : '← 漫畫工作台'}</Button>{!id && <Button type="primary" disabled={gpuBusy || busy} onClick={() => setCreateOpen(true)}>新建項目</Button>}</Space>
     </header>
     {error && <Alert type="error" showIcon message={error} closable onClose={() => setError('')} />}
     {gpuBusy && <Alert type="info" message="GPU 處理中或狀態暫不可用：暫停新增上傳與整批下載，已載入圖片仍可編輯與保存。" />}
-    {loading ? <div className="ew-loading"><Spin tip="載入集合"><div style={{ height: 80 }} /></Spin></div> : hasCurrent ? <CollectionEditor key={id} initial={current} gpuBusy={gpuBusy} registerGuard={registerGuard} /> : !id && (
+    {loading ? <div className="ew-loading"><Spin tip="載入項目"><div style={{ height: 80 }} /></Spin></div> : hasCurrent ? <CollectionEditor key={id} initial={current} gpuBusy={gpuBusy} registerGuard={registerGuard} /> : !id && (
       collections.length ? <div className="ew-collections">{collections.map(c => <Card key={c.id} title={c.name} extra={<Tag>{c.pages.length} 頁</Tag>}>
         <p>{new Date(c.updated_at).toLocaleString()} · {c.pages.filter(p => p.revision !== p.output_revision).length} 頁輸出待更新</p>
-        <Space><Button type="primary" onClick={() => { window.location.hash = `/edgewhite/${c.id}` }}>繼續編輯</Button><Button danger disabled={busy} onClick={() => modal.confirm({ title: `刪除「${c.name}」？`, content: '刪除此集合的原圖、線位、草稿與輸出，無法復原。', okText: '刪除', cancelText: '保留', onOk: () => run(async () => { await api(`${collectionUrl(c.id)}?confirm=true`, { method: 'DELETE' }); await reload() }) })}>刪除</Button></Space>
+        <Space><Button type="primary" onClick={() => { window.location.hash = `/edgewhite/${c.id}` }}>繼續編輯</Button><Button danger disabled={busy} onClick={() => modal.confirm({ title: `刪除「${c.name}」？`, content: '刪除此項目的原圖、線位、草稿與輸出，無法復原。', okText: '刪除', cancelText: '保留', onOk: () => run(async () => { await api(`${collectionUrl(c.id)}?confirm=true`, { method: 'DELETE' }); await reload() }) })}>刪除</Button></Space>
       </Card>)}</div> : <Empty description="上傳一組漫畫圖片，開始校準邊界" />
     )}
-    <Modal open={createOpen} title="新建邊緣塗白集合" onCancel={() => { if (!busy && !picking) setCreateOpen(false) }} okText="載入圖片" cancelText="取消" confirmLoading={busy} okButtonProps={{ disabled: !files.length || gpuBusy || picking }} onOk={() => void run(async () => {
+    <Modal open={createOpen} title="新建邊緣塗白項目" onCancel={() => { if (!busy && !picking) setCreateOpen(false) }} okText="載入圖片" cancelText="取消" confirmLoading={busy} okButtonProps={{ disabled: !files.length || gpuBusy || picking }} onOk={() => void run(async () => {
       const body = new FormData(); body.append('name', name)
       for (const file of files) body.append('source_files', file, file.name)
       const created = await api<Collection>('/api/edgewhite', { method: 'POST', body })
       setCreateOpen(false); setFiles([]); setName(''); window.location.hash = `/edgewhite/${created.id}`
     })}>
-      <Space direction="vertical" size="large" style={{ width: '100%' }}><Input value={name} maxLength={80} placeholder="集合名稱" onChange={e => setName(e.target.value)} />
+      <Space direction="vertical" size="large" style={{ width: '100%' }}><Input value={name} maxLength={80} placeholder="項目名稱" onChange={e => setName(e.target.value)} />
         <input ref={imageInput} hidden type="file" multiple accept=".png,.jpg,.jpeg" disabled={busy || picking || gpuBusy} onChange={e => { choose(e.target.files); e.target.value = '' }} />
         <input ref={folderInput} hidden type="file" multiple {...{ webkitdirectory: '' }} disabled={busy || picking || gpuBusy} onChange={e => { choose(e.target.files, true); e.target.value = '' }} />
         <div className="ew-folder-drop" onDragOver={event => event.preventDefault()} onDrop={drop}>
@@ -95,7 +95,7 @@ export default function EdgeWhitePage({ id, registerGuard }: { id: string; regis
         </div>
         {pickError && <Alert type="error" showIcon message={pickError} />}
         {selectionNote && <Text>{selectionNote}</Text>}
-        <Text>已選 {files.length} 張 · PNG／JPG／JPEG · 資料夾只匯入第一層圖片</Text>
+        <Text>已選 {files.length} 張 · PNG／JPG／JPEG</Text>
         <Text type="secondary">每次選擇整批取代。原圖保留，輸出為同尺寸 PNG；圖片含旋轉資訊時請先整理方向。</Text>
       </Space>
     </Modal>

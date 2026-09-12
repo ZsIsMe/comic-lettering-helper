@@ -29,7 +29,7 @@ class EdgeWhiteStore:
 
     def directory(self, cid):
         if not re.fullmatch(r'[0-9a-f]{32}', cid):
-            raise KeyError('集合不存在')
+            raise KeyError('項目不存在')
         return self.root / cid
 
     @contextmanager
@@ -45,7 +45,7 @@ class EdgeWhiteStore:
             try:
                 return json.loads((self.directory(cid) / 'collection.json').read_text())
             except FileNotFoundError as exc:
-                raise KeyError('集合不存在') from exc
+                raise KeyError('項目不存在') from exc
 
     def list(self):
         if not self.root.exists():
@@ -78,7 +78,7 @@ class EdgeWhiteStore:
         self.root.mkdir(parents=True, exist_ok=True)
         stage = self.root / f'.upload-{cid}'
         stage.mkdir()
-        collection = {'version': 1, 'id': cid, 'name': str(name).strip()[:80] or '未命名集合',
+        collection = {'version': 1, 'id': cid, 'name': str(name).strip()[:80] or '未命名項目',
             'revision': 0, 'created_at': now_iso(), 'updated_at': now_iso(), 'pages': []}
         stems = set()
         try:
@@ -129,12 +129,12 @@ class EdgeWhiteStore:
         with self.lock(cid):
             collection = self.read(cid)
             if collection['revision'] != revision:
-                raise ProjectConflict('集合已更新，請重新載入')
+                raise ProjectConflict('項目已更新，請重新載入')
             if workspace.version != 1:
                 raise ValueError('線位檔必須是版本 1')
             names = {p['filename'] for p in collection['pages']}
             if set(workspace.images) - names:
-                raise ValueError('線位檔包含此集合沒有的圖片；請核對完整檔名')
+                raise ValueError('線位檔包含此項目沒有的圖片；請核對完整檔名')
             # Validate every page before a single atomic manifest update.
             for page in collection['pages']:
                 if page['filename'] in workspace.images:
@@ -188,5 +188,5 @@ class EdgeWhiteStore:
         with self.lock(cid):
             self.read(cid)
             if self._readers.get(cid, 0):
-                raise ProjectConflict('集合正在下載或讀取圖片，請稍後再刪除')
+                raise ProjectConflict('項目正在下載或讀取圖片，請稍後再刪除')
             shutil.rmtree(self.directory(cid))

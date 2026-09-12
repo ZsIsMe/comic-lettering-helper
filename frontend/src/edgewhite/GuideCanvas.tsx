@@ -124,7 +124,7 @@ export const GuideCanvas = forwardRef<GuideHandle, Props>(function GuideCanvas({
     void (async () => {
       const image = new Image(); image.src = source; await image.decode()
       if (cancelled) return
-      if (image.naturalWidth !== page.width || image.naturalHeight !== page.height) throw new Error('原圖尺寸不一致，請重新載入集合')
+      if (image.naturalWidth !== page.width || image.naturalHeight !== page.height) throw new Error('原圖尺寸不一致，請重新載入項目')
       const canvas = document.createElement('canvas'); canvas.width = page.width; canvas.height = page.height
       const context = canvas.getContext('2d', { willReadFrequently: true })!
       context.drawImage(image, 0, 0)

@@ -100,7 +100,7 @@ def create_edgewhite_router(settings, gpu_gate, store=None):
     @router.delete('/{cid}')
     def delete(cid: str, confirm: bool = False):
         if not confirm:
-            raise HTTPException(400, '請確認刪除集合')
+            raise HTTPException(400, '請確認刪除項目')
         work(store.delete, cid)
         return {'deleted': True}
 
