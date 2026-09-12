@@ -1,8 +1,10 @@
-import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from 'react'
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react'
 import { Alert, Button, Checkbox, Dropdown, InputNumber, Select, Slider, Space, Spin, Tooltip } from 'antd'
 import { renderEditViews } from './edit-preview'
 import { combineSelection, magicSelection, polygonSelection, rectangleSelection, type SelectionOperation } from './selection-core'
 import { applyCategoryMask, applySpecialSelection, textRepairMask, categoryMask, mergeLayerRegion, type EditCategory, type EditLayers, type EditRect } from './mask-edit-core'
+import { RegionComparison } from './RegionComparison'
+import { adoptComparisonRegion, type CompareRegion } from './comparison-regions'
 import { LocalEditWindow } from './LocalEditWindow'
 
 type Pixels = { overlay: ImageData; other: ImageData; edited: ImageData; assignment: Uint16Array }
@@ -13,6 +15,7 @@ export interface RasterHandle { flush: () => Promise<boolean> }
 interface Candidate { code: number; label: string; url: string; diffUrl: string }
 export interface ComposeView { widths?: Record<number, string>; panelScroll?: number; operation?: SelectionOperation; category?: EditCategory; color?: string; tolerance?: number; expand?: number; intersectOffset?: number; fit?: boolean; tool?: string; size?: number; zoom?: number; compare?: number; order?: number[]; show?: boolean; x?: number; y?: number }
 interface Props {
+  compareLayout?: 'multi' | 'context' | 'cards'
   viewState?: { current: ComposeView }
   onPreviewReady?: () => Promise<void>
   width: number; height: number; baseUrl: string; mode: 'edit' | 'compose'
@@ -208,6 +211,7 @@ export const RasterEditor = forwardRef<RasterHandle, Props>(function RasterEdito
       ctx.putImageData(out, 0, 0)
       if (code > 1) {
         ctx.strokeStyle = '#ffca55'; ctx.lineWidth = 2 / zoom; ctx.beginPath(); ctx.moveTo(width*compare/100,0); ctx.lineTo(width*compare/100,height); ctx.stroke()
+        const markerX = width * compare / 100; ctx.fillStyle = '#ffca55'; ctx.beginPath(); ctx.moveTo(markerX - 8 / zoom, 0); ctx.lineTo(markerX + 8 / zoom, 0); ctx.lineTo(markerX, 12 / zoom); ctx.closePath(); ctx.fill()
       }
       const g = gesture.current
       if (g?.kind === 'rectangle') { ctx.strokeStyle = g.code === 1 ? '#d59a45' : '#2daf98'; ctx.lineWidth = 2/zoom; ctx.setLineDash([5/zoom,4/zoom]); ctx.strokeRect(g.x,g.y,g.lastX-g.x,g.lastY-g.y); ctx.setLineDash([]) }
@@ -277,7 +281,7 @@ export const RasterEditor = forwardRef<RasterHandle, Props>(function RasterEdito
       event.preventDefault()
       const source = event.currentTarget as HTMLDivElement
       const unit = event.deltaMode === 1 ? 16 : event.deltaMode === 2 ? source.clientHeight : 1
-      if (mode === 'edit' && !event.altKey) {
+      if (!event.altKey) {
         if (event.ctrlKey || event.metaKey) source.scrollLeft += (event.deltaX || event.deltaY) * unit
         else { source.scrollLeft += event.deltaX * unit; source.scrollTop += event.deltaY * unit }
         return
@@ -289,7 +293,7 @@ export const RasterEditor = forwardRef<RasterHandle, Props>(function RasterEdito
     }
     views.forEach(view => view.addEventListener('wheel', wheel, { passive: false }))
     return () => views.forEach(view => view.removeEventListener('wheel', wheel))
-  }, [loading, mode, zoom, panelOrder, props.viewState])
+  }, [loading, mode, zoom, panelOrder, props.viewState, props.compareLayout])
   useEffect(() => {
     if (loading || props.clipRect) return
     const frameId = requestAnimationFrame(() => {
@@ -568,6 +572,14 @@ export const RasterEditor = forwardRef<RasterHandle, Props>(function RasterEdito
     for (let n = 0; n < width * height; n++) if (chosen <= 1 || (candidates.current.get(chosen)?.diff.data[n * 4] || 0) >= 128) pixels.current.assignment[n] = chosen; else if (reset) pixels.current.assignment[n] = 0
     changed()
   }
+  function adoptRegion(region: CompareRegion, code: number) {
+    if (!pixels.current || disabled || confirming.current) return
+    const next = adoptComparisonRegion(pixels.current.assignment, width, height, region, code, new Map([...candidates.current].map(([key,value]) => [key,value.diff.data])))
+    if (next.every((value,index) => value === pixels.current!.assignment[index])) return
+    pushHistory(copy(pixels.current)); future.current = []; pixels.current.assignment = next; changed()
+  }
+  const regional = mode === 'compose' && props.compareLayout && props.compareLayout !== 'multi'
+  const regionCandidates = useMemo(() => loading ? [] : [...candidates.current].map(([code,value]) => ({...value,code,label:initial.current.candidates?.find(c=>c.code===code)?.label || String(code)})), [loading])
   const categoryName = category === 'solid' ? '純色填充' : '待修補'
   const historyControls = <div className="editor-history-controls">
     <Button size="small" disabled={disabled || !historyState[0]} onClick={() => undo()}>撤銷</Button>
@@ -633,20 +645,21 @@ export const RasterEditor = forwardRef<RasterHandle, Props>(function RasterEdito
         {operation === 'local_intersect' && ['rectangle', 'brush', 'lasso'].includes(tool) && !special && <label className="tool-setting">偏移 <InputNumber size="small" aria-label="交集偏移" disabled={disabled} min={-80} max={80} value={intersectOffset} onChange={v => setIntersectOffset(v ?? 0)} /> px</label>}
       </div>
       <Tooltip title="右鍵框選清除；Cmd／Ctrl＋右鍵拖框互換兩類 Mask；Cmd／Ctrl＋左鍵平移；滾輪上下移動；Cmd／Ctrl＋滾輪左右移動；Option／Alt＋滾輪縮放；F4 適合視窗；PageUp／PageDown 切頁。套索：Enter 閉合，Backspace 退點，Esc 取消。魔法棒：綠色預覽添加，紅色預覽減去。"><Button size="small" aria-label="操作說明">?</Button></Tooltip>
-    </div> : <>
+    </div> : regional ? <Space wrap className="editor-toolbar">{historyControls}<span className="region-help">選擇共用同一份合成內容 · 自動保存</span></Space> : <>
       <Space wrap className="editor-toolbar">
         <Select aria-label="編輯工具" value={tool} onChange={chooseTool} options={[{value:'brush',label:'筆刷'},{value:'rectangle',label:'矩形'},{value:'pan',label:'平移'}]} />
         <Dropdown menu={{items:[{key:'base',label:'本頁恢復為修復前底圖'},{key:'first',label:`本頁重新採用 ${props.candidates?.[0]?.label || '第一組'}`}],onClick:({key}) => adoptAll(key === 'base' ? 1 : props.candidates?.[0]?.code || 1, true)}} disabled={disabled}><Button>重設本頁 ▾</Button></Dropdown>
         {tool === 'brush' && <label>筆刷 <InputNumber disabled={disabled} aria-label="筆刷像素" min={1} max={200} value={size} onChange={v => setSize(v || 1)} /> px</label>}
         {historyControls}
       </Space>
-      <Space wrap className="editor-toolbar">{zoomControls}<Checkbox checked={showSources} onChange={e => setShowSources(e.target.checked)}>M 顯示選區（深色已採用／淡色未採用）</Checkbox><label className="compare-slider">原圖顯示範圍 <Slider value={compare} onChange={setCompare} /></label></Space>
-    <small className="compose-hint">左鍵框選／筆刷採用所在候選 · 右鍵固定拖框保留底圖 · 中鍵拖動 · 滾輪縮放 · [／] 調筆刷 · 拖動黃色分隔線比較原圖</small></>}
-    <div className={`canvas-panels ${mode}${mode === 'edit' ? ` preview-${previewLayout}` : ''}`} aria-busy={loading} ref={node => { if (node && loading) node.scrollLeft = initialView.current.panelScroll || 0 }} onScroll={event => { if (props.viewState && event.target === event.currentTarget) props.viewState.current.panelScroll = event.currentTarget.scrollLeft }}>
+      <Space wrap className="editor-toolbar">{zoomControls}<Checkbox checked={showSources} onChange={e => setShowSources(e.target.checked)}>M 顯示選區（深色已採用／淡色未採用）</Checkbox></Space>
+    <small className="compose-hint">左鍵框選／筆刷採用所在候選 · 右鍵固定拖框保留底圖 · 中鍵／Cmd＋左鍵拖動 · 滾輪上下移動 · Cmd／Ctrl＋滾輪左右移動 · Option／Alt＋滾輪縮放 · [／] 調筆刷 · 拖動黃色分隔線比較原圖</small></>}
+    {regional ? (!loading && base.current && pixels.current ? <RegionComparison layout={props.compareLayout as 'context' | 'cards'} base={base.current} preview={savedPreview.current && previewVersion.current === version.current && persisted.current === version.current ? savedPreview.current : null} candidates={regionCandidates} assignment={pixels.current.assignment} disabled={!!disabled} onAdopt={adoptRegion}/> : <div className="region-loading"><Spin /></div>) : <div className={`canvas-panels ${mode}${mode === 'edit' ? ` preview-${previewLayout}` : ''}`} aria-busy={loading} ref={node => { if (node && loading) node.scrollLeft = initialView.current.panelScroll || 0 }} onScroll={event => { if (props.viewState && event.target === event.currentTarget) props.viewState.current.panelScroll = event.currentTarget.scrollLeft }}>
       {panels.map(panel => <section key={panel.code} hidden={mode === 'edit' && panel.code === -1 && previewLayout === 'hidden'} className={mode === 'compose' ? 'compare-panel' : undefined} style={mode === 'compose' && initialView.current.widths?.[panel.code] ? {width: initialView.current.widths[panel.code]} : undefined} onPointerUp={event => { if (props.viewState && event.currentTarget.style.width) { props.viewState.current.widths ||= {}; props.viewState.current.widths[panel.code] = event.currentTarget.style.width } }}>
         {mode === 'compose' && panel.code === 0 && <div className="candidate-controls result-controls">{loading ? '載入中…' : previewReady !== props.previewUrl || saveState !== '已保存' ? '更新中…' : '與輸出一致 · 顯示即確認'}</div>}
         {mode === 'compose' && panel.code > 1 && <Space wrap className="candidate-controls"><Select aria-label={`比較面板 ${panel.code} 的來源`} value={panel.code} options={(props.candidates || []).map(c => ({value:c.code,label:c.label}))} onChange={next => setPanelOrder(order => order.map(c => c === panel.code ? next : c === next ? panel.code : c))} /><Button disabled={disabled} onClick={() => adoptAll(panel.code)}>本頁全部採用</Button></Space>}
         <strong>{panel.label}{mode === 'edit' && <span className="panel-note">{panel.code === 0 ? `正在編輯：${categoryName}` : '即時更新'}</span>}</strong>
+        {mode === 'compose' && <div className="compare-image-controls">{panel.code > 1 ? <><span>原圖</span><Slider aria-label={`${panel.label} 原圖顯示範圍`} value={compare} onChange={setCompare}/><span>{Math.round(compare)}%</span></> : <span>合成結果 · 原圖比例只影響候選預覽</span>}</div>}
         {mode === 'edit' && panel.code === 0 && <div className="panel-controls">
           {zoomControls}
           <label>填色預覽 <Select size="small" aria-label="填色預覽位置" value={previewLayout} onChange={setPreviewLayout} options={[{value:'right',label:'右側'},{value:'bottom',label:'下方'},{value:'hidden',label:'收起'}]} /></label>
@@ -655,17 +668,17 @@ export const RasterEditor = forwardRef<RasterHandle, Props>(function RasterEdito
           <label>填色透明度 <InputNumber size="small" aria-label="填色透明度" min={0} max={100} value={otherPercent} onChange={v => setOtherPercent(v ?? 38)} /> %</label>
           <label title="圖像修補標記顏色"><input type="color" aria-label="圖像修補標記顏色" value={otherColor} onChange={e => setOtherColor(e.target.value)} /></label>
         </div>}
-        <div className="canvas-scroll" ref={node => { if (node) viewRefs.current.set(panel.code, node) }}
+        <div className="canvas-scroll" ref={node => { if (node) viewRefs.current.set(panel.code, node); else viewRefs.current.delete(panel.code) }}
           onScroll={event => { const el = event.currentTarget; if (props.viewState && !loading) Object.assign(props.viewState.current, {x:el.scrollLeft/(width*zoom), y:el.scrollTop/(height*zoom)}); for (const view of viewRefs.current.values()) if (view !== el && (view.scrollLeft !== el.scrollLeft || view.scrollTop !== el.scrollTop)) { view.scrollLeft = el.scrollLeft; view.scrollTop = el.scrollTop } }}>
           <canvas tabIndex={0} aria-label={panel.label} width={width} height={height} style={{ width: width * zoom, height: height * zoom, cursor: tool === 'pan' ? 'grab' : 'crosshair', touchAction: 'none' }}
             ref={node => { if (node) { canvasRefs.current.set(panel.code, node); redraw() } else canvasRefs.current.delete(panel.code) }}
-            onContextMenu={e => e.preventDefault()} onPointerDown={e => { if (mode === 'compose' && panel.code > 1 && e.button === 0 && Math.abs(point(e).x-width*compare/100)*zoom < 10) { divider.current=true; e.preventDefault(); e.currentTarget.setPointerCapture(e.pointerId); return } down(e,panel.code) }} onPointerMove={e => { if (divider.current) { setCompare(Math.max(0,Math.min(100,point(e).x/width*100))); return } move(e,panel.code) }}
+            onContextMenu={e => e.preventDefault()} onPointerDown={e => { if (mode === 'compose' && panel.code > 1 && e.button === 0 && !e.metaKey && !e.ctrlKey && Math.abs(point(e).x-width*compare/100)*zoom < 10) { divider.current=true; e.preventDefault(); e.currentTarget.setPointerCapture(e.pointerId); return } down(e,panel.code) }} onPointerMove={e => { if (divider.current) { setCompare(Math.max(0,Math.min(100,point(e).x/width*100))); return } move(e,panel.code) }}
             onPointerUp={() => { if (divider.current) { divider.current=false; return } end() }} onPointerCancel={() => { divider.current=false; cancelGesture() }} onDoubleClick={() => { if (mode === 'edit' && tool === 'lasso') finishLasso() }}
             onPointerLeave={() => { if (!gesture.current) { hover.current=null; previewMagic(null) } }} />
         </div>
       </section>)}
-    </div>
-    {loading && <Spin />}
+    </div>}
+    {loading && !regional && <Spin />}
     {localDraft && <LocalEditWindow open width={width} height={height} initialRect={localDraft.rect} baseUrl={props.baseUrl}
       overlayUrl={localDraft.overlayUrl} otherUrl={localDraft.otherUrl} editedUrl={localDraft.editedUrl} detectedTextUrl={props.detectedTextUrl}
       initialCategory={category} initialColor={color} onApply={applyLocal} onCancel={() => setLocalDraft(null)} />}

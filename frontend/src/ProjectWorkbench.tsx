@@ -134,6 +134,9 @@ function ProjectWorkspace({ initial, gpuOwner, onExit, onReadyToLeave }: { initi
   const workspaceRoot = useRef<HTMLElement>(null)
   const [pageFilter, setPageFilter] = useState('all')
   const [compareFilter, setCompareFilter] = useState('all')
+  const [compareLayout, setCompareLayout] = useState<'multi' | 'context' | 'cards'>(() => {
+    try { const value = localStorage.getItem('comic-compare-layout'); return value === 'context' || value === 'cards' ? value : 'multi' } catch { return 'multi' }
+  })
   const [pageIndex, setPageIndex] = useState(0); const [step, setStep] = useState(0)
   const [workflow, setWorkflow] = useState<Workflow[]>(['flux2klein_lanpaint'])
   const [run, setRun] = useState<Run | null>(null); const [runId, setRunId] = useState(initial.current_run_id)
@@ -258,6 +261,13 @@ function ProjectWorkspace({ initial, gpuOwner, onExit, onReadyToLeave }: { initi
     window.addEventListener('keydown', keydown)
     return () => window.removeEventListener('keydown', keydown)
   })
+  async function changeCompareLayout(layout: 'multi' | 'context' | 'cards') {
+    await execute(async () => {
+      if (!await flush()) return
+      setCompareLayout(layout)
+      try { localStorage.setItem('comic-compare-layout', layout) } catch { /* Storage is optional. */ }
+    })
+  }
   async function saveEdit(data: RasterSave) {
     const body = new FormData(); body.append('expected_revision', String(editRevision.current))
     body.append('overlay', data.overlay, 'overlay.png'); body.append('other', data.other, 'other.png'); body.append('edited', data.edited, 'edited.png')
@@ -373,6 +383,8 @@ function ProjectWorkspace({ initial, gpuOwner, onExit, onReadyToLeave }: { initi
       </>}
       {step === 2 && <>
         <Space wrap size={6} className="editor-toolbar compare-page-navigation">
+          <Select size="small" aria-label="比較模式" value={compareLayout} disabled={busy || !assignment} onChange={value => void changeCompareLayout(value)} options={[{value:'multi',label:'多圖對比'},{value:'context',label:'整體＋局部'},{value:'cards',label:'區域卡片'}]}/>
+
           <Button size="small" aria-label="上一頁" title="PageUp" disabled={busy || !assignment || adjacentPage(-1) === undefined} onClick={() => void execute(() => navigate(2, adjacentPage(-1)!))}>‹</Button>
           <Select size="small" aria-label="選擇合成頁面" value={pageIndex} disabled={busy || !assignment} showSearch optionFilterProp="label" popupMatchSelectWidth={260} onChange={index => void execute(() => navigate(2, index))} options={[...visiblePages.map(({item,index}) => ({value:index,label:`${item.filename} · ${index+1}/${project.pages.length}`})), ...(!visiblePages.some(p => p.index === pageIndex) ? [{value:pageIndex,label:`${page.filename} · ${pageIndex+1}/${project.pages.length}`,disabled:true}] : [])]} />
           <Button size="small" aria-label="下一頁" title="PageDown" disabled={busy || !assignment || adjacentPage(1) === undefined} onClick={() => void execute(() => navigate(2, adjacentPage(1)!))}>›</Button>
@@ -387,7 +399,7 @@ function ProjectWorkspace({ initial, gpuOwner, onExit, onReadyToLeave }: { initi
           <Button type="primary" disabled={!composition || busy || !!gpuOwner || composition.pages.some(p => !p.confirmed)} onClick={() => void execute(async () => { if (!await flush()) return; const result = await api<{ download_url: string }>(`${compUrl}/export`, json('POST', { revision: compositionRevision.current })); window.location.assign(result.download_url) })}>輸出目前合成結果</Button>
         </Space>
         {cp?.warnings.map(w => <Alert key={w} type="warning" message={w} />)}
-        {assignment && cp ? <RasterEditor key={`${runId}-${page.id}-${editorKey}`} ref={editor} width={page.width} height={page.height} mode="compose" viewState={composeView} onPreviewReady={confirmDisplayedPage} baseUrl={cp.base_url} previewUrl={`${cp.preview_url}&revision=${composition?.revision}`}
+        {assignment && cp ? <RasterEditor key={`${runId}-${page.id}-${editorKey}`} ref={editor} width={page.width} height={page.height} mode="compose" compareLayout={compareLayout} viewState={composeView} onPreviewReady={confirmDisplayedPage} baseUrl={cp.base_url} previewUrl={`${cp.preview_url}&revision=${composition?.revision}`}
           candidates={candidateOptions} assignmentRle={assignment} onSave={saveComposition} onDirty={setDirty} disabled={busy || cp.passthrough} /> : <div className="compose-loading"><Spin /></div>}
       </>}
     </section></div>
