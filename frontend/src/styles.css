@@ -421,3 +421,6 @@ footer { padding: 20px 0; color: #746e63; font-size: 12px; }
 .floating-result .floating-drag-hint { font-size:11px; flex-basis:100%; }
 .region-comparison.cards .floating-result > canvas { height:min(330px, 48vh); min-height:0; }
 .region-comparison.cards .floating-result.collapsed > canvas { display:none; }
+
+.result-export-action { display:flex; flex-direction:column; align-items:flex-end; gap:4px; }
+.result-export-action > span { color:#73501e; font-size:12px; }

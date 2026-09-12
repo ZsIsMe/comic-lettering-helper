@@ -319,6 +319,26 @@ function ProjectWorkspace({ initial, gpuOwner, onExit, onReadyToLeave }: { initi
     if (!await flush()) return
     window.location.assign(path)
   }
+  async function exportResults() {
+    await execute(async () => {
+      if (!await flush()) return
+      if (run?.state !== 'completed') { message.info('修復完成後即可導出結果圖片'); return }
+      const latest = await loadComposition()
+      if (!latest) return
+      const pending = latest.pages.filter(item => !item.confirmed)
+      if (pending.length) {
+        const nextPage = project.pages.findIndex(item => item.id === pending[0].page_id)
+        if (nextPage < 0) throw new Error('找不到待確認頁面，請重新載入項目')
+        setCompareFilter('pending')
+        message.info(`還有 ${pending.length} 頁待確認，已前往 ${project.pages[nextPage].filename}；查看完成後再點導出結果`)
+        await navigate(2, nextPage)
+        return
+      }
+      const result = await api<{ download_url: string }>(`${compUrl}/export`, json('POST', { revision: latest.revision }))
+      window.location.assign(result.download_url)
+    })
+  }
+  const pendingExportCount = step === 2 ? composition?.pages.filter(item => !item.confirmed).length : undefined
   const cp = composition?.pages.find(item => item.page_id === page.id)
   const candidateOptions = cp?.candidates.filter(item => item.available).map(item => ({ code: item.code,
     label: workflowOptions.find(w => w.value === item.workflow)!.label,
@@ -339,6 +359,7 @@ function ProjectWorkspace({ initial, gpuOwner, onExit, onReadyToLeave }: { initi
     <header className="project-header"><div><Button onClick={() => void execute(async () => { if (await flush()) await onExit() })}>← 項目列表</Button><Title level={2}>{project.name}</Title><Text>{project.pages.length} 頁 · {dirty ? '有未保存修改' : '項目保存在伺服器'}</Text></div>
       <Space wrap><Button onClick={() => { let nextName = project.name; modal.confirm({ title: '項目名稱', content: <Input defaultValue={nextName} onChange={e => { nextName = e.target.value }} />, onOk: async () => { if (!await flush()) throw new Error('請先保存'); const p = await reloadProject(); setProject(await api<Project>(url, json('PATCH', { name: nextName, expected_revision: p.revision }))) } }) }}>重命名</Button>
         <Button disabled={busy || !!gpuOwner || detecting} onClick={() => void download(`${url}/export`)}>導出項目</Button>
+        <div className="result-export-action"><Button type="primary" disabled={busy || !!gpuOwner || detecting} onClick={() => void exportResults()}>導出結果</Button>{!!pendingExportCount && <span>尚有 {pendingExportCount} 頁待確認 · 點擊前往</span>}</div>
       </Space></header>
     {error && <Alert type="error" showIcon closable onClose={() => setError('')} message={error} />}
     <Steps size="small" responsive={false} current={step} onChange={value => void execute(() => navigate(value))} items={[{ title: '準備與編輯' }, { title: '批量修復' }, { title: '比較合成', disabled: run?.state !== 'completed' }]} />
@@ -396,7 +417,6 @@ function ProjectWorkspace({ initial, gpuOwner, onExit, onReadyToLeave }: { initi
           <Tag color={cp?.confirmed ? 'green' : 'orange'}>{cp?.passthrough ? '無需修復，沿用底圖' : cp?.confirmed ? '此頁已確認' : '此頁待確認'}</Tag>
           <label>羽化 <InputNumber disabled={busy || !composition} min={0} max={8} value={feather} onChange={v => void saveFeather(v || 0)} /> px</label>
           {composition && <><label>Mask 擴大 <InputNumber min={0} max={80} value={composition.settings.expand_px} onChange={v => void saveFeather(feather, {expand_px:v ?? 5})} /></label><label>差異閾值 <InputNumber min={1} max={255} value={composition.settings.threshold} onChange={v => void saveFeather(feather, {threshold:v ?? 12})} /></label><label>最小區域 <InputNumber min={1} max={10000} value={composition.settings.min_area} onChange={v => void saveFeather(feather, {min_area:v ?? 16})} /></label><Button disabled={busy} onClick={() => void saveFeather(feather)}>重算 Mask</Button></>}
-          <Button type="primary" disabled={!composition || busy || !!gpuOwner || composition.pages.some(p => !p.confirmed)} onClick={() => void execute(async () => { if (!await flush()) return; const result = await api<{ download_url: string }>(`${compUrl}/export`, json('POST', { revision: compositionRevision.current })); window.location.assign(result.download_url) })}>輸出目前合成結果</Button>
         </Space>
         {cp?.warnings.map(w => <Alert key={w} type="warning" message={w} />)}
         {assignment && cp ? <RasterEditor key={`${runId}-${page.id}-${editorKey}`} ref={editor} width={page.width} height={page.height} mode="compose" compareLayout={compareLayout} viewState={composeView} onPreviewReady={confirmDisplayedPage} baseUrl={cp.base_url} previewUrl={`${cp.preview_url}&revision=${composition?.revision}`}
