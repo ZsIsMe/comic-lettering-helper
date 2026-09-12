@@ -30,6 +30,7 @@ export default function PrelayoutWorkbench({ onExit, onReadyToLeave }: { onExit:
   return <main className="pl-shell pl-home">{modalContext}
     <header className="pl-home-header"><div><span className="pl-kicker">LETTERING STUDIO</span><h1>漫畫預排版</h1><p>匯入譯文，在連續漫畫頁上調整文字與樣式。</p></div><Space wrap>
       <Button onClick={onExit}>返回圖片修復</Button>
+      <Button href="/downloads/LabelPlus_Ps_Script_ZS-1.8.0.zip" download="LabelPlus_Ps_Script_ZS-1.8.0.zip">配套PS腳本</Button>
       <label className="pl-file">匯入預排版項目<input type="file" accept=".zip" disabled={busy} onChange={e => {
         const file = e.target.files?.[0]; e.target.value = ''; if (!file) return
         void action(async () => { const data = new FormData(); data.append('archive', file); setCurrent(await request<Project>(`${base}/projects/import`, { method: 'POST', body: data })) })
@@ -227,7 +228,7 @@ function Workspace({ project: initial, onExit, onReadyToLeave }: { project: Proj
   }, [controller, first, patch, selection, notices])
   return <main className="pl-shell pl-workspace">{modalContext}{noticesContext}
     <header className="pl-toolbar"><div className="pl-title"><Button onClick={() => void execute(async () => { if (await controller.flush()) await onExit() })}>項目列表</Button><strong>{project.name}</strong><Tag color={errors.length ? 'red' : controller.dirty ? 'orange' : 'green'}>{saving ? '保存中' : controller.dirty ? '尚未保存' : '已保存'}</Tag></div>
-      <Space wrap><Button onClick={() => modal.info({ title: '預排版快捷鍵', width: 650, content: <div className="pl-shortcut-help"><p>先點選文字，再使用移動、字級與旋轉快捷鍵。多選時每條文字分別調整；長按可連續操作，放開後記為一次撤銷。編輯輸入框或中文組字期間不攔截按鍵。</p><p>Mac 使用 ⌘／Option，Windows 使用 Ctrl／Alt。移動以原圖像素計算，與畫面縮放無關。</p><dl>{shortcutHelp.map(([action, keys]) => <div key={action}><dt>{action}</dt><dd>{keys}</dd></div>)}</dl></div> })}>快捷鍵</Button><Button onClick={() => void execute(async () => { await controller.flush() })}>保存</Button><Button onClick={downloadBt}>匯出 BT</Button></Space>
+      <Space wrap><Button onClick={() => modal.info({ title: '預排版快捷鍵', width: 650, content: <div className="pl-shortcut-help"><p>先點選文字，再使用移動、字級與旋轉快捷鍵。多選時每條文字分別調整；長按可連續操作，放開後記為一次撤銷。編輯輸入框或中文組字期間不攔截按鍵。</p><p>Mac 使用 ⌘／Option，Windows 使用 Ctrl／Alt。移動以原圖像素計算，與畫面縮放無關。</p><dl>{shortcutHelp.map(([action, keys]) => <div key={action}><dt>{action}</dt><dd>{keys}</dd></div>)}</dl></div> })}>快捷鍵</Button><Button onClick={() => void execute(async () => { await controller.flush() })}>保存</Button><Button onClick={downloadBt}>匯出 BT</Button><Button href="/downloads/LabelPlus_Ps_Script_ZS-1.8.0.zip" download="LabelPlus_Ps_Script_ZS-1.8.0.zip">配套PS腳本</Button></Space>
     </header>
     <div className="pl-tool-row"><Space wrap>
       {(['bt', 'labelplus', 'clean'] as const).filter((kind): boolean => kind !== 'clean' || showCleanUpload).map(kind => <Button key={kind} disabled={busy} onClick={() => { importKind.current = kind; if (fileInput.current) { fileInput.current.accept = kind === 'bt' ? '.json' : kind === 'labelplus' ? '.txt' : '.png,.jpg,.jpeg'; fileInput.current.multiple = kind === 'clean'; fileInput.current.click() } }}>{kind === 'bt' ? '開啟 BT' : kind === 'labelplus' ? '匯入 LabelPlus' : '上傳去字圖'}</Button>)}
