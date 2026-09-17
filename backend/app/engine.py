@@ -8,6 +8,7 @@ import shutil
 import urllib.error
 import urllib.request
 import zipfile
+import time
 from contextlib import suppress
 from pathlib import Path
 
@@ -36,6 +37,10 @@ WORKFLOW_META: dict[WorkflowId, dict[str, str]] = {
 }
 
 
+class ComfyUnavailable(RuntimeError):
+    """The model service stopped responding; safe to attempt one recovery."""
+
+
 class JobAbandoned(Exception):
     """Raised inside the worker after the user requests a safe stop."""
 
@@ -49,6 +54,7 @@ class JobManager:
         self.active_job_id: str | None = None
         self.active_process: asyncio.subprocess.Process | None = None
         self.abandon_requested: set[str] = set()
+        self.restart_comfy = None
         self.gpu_gate = ResourceGate()
 
     async def start(self) -> None:
@@ -119,7 +125,7 @@ class JobManager:
                 await asyncio.sleep(0.2)
             self.active_job_id = job_id
             try:
-                await self._run_job(job_id)
+                await self._run_with_recovery(job_id)
             except asyncio.CancelledError:
                 await self._terminate_active_process()
                 raise
@@ -131,8 +137,10 @@ class JobManager:
                     self._finalize_abandoned(job_id)
                 else:
                     record.state = JobState.failed
-                    record.message = "任務失敗"
+                    record.completed_total = sum(len(items) for items in record.results.values())
+                    record.message = "任務已停止；已完成圖片可下載" if record.completed_total else "任務失敗"
                     record.error = str(exc)
+                    self._save_comfy_failure_log(record.id)
                     self.repository.write(record)
             finally:
                 self.abandon_requested.discard(job_id)
@@ -140,6 +148,42 @@ class JobManager:
                 self.active_job_id = None
                 self.gpu_gate.release(job_id)
                 queue.task_done()
+
+    async def _run_with_recovery(self, job_id: str) -> None:
+        while True:
+            try:
+                await self._run_job(job_id)
+                return
+            except ComfyUnavailable:
+                record = self.repository.read(job_id)
+                self._raise_if_abandoned(job_id)
+                self._save_comfy_failure_log(job_id)
+                if record.recovery_attempts >= 1 or self.restart_comfy is None:
+                    raise
+                record.recovery_attempts += 1
+                record.message = "ComfyUI 已失聯，正在自動重啟並續跑（1/1）；已完成圖片保留"
+                self.repository.write(record)
+                logs = self.repository.job_dir(job_id) / "logs"
+                backup = logs / "before-auto-recovery"
+                backup.mkdir(parents=True, exist_ok=True)
+                for log in logs.iterdir():
+                    if log.is_file():
+                        shutil.copy2(log, backup / log.name)
+                await asyncio.to_thread(self.restart_comfy, job_id)
+                self._raise_if_abandoned(job_id)
+
+    def _save_comfy_failure_log(self, job_id: str) -> None:
+        """Keep the original service evidence before the user restarts it."""
+        source = self.settings.data_root / "logs/comfyui.log"
+        target = self.repository.job_dir(job_id) / "logs/comfyui-failure.log"
+        try:
+            target.parent.mkdir(parents=True, exist_ok=True)
+            with source.open("rb") as log:
+                log.seek(0, 2)
+                log.seek(max(0, log.tell() - 2_000_000))
+                target.write_bytes(log.read())
+        except OSError:
+            pass  # Logging must not prevent releasing a failed job's GPU reservation.
 
     def _raise_if_abandoned(self, job_id: str) -> None:
         record = self.repository.read(job_id)
@@ -153,7 +197,7 @@ class JobManager:
             headers={"Content-Type": "application/json"},
             method="POST",
         )
-        with suppress(TimeoutError, urllib.error.URLError):
+        with suppress(OSError):
             await asyncio.to_thread(urllib.request.urlopen, request, timeout=3)
 
     async def _terminate_active_process(self) -> None:
@@ -175,9 +219,9 @@ class JobManager:
             try:
                 await asyncio.to_thread(self._fetch_json, f"{self.settings.comfy_url}/system_stats")
                 return
-            except (TimeoutError, urllib.error.URLError, json.JSONDecodeError):
+            except (OSError, json.JSONDecodeError):
                 await asyncio.sleep(2)
-        raise RuntimeError("ComfyUI 尚未就緒，請查看服務日誌")
+        raise ComfyUnavailable("ComfyUI 尚未就緒，請使用網頁重啟服務")
 
     @staticmethod
     def _fetch_json(url: str) -> dict:
@@ -210,6 +254,36 @@ class JobManager:
             shutil.copy2(source, self.settings.comfy_input / f"{batch_name}_{source.name}")
             shutil.copy2(mask, self.settings.comfy_input / f"{batch_name}_mask_{mask.name}")
         return batch_name, stems
+
+    def _prepare_existing_outputs(self, record: JobRecord, stems: list[str]) -> None:
+        for workflow in record.workflows:
+            prefix = f"web_{record.id.replace('-', '')[:12]}_{WORKFLOW_META[workflow]['prefix']}_"
+            for stem in stems:
+                valid = False
+                for raw in self.settings.comfy_output.glob(f"{prefix}{stem}_*.png"):
+                    try:
+                        with Image.open(raw) as image:
+                            image.verify()
+                        with Image.open(raw) as image:
+                            image.load()
+                        valid = True
+                    except (OSError, SyntaxError, ValueError):
+                        backup = self.repository.job_dir(record.id) / "incomplete-output-backups" / raw.name
+                        backup.parent.mkdir(parents=True, exist_ok=True)
+                        shutil.move(raw, backup)
+                saved = self.repository.job_dir(record.id) / "inpaint_workflows" / workflow / f"{stem}.png"
+                if valid or not saved.is_file():
+                    continue
+                try:
+                    with Image.open(saved) as image:
+                        image.verify()
+                    with Image.open(saved) as image:
+                        image.load()
+                except (OSError, SyntaxError, ValueError):
+                    continue
+                raw = self.settings.comfy_output / f"{prefix}{stem}_00001_.png"
+                raw.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(saved, raw)
 
     async def _run_job(self, job_id: str) -> None:
         self._raise_if_abandoned(job_id)
@@ -246,6 +320,7 @@ class JobManager:
         await self._wait_comfy()
         self._raise_if_abandoned(job_id)
         batch_name, stems = self._prepare_comfy_input(record)
+        self._prepare_existing_outputs(record, stems)
         expected = len(stems)
 
         record.state = JobState.running
@@ -283,7 +358,7 @@ class JobManager:
         if workflow == "firered":
             env.update(
                 FIRERED_BASE_WORKFLOW=str(self.settings.workflow_root / "FireRed-v12-newprompt-latent-mask-FP8Mixed-FP8Text.json"),
-                FIRERED_BATCH_NAME=f"{batch_name}_firered",
+                FIRERED_BATCH_NAME=f"{batch_name}_firered_{time.time_ns()}",
                 FIRERED_PAIR_DIR=f"{batch_name}/pair",
                 FIRERED_MASK_DIR=f"{batch_name}/pair_mask",
                 FIRERED_OUTPUT_PREFIX=prefix,
@@ -348,6 +423,9 @@ class JobManager:
             start_new_session=True,
         )
         self.active_process = process
+        health_ticks = 0
+        health_failures = 0
+        service_error = None
         try:
             while True:
                 try:
@@ -361,17 +439,38 @@ class JobManager:
                     latest.completed_total = current_index * expected + latest.completed_in_current
                     self.repository.write(latest)
                     self._raise_if_abandoned(record.id)
+                    health_ticks += 1
+                    if health_ticks % 5 == 0:
+                        try:
+                            await asyncio.to_thread(self._fetch_json, f"{self.settings.comfy_url}/system_stats")
+                            health_failures = 0
+                        except (OSError, ValueError):
+                            health_failures += 1
+                        if health_failures >= 3:
+                            service_error = "ComfyUI 連續失聯，任務已停止並保留結果。請使用頁面上方重啟 ComfyUI，再續跑未完成圖片。"
+                            await self._terminate_active_process()
+                            returncode = process.returncode
+                            break
             monitor_output, _ = await process.communicate()
             latest = self.repository.read(record.id)
             self._sync_available_outputs(latest, workflow, prefix, stems)
             self.repository.write(latest)
+        except BaseException:
+            await self._terminate_active_process()
+            raise
         finally:
             if self.active_process is process:
                 self.active_process = None
         (logs / f"{workflow}_monitor.log").write_bytes(monitor_output)
         self._raise_if_abandoned(record.id)
         completed = len(self.repository.read(record.id).results.get(workflow, []))
+        if service_error:
+            raise ComfyUnavailable(service_error)
         if returncode != 0 or completed != expected:
+            try:
+                await asyncio.to_thread(self._fetch_json, f"{self.settings.comfy_url}/system_stats")
+            except (OSError, ValueError):
+                raise ComfyUnavailable("ComfyUI 已停止回應；已完成圖片會保留。請重啟 ComfyUI 後續跑未完成圖片。") from None
             raise RuntimeError(f"{workflow} 未完整完成：returncode={returncode}, expected={expected}, actual={completed}")
 
     def _sync_available_outputs(

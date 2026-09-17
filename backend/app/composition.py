@@ -158,8 +158,8 @@ class CompositionService:
             job = self.repository.read(run_id)
         except KeyError as exc:
             raise HTTPException(409, "修復批次資料缺失") from exc
-        if str(job.state) != "completed":
-            raise HTTPException(409, "必須等待修復批次完整完成才能合成")
+        if str(job.state) != "completed" and not (str(job.state) == "failed" and job.partial_results_accepted):
+            raise HTTPException(409, "請等待修復完成，或在失敗任務中選擇使用已有結果")
         root = self.store.project_dir(project_id)
         snapshot_path = self.store.asset_path(project_id, f"inputs/{run['snapshot_id']}/manifest.json")
         try:
@@ -222,7 +222,7 @@ class CompositionService:
             relative = f"assignments/{page['stem']}.0.png"
             atomic_write(root / relative, png_bytes(assignment))
             state["pages"][page["page_id"]] = {"stem": page["stem"], "width": base.shape[1],
-                    "height": base.shape[0], "assignment": relative, "confirmed": passthrough, "passthrough": passthrough}
+                    "height": base.shape[0], "assignment": relative, "confirmed": passthrough, "passthrough": passthrough, "initially_missing_candidates": not passthrough and not candidates}
         self.write(root, state)
         return state, run, snapshot, root
 
@@ -275,7 +275,8 @@ class CompositionService:
                 candidates.append({"workflow": workflow, "code": code, "available": error is None, "error": error})
             url = f"/api/projects/{project_id}/compositions/{run_id}/pages/{page_id}/image"
             result["pages"].append({**page, "page_id": page_id, "candidates": candidates,
-                                    "warnings": [f"{candidate['workflow']}：{candidate['error']}" for candidate in candidates if candidate["error"]],
+                                    "warnings": [f"{candidate['workflow']}：{candidate['error']}" for candidate in candidates if candidate["error"]]
+                                    + (["此頁初次比較時沒有候選；補跑後請選擇新候選，既有合成不會自動更改。"] if page.get("initially_missing_candidates") and any(c["available"] for c in candidates) else []),
                                     "base_url": url + "?source=base", "preview_url": url + f"?source=preview&revision={state['revision']}",
                                     "assignment_url": url + f"?source=assignment&revision={state['revision']}"})
         return result

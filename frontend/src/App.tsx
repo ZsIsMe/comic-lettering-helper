@@ -369,7 +369,7 @@ export default function App() {
                 </div>
                 {job.error ? <Alert type="error" showIcon message={job.error} /> : null}
                 <Space wrap className="job-actions">
-                  {processing ? (
+                  {(processing || (job.state === 'failed' && job.completed_total > 0)) ? (
                     <Button
                       href={job.completed_total > 0 ? `/api/jobs/${job.id}/download-current` : undefined}
                       disabled={job.completed_total === 0}
@@ -380,6 +380,12 @@ export default function App() {
                   ) : job.download_ready ? (
                     <Button href={`/api/jobs/${job.id}/download`} icon={<DownloadOutlined />} type="primary">下載全部結果</Button>
                   ) : null}
+                  {job.state === 'failed' && <Button onClick={() => modal.confirm({ title: '續跑未完成圖片？', content: '保留已完成結果，使用原任務輸入。請先確認 ComfyUI 已就緒。', onOk: async () => {
+                    const response = await fetch(`/api/jobs/${job.id}/resume`, { method: 'POST' })
+                    const data = await response.json()
+                    if (!response.ok) throw new Error(data.detail || '無法續跑')
+                    setJob(data)
+                  } })}>續跑未完成圖片</Button>}
                   {processing ? (
                     <Button danger icon={<StopOutlined />} loading={job.state === 'abandoning'} onClick={confirmAbandon}>
                       放棄任務

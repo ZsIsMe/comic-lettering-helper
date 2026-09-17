@@ -249,9 +249,9 @@ function ProjectWorkspace({ initial, initialError, gpuOwner, onExit, onReadyToLe
     return () => { live = false }
   }, [step, runId, page.id, compUrl, loadComposition, editorKey])
 
-  async function navigate(nextStep: number, nextPage = pageIndex) {
+  async function navigate(nextStep: number, nextPage = pageIndex, accepted = false) {
     if (!await flush()) return
-    if (nextStep === 2 && run?.state !== 'completed') { message.info('修復完成後即可比較合成'); return }
+    if (nextStep === 2 && run?.state !== 'completed' && !run?.partial_results_accepted && !accepted) { message.info('修復完成後即可比較合成'); return }
     const p = await reloadProject()
     editRevision.current = p.pages[nextPage].edit_revision
     if (nextStep === 2) {
@@ -335,7 +335,7 @@ function ProjectWorkspace({ initial, initialError, gpuOwner, onExit, onReadyToLe
   async function exportResults() {
     await execute(async () => {
       if (!await flush()) return
-      if (run?.state !== 'completed') { message.info('修復完成後即可導出結果圖片'); return }
+      if (run?.state !== 'completed' && !run?.partial_results_accepted) { message.info('修復完成後即可導出結果圖片'); return }
       const latest = await loadComposition()
       if (!latest) return
       const pending = latest.pages.filter(item => !item.confirmed)
@@ -375,7 +375,7 @@ function ProjectWorkspace({ initial, initialError, gpuOwner, onExit, onReadyToLe
         <div className="result-export-action"><Button type="primary" disabled={busy || !!gpuOwner || detecting} onClick={() => void exportResults()}>導出結果</Button>{!!pendingExportCount && <span>尚有 {pendingExportCount} 頁待確認 · 點擊前往</span>}</div>
       </Space></header>
     {error && <Alert type="error" showIcon closable onClose={() => setError('')} message={error} />}
-    <Steps size="small" responsive={false} current={step} onChange={value => void execute(() => navigate(value))} items={[{ title: '準備與編輯' }, { title: '批量修復' }, { title: '比較合成', disabled: run?.state !== 'completed' }]} />
+    <Steps size="small" responsive={false} current={step} onChange={value => void execute(() => navigate(value))} items={[{ title: '準備與編輯' }, { title: '批量修復' }, { title: '比較合成', disabled: run?.state !== 'completed' && !run?.partial_results_accepted }]} />
     <div className={`project-body${step !== 1 ? ' pages-collapsed' : ''}`}><aside id="editing-page-list" className="page-list" hidden={step !== 1}>
       <div className="page-status-legend"><span className="page-untouched">{step === 2 ? '待確認' : '未處理'}</span> · <span className="page-complete">{step === 2 ? '已確認' : '完成'}</span>{step !== 2 && <> · <span className="page-needs-repair">待修補</span></>}</div><List dataSource={project.pages} renderItem={(item, index) => <List.Item className={index === pageIndex ? 'selected' : ''} onClick={() => void execute(() => navigate(step, index))}>
         <strong className={step === 2 ? (composition?.pages.find(p => p.page_id === item.id)?.confirmed ? 'page-complete' : 'page-untouched') : (liveRepair[item.id] !== undefined || item.mask_ready) ? ((liveRepair[item.id] ?? item.has_repair_mask) ? 'page-needs-repair' : 'page-complete') : 'page-untouched'} title={(liveRepair[item.id] !== undefined || item.mask_ready) ? ((liveRepair[item.id] ?? item.has_repair_mask) ? '仍有待修補區域' : '已完成塗白，無待修補區域') : '尚未處理'}>{item.filename}</strong>
@@ -406,8 +406,10 @@ function ProjectWorkspace({ initial, initialError, gpuOwner, onExit, onReadyToLe
         {project.runs.length > 0 && <Select className="run-select" aria-label="修復記錄" value={runId} onChange={id => { setRunId(id); setComposition(null) }} options={project.runs.map(r => ({ value: r.id, label: `${new Date(r.created_at).toLocaleString()} · ${r.workflows.length} 套流程` }))} />}
         {run && <Card title={run.name} className="run-card"><Tag>{run.state}</Tag><p role="timer" aria-live="off">{runTiming(run, clock).text}</p><p><Text type="secondary">從任務建立時計算，包含準備、模型載入、生成及打包。</Text></p><Progress percent={Math.round(run.completed_total / Math.max(1, run.total_runs) * 100)} /><p>{run.message}</p>{run.error && <Alert type="error" message={run.error} />}
           <Space wrap>{run.download_ready && <Button disabled={!!gpuOwner} href={`/api/jobs/${run.id}/download`}>下載候選結果</Button>}
+            {run.state === 'failed' && <><Button disabled={!run.completed_total || !!gpuOwner} href={`/api/jobs/${run.id}/download-current`}>下載目前結果</Button><Button disabled={!!gpuOwner} onClick={() => modal.confirm({ title: '續跑未完成圖片？', content: '使用原任務的圖片與 Mask，保留已完成結果。請先確認 ComfyUI 已就緒。', onOk: async () => { setRun(await api<Run>(`/api/jobs/${run.id}/resume`, { method: 'POST' })) } })}>續跑未完成圖片</Button></>}
             {running && <><Button disabled={!run.completed_total} href={`/api/jobs/${run.id}/download-current`}>下載目前結果</Button><Button danger onClick={() => modal.confirm({ title: '放棄修復任務？', content: '已完成圖片會保留。', onOk: async () => { setRun(await api<Run>(`/api/jobs/${run.id}/abandon`, { method: 'POST' })) } })}>放棄任務</Button></>}
-            {run.state === 'completed' && <Button type="primary" onClick={() => void execute(() => navigate(2))}>比較與局部合成 →</Button>}
+            {run.state === 'failed' && !run.partial_results_accepted && <Button disabled={!run.completed_total || !!gpuOwner} onClick={() => modal.confirm({ title: '使用已有結果進下一步？', content: '缺少的候選會標示。完全沒有候選的待修補頁，仍需補跑才能完成導出。', onOk: async () => { setRun(await api<Run>(`/api/jobs/${run.id}/use-results`, { method: 'POST' })); await execute(() => navigate(2, pageIndex, true)) } })}>使用已有結果進下一步</Button>}
+            {(run.state === 'completed' || run.partial_results_accepted) && <Button type="primary" onClick={() => void execute(() => navigate(2))}>比較與局部合成 →</Button>}
           </Space>{run.archive_path && <p className="server-path">伺服器下載路徑：{run.archive_path}</p>}
         </Card>}
         {!running && <Card title="建立新的修復版本"><Checkbox.Group value={workflow} onChange={values => setWorkflow(values as Workflow[])} options={workflowOptions} />

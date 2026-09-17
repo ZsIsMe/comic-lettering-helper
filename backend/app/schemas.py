@@ -37,6 +37,8 @@ class JobRecord(BaseModel):
     updated_at: str
     finished_at: str | None = None
     download_ready: bool = False
+    recovery_attempts: int = 0
+    partial_results_accepted: bool = False
     results: dict[str, list[str]] = Field(default_factory=dict)
     result_directory: str | None = None
     archive_path: str | None = None

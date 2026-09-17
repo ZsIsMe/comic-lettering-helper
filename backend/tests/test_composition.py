@@ -208,3 +208,23 @@ def test_metadata_refresh_and_autosave_do_not_decode_other_pages(composition):
         # decoded; the returned whole-project metadata performs header reads.
         assert decode.call_count == 3
         assert all(call.args[0].name == "01.png" for call in decode.call_args_list)
+
+
+def test_failed_run_requires_acceptance_and_keeps_missing_candidates_visible(composition):
+    service, store, repository, project, run_id, snapshot = composition
+    record = repository.read(run_id)
+    record.state = JobState.failed
+    repository.write(record)
+    with pytest.raises(HTTPException): service.context(project["id"], run_id)
+    record.partial_results_accepted = True
+    repository.write(record)
+    missing = repository.job_dir(run_id) / "inpaint_workflows/firered/01.png"
+    missing.unlink()
+    result = service.describe(project["id"], run_id)
+    page = next(p for p in result["pages"] if p["stem"] == "01")
+    assert any(c["available"] for c in page["candidates"])
+    assert any(not c["available"] for c in page["candidates"])
+    assert page["warnings"]
+    record.state = JobState.running
+    repository.write(record)
+    with pytest.raises(HTTPException): service.context(project["id"], run_id)

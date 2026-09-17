@@ -188,3 +188,104 @@ def test_pdf_abandon_does_not_become_success(tmp_path):
     with pytest.raises(JobAbandoned):
         asyncio.run(manager._package(record, "batch"))
     assert not (repository.job_dir(record.id) / "download.zip").exists()
+
+
+def test_resume_restores_valid_saved_outputs_and_quarantines_partial_raw(tmp_path):
+    manager, repository = make_manager(tmp_path)
+    record = make_record("abc-def")
+    repository.write(record)
+    out = manager.settings.comfy_output
+    out.mkdir(parents=True)
+    raw = out / "web_abcdef_flux_01_00001_.png"
+    raw.write_bytes(b"partial PNG")
+    saved = repository.job_dir(record.id) / "inpaint_workflows/flux2klein_lanpaint/01.png"
+    saved.parent.mkdir(parents=True)
+    Image.new("RGB", (16, 16), "green").save(saved)
+    manager._prepare_existing_outputs(record, ["01"])
+    assert raw.read_bytes() == saved.read_bytes()
+    assert (repository.job_dir(record.id) / "incomplete-output-backups" / raw.name).read_bytes() == b"partial PNG"
+
+
+def test_failure_log_is_retained_without_requiring_live_service(tmp_path):
+    manager, repository = make_manager(tmp_path)
+    record = make_record()
+    log = manager.settings.data_root / "logs/comfyui.log"
+    log.parent.mkdir(parents=True)
+    log.write_text("original crash evidence")
+    manager._save_comfy_failure_log(record.id)
+    assert (repository.job_dir(record.id) / "logs/comfyui-failure.log").read_text() == "original crash evidence"
+
+
+def test_comfy_crash_recovers_once_and_retries_same_job(tmp_path):
+    from unittest.mock import Mock
+    from app.engine import ComfyUnavailable
+    manager, repository = make_manager(tmp_path)
+    record = make_record(); repository.write(record)
+    manager._run_job = AsyncMock(side_effect=[ComfyUnavailable("disconnected"), None])
+    manager.restart_comfy = Mock()
+    asyncio.run(manager._run_with_recovery(record.id))
+    assert manager._run_job.await_count == 2
+    manager.restart_comfy.assert_called_once_with(record.id)
+    assert repository.read(record.id).recovery_attempts == 1
+
+
+def test_repeated_crash_stops_after_one_automatic_recovery(tmp_path):
+    import pytest
+    from unittest.mock import Mock
+    from app.engine import ComfyUnavailable
+    manager, repository = make_manager(tmp_path)
+    record = make_record(); repository.write(record)
+    manager._run_job = AsyncMock(side_effect=ComfyUnavailable("disconnected"))
+    manager.restart_comfy = Mock()
+    with pytest.raises(ComfyUnavailable):
+        asyncio.run(manager._run_with_recovery(record.id))
+    assert manager._run_job.await_count == 2
+    assert manager.restart_comfy.call_count == 1
+    assert repository.read(record.id).recovery_attempts == 1
+
+
+def test_normal_model_error_does_not_trigger_restart(tmp_path):
+    import pytest
+    from unittest.mock import Mock
+    manager, repository = make_manager(tmp_path)
+    record = make_record(); repository.write(record)
+    manager._run_job = AsyncMock(side_effect=RuntimeError("invalid model"))
+    manager.restart_comfy = Mock()
+    with pytest.raises(RuntimeError, match="invalid model"):
+        asyncio.run(manager._run_with_recovery(record.id))
+    manager.restart_comfy.assert_not_called()
+
+
+def test_firered_resume_uses_new_timing_log_but_same_output_prefix(tmp_path):
+    manager, _ = make_manager(tmp_path)
+    _, first = manager._command_for("firered", "batch", "same_")
+    _, second = manager._command_for("firered", "batch", "same_")
+    assert first["FIRERED_BATCH_NAME"] != second["FIRERED_BATCH_NAME"]
+    assert first["FIRERED_OUTPUT_PREFIX"] == second["FIRERED_OUTPUT_PREFIX"] == "same_"
+
+
+def test_disconnected_comfy_terminates_batch_after_three_checks(tmp_path, monkeypatch):
+    from app.engine import ComfyUnavailable
+    import pytest
+    from unittest.mock import Mock
+    manager, repository = make_manager(tmp_path)
+    record = make_record(); repository.write(record)
+    process = Mock(returncode=None)
+    process.wait = AsyncMock()
+    process.communicate = AsyncMock(return_value=(b"monitor stopped", None))
+    monkeypatch.setattr("app.engine.asyncio.create_subprocess_exec", AsyncMock(return_value=process))
+    async def timeout(awaitable, timeout):
+        awaitable.close()
+        raise TimeoutError()
+    monkeypatch.setattr("app.engine.asyncio.wait_for", timeout)
+    manager._sync_available_outputs = Mock(return_value=0)
+    manager._fetch_json = Mock(side_effect=ConnectionRefusedError())
+    async def terminate():
+        process.returncode = -15
+    manager._terminate_active_process = AsyncMock(side_effect=terminate)
+    with pytest.raises(ComfyUnavailable):
+        asyncio.run(manager._run_process(record, "flux2klein_lanpaint", ["fake-runner"], {}, "test_", ["01", "02"]))
+    assert manager._fetch_json.call_count == 3
+    manager._terminate_active_process.assert_awaited_once()
+    assert manager.active_process is None
+    assert (repository.job_dir(record.id) / "logs/flux2klein_lanpaint_monitor.log").read_bytes() == b"monitor stopped"

@@ -6,7 +6,7 @@ import subprocess
 import urllib.error
 import urllib.request
 import uuid
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, nullcontext
 from datetime import datetime
 from pathlib import Path
 
@@ -18,7 +18,7 @@ from fastapi.staticfiles import StaticFiles
 from .config import settings
 from .engine import JobManager
 from .repository import JobRepository, now_iso
-from .schemas import HealthResponse, JobRecord, WorkflowId
+from .schemas import HealthResponse, JobRecord, JobState, WorkflowId
 from .storage import save_uploads, validate_pairs
 from .projects import ProjectStore
 from .project_api import create_project_router, project_download
@@ -101,7 +101,7 @@ def comfy_ready() -> bool:
     try:
         with urllib.request.urlopen(f"{settings.comfy_url}/system_stats", timeout=2):
             return True
-    except (TimeoutError, urllib.error.URLError):
+    except OSError:
         return False
 
 
@@ -122,6 +122,13 @@ def gpu_stats() -> tuple[str | None, int | None, int | None, int | None]:
         return name, int(float(used)), int(float(total)), int(float(utilization))
     except (OSError, subprocess.SubprocessError, ValueError, IndexError):
         return None, None, None, None
+
+
+from .comfy_service import ComfyService, router as comfy_service_router
+
+comfy_service = ComfyService(settings, manager, lambda: gpu_stats()[0] is not None, installer.busy)
+app.include_router(comfy_service_router(comfy_service))
+manager.restart_comfy = comfy_service.recover_for_job
 
 
 @app.get("/api/health", response_model=HealthResponse)
@@ -201,6 +208,66 @@ async def create_job(
     except BaseException:
         manager.gpu_gate.release(job_id)
         shutil.rmtree(job_dir, ignore_errors=True)
+        raise
+    return present_job(record)
+
+
+@app.post("/api/jobs/{job_id}/use-results", response_model=JobRecord)
+def use_partial_results(job_id: str) -> JobRecord:
+    try:
+        record = repository.read(job_id)
+    except KeyError as exc:
+        raise HTTPException(404, "任務不存在") from exc
+    if record.state != JobState.failed or not any(record.results.values()):
+        raise HTTPException(409, "需要已停止且有可用圖片的任務")
+    owner = f"partial-results:{job_id}:{uuid.uuid4().hex}"
+    if not manager.gpu_gate.claim(owner):
+        raise HTTPException(409, "GPU 任務正在處理，請稍後再試")
+    try:
+        with project_store.lock(record.project_id) if record.project_id else nullcontext():
+            record = repository.read(job_id)
+            if record.state != JobState.failed:
+                raise HTTPException(409, "任務狀態已改變，請刷新")
+            record.partial_results_accepted = True
+            record.message = "使用已有結果；缺少的候選會標示，不代表全部完成"
+            repository.write(record)
+    finally:
+        manager.gpu_gate.release(owner)
+    return present_job(record)
+
+
+@app.post("/api/jobs/{job_id}/resume", response_model=JobRecord, status_code=202)
+async def resume_job(job_id: str) -> JobRecord:
+    try:
+        record = repository.read(job_id)
+    except KeyError as exc:
+        raise HTTPException(404, "任務不存在") from exc
+    if record.state != JobState.failed:
+        raise HTTPException(409, "只有失敗的任務可以續跑")
+    if manager.active_job_id or any(r.state in {JobState.queued, JobState.validating, JobState.running, JobState.packaging, JobState.abandoning}
+                                   for r in repository.list(limit=None)):
+        raise HTTPException(409, "請先等待其他任務完成")
+    if not comfy_ready():
+        raise HTTPException(409, "ComfyUI 尚未就緒，請先使用重啟按鈕")
+    if not manager.gpu_gate.claim(job_id):
+        raise HTTPException(409, "GPU 正被其他任務使用")
+    previous = record.model_copy(deep=True)
+    try:
+        with project_store.lock(record.project_id) if record.project_id else nullcontext():
+            record = repository.read(job_id)
+            if record.state != JobState.failed:
+                raise HTTPException(409, "任務狀態已改變，請刷新")
+            record.state = JobState.queued
+            record.finished_at = None
+            record.recovery_attempts = 0
+            record.partial_results_accepted = False
+            record.error = None
+            record.message = "等待續跑；完整的既有圖片會保留"
+            repository.write(record)
+        await manager.enqueue(job_id)
+    except BaseException:
+        repository.write(previous)
+        manager.gpu_gate.release(job_id)
         raise
     return present_job(record)
 

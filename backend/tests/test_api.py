@@ -48,3 +48,29 @@ def test_health_without_executable_gpu_driver(monkeypatch):
     assert health.app == "ok"
     assert health.gpu_name is None
     assert health.gpu_memory_total_mib is None
+
+
+def test_resume_failed_job_preserves_results_and_reserves_gpu(tmp_path, monkeypatch):
+    import asyncio
+    from unittest.mock import AsyncMock
+    from app import main
+    from app.repository import JobRepository
+    from app.engine import JobManager
+    from app.config import Settings
+    from app.schemas import JobRecord, JobState
+    repo = JobRepository(tmp_path / "jobs")
+    mgr = JobManager(Settings(data_root=tmp_path), repo)
+    mgr.enqueue = AsyncMock()
+    monkeypatch.setattr(main, "repository", repo)
+    monkeypatch.setattr(main, "manager", mgr)
+    monkeypatch.setattr(main, "comfy_ready", lambda: True)
+    rec = JobRecord(id="resume", name="test", workflows=["firered"], pair_count=2, total_runs=2,
+                    created_at="2026-09-17T00:00:00+00:00", updated_at="2026-09-17T00:00:00+00:00",
+                    finished_at="2026-09-17T01:00:00+00:00", state=JobState.failed,
+                    results={"firered": ["01.png"]}, completed_total=1)
+    repo.write(rec)
+    result = asyncio.run(main.resume_job(rec.id))
+    assert result.state == JobState.queued and result.finished_at is None
+    assert result.results == rec.results
+    assert mgr.gpu_gate.owner == rec.id
+    mgr.enqueue.assert_awaited_once_with(rec.id)

@@ -29,7 +29,7 @@ export interface Run {
   created_at: string; updated_at: string; finished_at?: string | null
   id: string; name: string; state: string; message: string; error: string | null
   workflows: Workflow[]; pair_count: number; black_mask_count: number
-  completed_total: number; total_runs: number; download_ready: boolean
+  completed_total: number; total_runs: number; download_ready: boolean; partial_results_accepted?: boolean
   result_directory: string | null; archive_path: string | null
 }
 export interface CompositionPage {
