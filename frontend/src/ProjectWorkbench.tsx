@@ -3,6 +3,7 @@ import { Alert, Button, Card, Checkbox, Dropdown, Empty, Input, InputNumber, Lis
 import LegacyBatch from './App'
 import { ImagePicker } from './ImagePicker'
 import { DetectionSettings } from './DetectionSettings'
+import { createMaskPlan } from './create-mask-plan'
 import { runTiming } from './run-timing'
 import { RasterEditor, type RasterHandle, type ComposeView, type RasterSave } from './RasterEditor'
 import { active, api, assetUrl, defaultDetectionOptions, json, projectUrl, workflowOptions, type Composition, type DetectionOptions, type Project, type Run, type Workflow } from './workbench-api'
@@ -29,6 +30,7 @@ export default function ProjectWorkbench({ onReadyToLeave }: { onReadyToLeave?: 
   const createSettingsTouched = useRef(false)
   const [picking, setPicking] = useState(false)
   const [name, setName] = useState(''); const [sources, setSources] = useState<File[]>([]); const [masks, setMasks] = useState<File[]>([])
+  const maskPlan = createMaskPlan(sources, masks)
   const [busy, setBusy] = useState(false); const [error, setError] = useState('')
   const [gpuOwner, setGpuOwner] = useState<string | null>(null)
   const reload = useCallback(async () => { setProjects(await api<Project[]>('/api/projects')) }, [])
@@ -70,11 +72,11 @@ export default function ProjectWorkbench({ onReadyToLeave }: { onReadyToLeave?: 
       for (const f of masks) body.append('mask_files', f, f.name)
       const project = await api<Project>('/api/projects', { method: 'POST', body })
       setCreateDetectionError('')
-      if (detectOnCreate) {
+      if (detectOnCreate && project.pages.some(page => !page.mask_ready)) {
         try {
-          await api(`${projectUrl(project.id)}/detect`, json('POST', { expected_revision: project.revision, replace_existing: true, options: createDetectionOptions }))
+          await api(`${projectUrl(project.id)}/detect`, json('POST', { expected_revision: project.revision, missing_only: true, options: createDetectionOptions }))
         } catch (err) {
-          setCreateDetectionError(`項目已建立，但自動檢測未啟動：${err instanceof Error ? err.message : String(err)}。可在此重試自動檢測。`)
+          setCreateDetectionError(`項目已建立，但自動檢測未啟動：${err instanceof Error ? err.message : String(err)}。已匯入 Mask 保留，可按「補充缺少的 Mask」重試。`)
         }
       }
       setCreateOpen(false); setSources([]); setMasks([]); setName(''); open(project); await reload()
@@ -121,18 +123,18 @@ export default function ProjectWorkbench({ onReadyToLeave }: { onReadyToLeave?: 
       <p>將刪除此項目的原圖、編輯、修復及合成結果（{bytes(deleteTarget?.storage_bytes)}）。此操作無法復原。</p>
       {deleteError && <Alert type="error" showIcon message={deleteError} />}
     </Modal>
-    <Modal title="新建漫畫項目" width={700} styles={{ body: { maxHeight: '70vh', overflowY: 'auto' } }} open={createOpen} onCancel={() => { if (!busy && !picking) setCreateOpen(false) }} onOk={() => void create()} okText="建立項目" confirmLoading={busy} okButtonProps={{ disabled: !sources.length || !!gpuOwner || picking }}>
+    <Modal title="新建漫畫項目" width={700} styles={{ body: { maxHeight: '70vh', overflowY: 'auto' } }} open={createOpen} onCancel={() => { if (!busy && !picking) setCreateOpen(false) }} onOk={() => void create()} okText="建立項目" confirmLoading={busy} okButtonProps={{ disabled: !sources.length || maskPlan.invalid || !!gpuOwner || picking }}>
       <Space direction="vertical" size="middle" style={{ width: '100%' }}>
         <Input aria-label="項目名稱" placeholder="項目名稱" value={name} onChange={e => setName(e.target.value)} maxLength={80} />
         <div className="create-image-inputs">
         <div><p>原圖（必須）· 已選 {sources.length} 張</p><ImagePicker disabled={busy || picking || !!gpuOwner} onBusyChange={setPicking} label="原圖" onSelect={(files, folderName) => { setSources(files); if (!name) setName(folderName || files[0]?.name.replace(/\.[^.]+$/, '') || '') }} /></div>
         <div><p>Mask（可選）· 已選 {masks.length} 張</p><ImagePicker disabled={busy || picking || !!gpuOwner} onBusyChange={setPicking} label="Mask" mask onSelect={setMasks} /></div>
         </div>
-        <Text type="secondary">已有 Mask 可直接進入批量修復；只上傳原圖則先自動檢測或人工編輯。資料夾僅匯入第一層，每次選擇整批取代。</Text>
+        <Text type="secondary">可上傳全部或部分頁面的 Mask；已有 Mask（含全黑）會保留，其餘可自動檢測或人工編輯。資料夾僅匯入第一層，每次選擇整批取代。</Text>
         <section className="create-detection-settings" aria-label="新項目的自動檢測設定">
           <h3>自動檢測設定</h3>
-          <Checkbox checked={detectOnCreate} disabled={busy || picking} onChange={e => setDetectOnCreate(e.target.checked)}>建立後立即自動檢測</Checkbox>
-          {detectOnCreate && masks.length > 0 && <Alert type="warning" message="自動檢測將重建全部頁面的圖層並取代匯入 Mask；要保留 Mask，請取消勾選。" />}
+          <Checkbox checked={detectOnCreate && maskPlan.missing > 0} disabled={busy || picking || maskPlan.missing === 0} onChange={e => setDetectOnCreate(e.target.checked)}>自動檢測缺少 Mask 的頁面</Checkbox>
+          {maskPlan.invalid ? <Alert type="error" message="請檢查檔名：不可有重複頁碼，每張 Mask 都必須有同檔名的原圖。" /> : sources.length > 0 && <Alert type="info" message={maskPlan.missing === 0 ? `全部 ${maskPlan.supplied} 頁將使用你上傳的 Mask，無須自動檢測。` : `${maskPlan.supplied} 頁使用上傳的 Mask，另外 ${maskPlan.missing} 頁${detectOnCreate ? '將自動檢測' : '需稍後檢測或人工編輯'}。`} />}
           <Text type="secondary">設定會隨項目保存；勾選後在圖片上傳並建立項目完成時立即執行，無須再次按「自動檢測」。</Text>
           <DetectionSettings value={createDetectionOptions} onChange={value => { createSettingsTouched.current = true; setCreateDetectionOptions(value) }} disabled={busy || picking} />
         </section>
@@ -293,17 +295,21 @@ function ProjectWorkspace({ initial, initialError, gpuOwner, onExit, onReadyToLe
     }))
     compositionRevision.current = c.revision; setComposition(c); setAssignment(data.assignment_rle)
   }
-  async function detect() {
+  async function detect(missingOnly = false) {
     await execute(async () => {
       setDetectError('')
       try {
         if (!await flush()) throw new Error('目前修改未能保存，尚未開始重新檢測。')
         const p = await reloadProject()
-        await api(`${url}/detect`, json('POST', { expected_revision: p.revision, replace_existing: true, options: detectionOptions }))
+        await api(`${url}/detect`, json('POST', { expected_revision: p.revision, replace_existing: !missingOnly, missing_only: missingOnly, options: detectionOptions }))
         wasDetecting.current = true
         setProject({ ...p, state: 'detecting', detection_options: detectionOptions }); setDetection({ state: 'queued', message: '等待偵測' })
         setDetectConfirmOpen(false)
-      } catch (err) { setDetectError(err instanceof Error ? err.message : String(err)) }
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err)
+        if (missingOnly) setError(message)
+        else setDetectError(message)
+      }
     })
   }
   async function submit() {
@@ -399,6 +405,7 @@ function ProjectWorkspace({ initial, initialError, gpuOwner, onExit, onReadyToLe
           baseUrl={assetUrl(project.id, page.source)} overlayUrl={`${assetUrl(project.id, page.overlay)}?v=${page.edit_revision}`} otherUrl={`${assetUrl(project.id, page.other)}?v=${page.edit_revision}`} editedUrl={`${assetUrl(project.id, page.edited)}?v=${page.edit_revision}`}
           detectedTextUrl={page.detected_text ? assetUrl(project.id, page.detected_text) : undefined}
           onSave={saveEdit} onDirty={setDirty} onRepairMaskChange={value => setLiveRepair(previous => ({ ...previous, [page.id]: value }))} disabled={busy} />}
+        {project.pages.some(p => !p.mask_ready) && <Button disabled={busy || !!gpuOwner || detecting || !detectionCanConfigure} onClick={() => void detect(true)}>補充缺少的 Mask</Button>}
         {detection?.error && <Alert type="error" message="自動檢測未完成，請重試；若持續失敗，請聯絡管理員查看檢測日誌。" />}
       </>}
       {step === 1 && <>

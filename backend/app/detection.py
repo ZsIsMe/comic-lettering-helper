@@ -25,6 +25,7 @@ class DetectionRequest(BaseModel):
     expected_revision: int = Field(ge=0)
     page_ids: list[str] | None = None
     replace_existing: bool = False
+    missing_only: bool = False
     options: DetectionOptions | None = None
 
 
@@ -172,6 +173,12 @@ class DetectionManager:
                 if not ids or len(set(ids)) != len(ids):
                     raise ValueError('請選擇不重複的頁面')
                 selected = [self.store.page(project, page_id) for page_id in ids]
+                if request.missing_only:
+                    if request.replace_existing:
+                        raise ValueError('補充檢測不可同時取代已有 Mask')
+                    selected = [page for page in selected if not page.get('mask_ready', False)]
+                    if not selected:
+                        raise ValueError('全部頁面已有 Mask，無須自動檢測')
                 root = self._task_dir(project_id, detection_id)
                 root.mkdir(parents=True)
                 pages = []

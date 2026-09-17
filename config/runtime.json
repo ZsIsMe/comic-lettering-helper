@@ -1,6 +1,6 @@
 {
   "app_name": "漫畫去字工作台",
-  "app_version": "0.2.5",
+  "app_version": "0.2.6",
   "target_vram_gib": 32,
   "web_port": 6008,
   "comfy_port": 6006,

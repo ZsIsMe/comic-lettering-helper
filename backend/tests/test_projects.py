@@ -437,3 +437,22 @@ def test_page_repair_status_uses_current_mask_and_supports_old_projects(tmp_path
     assert store.read(pid)['pages'][0]['has_repair_mask'] is True
     store.save_edit(pid, page['id'], 1, Image.new('RGBA', (6, 4)), Image.new('L', (6, 4)), Image.new('L', (6, 4)))
     assert store.read(pid)['pages'][0]['has_repair_mask'] is False
+
+
+@pytest.mark.parametrize('value', [0, 255])
+def test_partial_uploaded_masks_are_ready_even_when_black(tmp_path, value):
+    store, _ = make_project(tmp_path)
+    source, mask = tmp_path / '01.png', tmp_path / 'mask.png'
+    Image.new('L', (6, 4), value).save(mask)
+    project = store.create('partial', {'01': source, '02': source}, {'01': mask})
+    first, second = project['pages']
+    assert first['mask_ready'] is True and second['mask_ready'] is False
+    with Image.open(store.asset_path(project['id'], first['other'])) as saved:
+        assert saved.getextrema() == (value, value)
+    with pytest.raises(ValueError, match='尚未準備 Mask'):
+        store.snapshot(project['id'], 0)
+    with pytest.raises(ValueError, match='多餘'):
+        store.create('invalid', {'01': source}, {'03': mask})
+    Image.new('L', (2, 2)).save(mask)
+    with pytest.raises(ValueError, match='尺寸'):
+        store.create('invalid', {'01': source, '02': source}, {'01': mask})

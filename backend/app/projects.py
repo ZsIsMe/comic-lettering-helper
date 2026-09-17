@@ -141,8 +141,8 @@ class ProjectStore:
     def create(self, name: str, sources: dict[str, Path], masks: dict[str, Path] | None = None, *, detection_options: dict | None = None) -> dict:
         if not sources:
             raise ValueError('項目必須包含原圖')
-        if masks is not None and sources.keys() != masks.keys():
-            raise ValueError('原圖與 Mask 必須完整按檔名配對')
+        if masks is not None and not masks.keys() <= sources.keys():
+            raise ValueError('Mask 必須按檔名配對已有原圖，不可包含多餘頁面')
         options = DetectionOptions.model_validate(detection_options).model_dump() if detection_options is not None else None
         project_id = uuid.uuid4().hex
         root = self.project_dir(project_id)
@@ -170,13 +170,13 @@ class ProjectStore:
                 Image.new('RGBA', source.size).save(assets / 'overlay.png')
                 Image.new('L', source.size).save(assets / 'edited.png')
                 other = Image.new('L', source.size)
-                if masks is not None:
+                if masks is not None and stem in masks:
                     with Image.open(masks[stem]) as mask:
                         if mask.size != source.size:
                             raise ValueError(f'{stem} 原圖與 Mask 尺寸不一致')
                         other = mask.convert('L').point(lambda v: 255 if v >= 128 else 0)
                 other.save(assets / 'other.png')
-                project['pages'].append({'id': page_id, 'stem': stem, 'filename': original.name, 'order': order, 'width': source.width, 'height': source.height, 'original': str(destination.relative_to(root)), 'source': f'assets/{page_id}/source.png', 'thumbnail': f'assets/{page_id}/thumbnail.png', 'overlay': f'assets/{page_id}/overlay.png', 'other': f'assets/{page_id}/other.png', 'edited': f'assets/{page_id}/edited.png', 'edit_revision': 0, 'mask_ready': masks is not None, 'source_sha256': digest_file(assets / 'source.png'), 'original_sha256': digest_file(destination), 'normalization': 'RGB PNG; pixel orientation unchanged'})
+                project['pages'].append({'id': page_id, 'stem': stem, 'filename': original.name, 'order': order, 'width': source.width, 'height': source.height, 'original': str(destination.relative_to(root)), 'source': f'assets/{page_id}/source.png', 'thumbnail': f'assets/{page_id}/thumbnail.png', 'overlay': f'assets/{page_id}/overlay.png', 'other': f'assets/{page_id}/other.png', 'edited': f'assets/{page_id}/edited.png', 'edit_revision': 0, 'mask_ready': masks is not None and stem in masks, 'source_sha256': digest_file(assets / 'source.png'), 'original_sha256': digest_file(destination), 'normalization': 'RGB PNG; pixel orientation unchanged'})
             self.write(project)
             return project
         except Exception:

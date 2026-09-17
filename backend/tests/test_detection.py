@@ -477,3 +477,33 @@ def test_detection_options_frozen_and_remembered_without_changing_server_config(
     for page in manager.store.read(project['id'])['pages']:
         assert page['detection']['options'] == expected
         assert page['detection']['models'] == ['rf']
+
+
+@pytest.mark.parametrize('value', [0, 255])
+def test_missing_only_detection_preserves_uploaded_mask_and_rejects_overwrite(tmp_path, monkeypatch, value):
+    manager, _ = setup_manager(tmp_path)
+    source, mask = tmp_path / 'partial-source.png', tmp_path / 'partial-mask.png'
+    Image.new('RGB', (140, 140), 'white').save(source)
+    Image.new('L', (140, 140), value).save(mask)
+    project = manager.store.create('partial', {'first': source, 'second': source}, {'first': mask})
+    first, second = project['pages']
+    original = manager.store.asset_path(project['id'], first['other']).read_bytes()
+    monkeypatch.setattr(manager, 'availability', lambda: {'available': True})
+    async def run_stub(record):
+        manifest = json.loads((manager._task_dir(project['id'], record['id']) / 'manifest.json').read_text())
+        assert [p['id'] for p in manifest['pages']] == [second['id']]
+        assert manifest['replace_existing'] is False
+    monkeypatch.setattr(manager, '_run', run_stub)
+    async def run():
+        with pytest.raises(ValueError, match='不可同時'):
+            await manager.submit(project['id'], DetectionRequest(expected_revision=0, missing_only=True, replace_existing=True))
+        assert manager.gpu_gate.owner is None
+        with pytest.raises(ValueError, match='無須'):
+            await manager.submit(project['id'], DetectionRequest(expected_revision=0, missing_only=True, page_ids=[first['id']]))
+        assert manager.gpu_gate.owner is None
+        record = await manager.submit(project['id'], DetectionRequest(expected_revision=0, missing_only=True))
+        assert record['total'] == 1
+        await manager.task
+    asyncio.run(run())
+    assert manager.store.asset_path(project['id'], first['other']).read_bytes() == original
+    assert manager.store.read(project['id'])['pages'][0]['mask_ready'] is True
