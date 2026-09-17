@@ -123,3 +123,68 @@ def test_gpu_reservation_cannot_be_released_by_another_task():
     assert gate.owner == 'detect'
     gate.release('detect')
     assert gate.claim('repair')
+
+
+def test_output_waits_for_complete_png_and_replaces_old_partial_copy(tmp_path):
+    manager, repository = make_manager(tmp_path)
+    record = make_record()
+    repository.write(record)
+    source = manager.settings.comfy_output / "test_01_00001_.png"
+    source.parent.mkdir(parents=True)
+    Image.new("RGB", (32, 32), "red").save(source)
+    complete = source.read_bytes()
+    source.write_bytes(complete[:len(complete) // 2])
+    target = repository.job_dir(record.id) / "inpaint_workflows/flux2klein_lanpaint/01.png"
+    assert manager._sync_available_outputs(record, "flux2klein_lanpaint", "test_", ["01"]) == 0
+    assert not target.exists()
+    source.write_bytes(complete)
+    assert manager._sync_available_outputs(record, "flux2klein_lanpaint", "test_", ["01"]) == 1
+    target.write_bytes(complete[:20])
+    manager._normalize_outputs(record, "flux2klein_lanpaint", "test_", ["01"])
+    assert target.read_bytes() == complete
+    assert not target.with_suffix(".tmp").exists()
+
+
+def test_final_sync_rejects_incomplete_output(tmp_path):
+    import pytest
+    manager, repository = make_manager(tmp_path)
+    record = make_record()
+    source = manager.settings.comfy_output / "test_01_00001_.png"
+    source.parent.mkdir(parents=True)
+    source.write_bytes(b"incomplete PNG")
+    with pytest.raises(RuntimeError, match="輸出圖片尚未完整"):
+        manager._sync_available_outputs(record, "flux2klein_lanpaint", "test_", ["01"], require_all=True)
+
+
+def test_pdf_failure_still_packages_images_and_logs(tmp_path):
+    manager, repository = make_manager(tmp_path)
+    record = make_record()
+    record.workflows = ["flux2klein_lanpaint", "firered", "qwen2511_lanpaint"]
+    repository.write(record)
+    root = repository.job_dir(record.id)
+    for workflow in record.workflows:
+        dest = root / "inpaint_workflows" / workflow
+        dest.mkdir(parents=True)
+        Image.new("RGB", (4, 4)).save(dest / "01.png")
+    partial = root / "inpaint_workflows" / f"{record.name}-三工作流對比.pdf"
+    partial.write_bytes(b"partial")
+    manager._generate_compare_pdf = AsyncMock(side_effect=OSError("PDF failure"))
+    warning = asyncio.run(manager._package(record, "batch"))
+    assert "PDF 生成失敗" in warning
+    assert not partial.exists()
+    with zipfile.ZipFile(root / "download.zip") as archive:
+        assert len([name for name in archive.namelist() if name.endswith(".png")]) == 3
+        assert b"PDF failure" in archive.read("logs/pdf.log")
+
+
+def test_pdf_abandon_does_not_become_success(tmp_path):
+    import pytest
+    from app.engine import JobAbandoned
+    manager, repository = make_manager(tmp_path)
+    record = make_record()
+    record.workflows = ["flux2klein_lanpaint", "firered", "qwen2511_lanpaint"]
+    repository.write(record)
+    manager._generate_compare_pdf = AsyncMock(side_effect=JobAbandoned())
+    with pytest.raises(JobAbandoned):
+        asyncio.run(manager._package(record, "batch"))
+    assert not (repository.job_dir(record.id) / "download.zip").exists()

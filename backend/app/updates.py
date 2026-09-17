@@ -9,7 +9,7 @@ import urllib.request
 
 from fastapi import APIRouter
 
-APP_VERSION = "0.2.3"
+APP_VERSION = "0.2.4"
 REPOSITORY = "https://github.com/ZsIsMe/comic-lettering-helper"
 TAGS_API = "https://api.github.com/repos/ZsIsMe/comic-lettering-helper/git/matching-refs/tags/"
 _lock = threading.Lock()

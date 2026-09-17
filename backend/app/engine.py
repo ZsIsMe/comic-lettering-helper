@@ -269,12 +269,12 @@ class JobManager:
         record.current_workflow = None
         record.message = "整理圖片與下載包"
         self.repository.write(record)
-        await self._package(record, batch_name)
+        pdf_warning = await self._package(record, batch_name)
         record = self.repository.read(job_id)
         record.state = JobState.completed
         record.completed_total = record.total_runs
         record.download_ready = True
-        record.message = "全部完成"
+        record.message = pdf_warning or "全部完成"
         self.repository.write(record)
         self._cleanup_comfy_staging(batch_name, record)
 
@@ -393,10 +393,31 @@ class JobManager:
                     raise RuntimeError(f"缺少輸出：{workflow}/{stem}")
                 continue
             target = destination / f"{stem}.png"
-            if not target.is_file():
-                temporary = target.with_suffix(".tmp")
-                shutil.copy2(matches[-1], temporary)
-                temporary.replace(target)
+            # A visible ComfyUI filename may still be in the middle of PNG writes.
+            # Validate the copied snapshot before publishing it to downloads.
+            temporary = target.with_suffix(".tmp")
+            try:
+                if target.is_file() and not require_all:
+                    with Image.open(target) as image:
+                        image.verify()
+                    with Image.open(target) as image:
+                        image.load()
+                else:
+                    raise OSError("Refresh output snapshot")
+            except (OSError, SyntaxError, ValueError):
+                try:
+                    shutil.copy2(matches[-1], temporary)
+                    with Image.open(temporary) as image:
+                        image.verify()
+                    with Image.open(temporary) as image:
+                        image.load()
+                    temporary.replace(target)
+                except (OSError, SyntaxError, ValueError) as exc:
+                    if require_all:
+                        raise RuntimeError(f"輸出圖片尚未完整：{workflow}/{stem}") from exc
+                    continue
+                finally:
+                    temporary.unlink(missing_ok=True)
             names.append(target.name)
         record.results[workflow] = names
         return len(names)
@@ -405,48 +426,64 @@ class JobManager:
         self._sync_available_outputs(record, workflow, prefix, stems, require_all=True)
         self.repository.write(record)
 
-    async def _package(self, record: JobRecord, batch_name: str) -> None:
+    async def _package(self, record: JobRecord, batch_name: str) -> str | None:
+        job_dir = self.repository.job_dir(record.id)
+        logs = job_dir / "logs"
+        logs.mkdir(parents=True, exist_ok=True)
+        warning = None
+        if set(record.workflows) == set(WORKFLOW_META):
+            try:
+                await self._generate_compare_pdf(record, batch_name)
+            except JobAbandoned:
+                raise
+            except Exception as exc:
+                warning = "圖片已完成；比較 PDF 生成失敗，圖片與日誌仍可下載"
+                with (logs / "pdf.log").open("a", encoding="utf-8") as log:
+                    log.write(f"\nPDF 附加輸出失敗：{type(exc).__name__}: {exc}\n")
+                pdf = job_dir / "inpaint_workflows" / f"{record.name}-三工作流對比.pdf"
+                pdf.unlink(missing_ok=True)
+        self._raise_if_abandoned(record.id)
+        self._write_archive(job_dir, job_dir / "download.zip")
+        return warning
+
+    async def _generate_compare_pdf(self, record: JobRecord, batch_name: str) -> None:
         job_dir = self.repository.job_dir(record.id)
         results = job_dir / "inpaint_workflows"
         logs = job_dir / "logs"
-        if set(record.workflows) == set(WORKFLOW_META):
-            stage = job_dir / "pdf-stage"
-            stage.mkdir(parents=True, exist_ok=True)
-            links = {
-                "pair": self.settings.comfy_input / batch_name / "pair",
-                "pair_mask": self.settings.comfy_input / batch_name / "pair_mask",
-                "result_firered": results / "firered",
-                "result_qwen2511_lanpaint": results / "qwen2511_lanpaint",
-                "result_flux2klein_lanpaint": results / "flux2klein_lanpaint",
-            }
-            for name, target in links.items():
-                link = stage / name
-                link.unlink(missing_ok=True)
-                link.symlink_to(target, target_is_directory=True)
-            pdf = results / f"{record.name}-三工作流對比.pdf"
-            process = await asyncio.create_subprocess_exec(
-                self.settings.python_bin,
-                str(self.settings.tools_root / "make_three_model_inpaint_compare_pdf.py"),
-                str(stage),
-                "-o",
-                str(pdf),
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.STDOUT,
-                start_new_session=True,
-            )
-            self.active_process = process
-            try:
-                output, _ = await process.communicate()
-            finally:
-                if self.active_process is process:
-                    self.active_process = None
-            (logs / "pdf.log").write_bytes(output)
-            self._raise_if_abandoned(record.id)
-            if process.returncode != 0:
-                raise RuntimeError("比較 PDF 生成失敗")
-
-        archive = job_dir / "download.zip"
-        self._write_archive(job_dir, archive)
+        stage = job_dir / "pdf-stage"
+        stage.mkdir(parents=True, exist_ok=True)
+        links = {
+            "pair": self.settings.comfy_input / batch_name / "pair",
+            "pair_mask": self.settings.comfy_input / batch_name / "pair_mask",
+            "result_firered": results / "firered",
+            "result_qwen2511_lanpaint": results / "qwen2511_lanpaint",
+            "result_flux2klein_lanpaint": results / "flux2klein_lanpaint",
+        }
+        for name, target in links.items():
+            link = stage / name
+            link.unlink(missing_ok=True)
+            link.symlink_to(target, target_is_directory=True)
+        pdf = results / f"{record.name}-三工作流對比.pdf"
+        process = await asyncio.create_subprocess_exec(
+            self.settings.python_bin,
+            str(self.settings.tools_root / "make_three_model_inpaint_compare_pdf.py"),
+            str(stage),
+            "-o",
+            str(pdf),
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.STDOUT,
+            start_new_session=True,
+        )
+        self.active_process = process
+        try:
+            output, _ = await process.communicate()
+        finally:
+            if self.active_process is process:
+                self.active_process = None
+        (logs / "pdf.log").write_bytes(output)
+        self._raise_if_abandoned(record.id)
+        if process.returncode != 0:
+            raise RuntimeError("比較 PDF 生成失敗")
 
     @staticmethod
     def _write_archive(job_dir: Path, archive: Path) -> None:

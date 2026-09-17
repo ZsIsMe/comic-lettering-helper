@@ -151,7 +151,7 @@ function ProjectWorkspace({ initial, initialError, gpuOwner, onExit, onReadyToLe
     try { const value = localStorage.getItem('comic-compare-layout'); return value === 'context' || value === 'cards' ? value : 'multi' } catch { return 'multi' }
   })
   const [pageIndex, setPageIndex] = useState(0); const [step, setStep] = useState(0)
-  const [workflow, setWorkflow] = useState<Workflow[]>(['flux2klein_lanpaint'])
+  const [workflow, setWorkflow] = useState<Workflow[]>(['flux2klein_lanpaint', 'firered'])
   const [run, setRun] = useState<Run | null>(null); const [runId, setRunId] = useState(initial.current_run_id)
   const [composition, setComposition] = useState<Composition | null>(null)
   const [assignment, setAssignment] = useState<number[][] | null>(null)
