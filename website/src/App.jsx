@@ -130,17 +130,58 @@ export default function App() {
         <div className="chapter-heading">
           <span>03</span>
           <div><p>FIRST START</p><h2>如何在 AutoDL 建立實例</h2></div>
-          <p>這一章會使用 AutoDL 頁面截圖，帶你從選擇鏡像走到開啟漫畫工作台。</p>
+          <p>從社區鏡像建立實例，選好顯卡並開機，大約一分鐘後即可進入漫畫工作台。</p>
         </div>
-        <div className="autodl-layout">
-          <Steps items={[
-            ['登入 AutoDL', '進入 AutoDL.art，登入或建立帳號。'],
-            ['選擇工作台鏡像', '找到指定的漫畫去字工作台鏡像。'],
-            ['建立並開機', '依照圖示選擇合適的 GPU，建立實例並等待啟動。'],
-            ['打開操作網頁', '從自訂服務進入 6008 網頁，開始建立項目。'],
-          ]} />
-          <ImagePlaceholder eyebrow="AUTODL.ART" title="建立實例畫面" detail="之後依操作順序補上平台截圖與標記" tone="autodl" />
-        </div>
+        <a className="autodl-entry" href="https://www.autodl.art/app/market" target="_blank" rel="noreferrer">
+          前往 AutoDL 鏡像市場 <span>autodl.art/app/market ↗</span>
+        </a>
+        <ol className="autodl-steps">
+          <li>
+            <div className="autodl-step-copy">
+              <span>STEP 01</span>
+              <h3>選擇社區鏡像</h3>
+              <p>點擊「使用非應用鏡像創建」，切換到「社區鏡像」，搜尋 <code>comic</code>。</p>
+              <p>選擇 <strong>ZsIsMe/comic-lettering-helper/comic-lettering-helper</strong>。</p>
+            </div>
+            <div className="autodl-shots two">
+              <a href={`${import.meta.env.BASE_URL}images/autodl-create-instance.png`} target="_blank" rel="noreferrer">
+                <img src={`${import.meta.env.BASE_URL}images/autodl-create-instance.png`} alt="AutoDL 建立實例頁面中的使用非應用鏡像創建入口" />
+              </a>
+              <a href={`${import.meta.env.BASE_URL}images/autodl-community-image.png`} target="_blank" rel="noreferrer">
+                <img src={`${import.meta.env.BASE_URL}images/autodl-community-image.png`} alt="在 AutoDL 社區鏡像搜尋 comic 並選擇漫畫工作台鏡像" />
+              </a>
+            </div>
+          </li>
+          <li>
+            <div className="autodl-step-copy">
+              <span>STEP 02</span>
+              <h3>選擇 32 GB 以上顯存</h3>
+              <p>推薦 <strong>4080(S)-32G</strong>，價格與速度較均衡；<strong>5090-32G</strong> 速度更快。</p>
+              <p>北京 B 區或西北 B 區皆可，依當時庫存選擇。<strong>無需擴容</strong>，直接建立並開機。</p>
+            </div>
+            <div className="autodl-shots two">
+              <a href={`${import.meta.env.BASE_URL}images/autodl-gpu-beijing.png`} target="_blank" rel="noreferrer">
+                <img src={`${import.meta.env.BASE_URL}images/autodl-gpu-beijing.png`} alt="AutoDL 北京 B 區的 32 GB 以上 GPU 選項" />
+              </a>
+              <a href={`${import.meta.env.BASE_URL}images/autodl-gpu-northwest.png`} target="_blank" rel="noreferrer">
+                <img src={`${import.meta.env.BASE_URL}images/autodl-gpu-northwest.png`} alt="AutoDL 西北 B 區的 32 GB 以上 GPU 選項" />
+              </a>
+            </div>
+          </li>
+          <li>
+            <div className="autodl-step-copy">
+              <span>STEP 03</span>
+              <h3>從 WebUI-6008 進入</h3>
+              <p>實例開機後等待約一分鐘，點擊「WebUI-6008」進入漫畫工作台。</p>
+              <aside><strong>順便一提</strong>：WebUI-6006 是對應的 ComfyUI 介面，裡面也提供單張操作的工作流。</aside>
+            </div>
+            <div className="autodl-shots">
+              <a href={`${import.meta.env.BASE_URL}images/autodl-webui.png`} target="_blank" rel="noreferrer">
+                <img src={`${import.meta.env.BASE_URL}images/autodl-webui.png`} alt="AutoDL 運行中的實例與 WebUI-6008 入口" />
+              </a>
+            </div>
+          </li>
+        </ol>
       </section>
 
       <section className="chapter flow-chapter" id="inpaint-flow">
