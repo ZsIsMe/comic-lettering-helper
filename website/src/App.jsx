@@ -187,7 +187,7 @@ export default function App() {
       <section className="chapter flow-chapter" id="inpaint-flow">
         <div className="chapter-heading">
           <span>04</span>
-          <div><p>HOW TO / INPAINT</p><h2>漫畫去字流程</h2></div>
+          <div><p>HOW TO / INPAINT</p><h2>漫畫去字流程（待補圖）</h2></div>
           <p>每一步只說明使用者要做的動作；模型與技術設定留在工作台內處理。</p>
         </div>
         <Steps items={inpaintSteps} />
@@ -196,7 +196,7 @@ export default function App() {
       <section className="chapter flow-chapter alternate" id="lettering-flow">
         <div className="chapter-heading">
           <span>05</span>
-          <div><p>HOW TO / LETTERING</p><h2>預排版流程</h2></div>
+          <div><p>HOW TO / LETTERING</p><h2>預排版流程（待補圖）</h2></div>
           <p>從漫畫與譯文開始，在瀏覽器中完成初步文字配置。</p>
         </div>
         <Steps items={letteringSteps} />

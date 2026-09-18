@@ -1,0 +1,55 @@
+name: 發布操作指南
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - website/**
+      - .github/workflows/pages.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: 讀取程式碼
+        uses: actions/checkout@v6
+
+      - name: 準備 Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: lts/*
+          cache: npm
+          cache-dependency-path: website/package-lock.json
+
+      - name: 安裝依賴
+        working-directory: website
+        run: npm ci
+
+      - name: 建置網站
+        working-directory: website
+        run: npm run build
+
+      - name: 準備 GitHub Pages
+        uses: actions/configure-pages@v6
+
+      - name: 上傳靜態網站
+        uses: actions/upload-pages-artifact@v5
+        with:
+          path: website/dist
+
+      - name: 發布 GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v5
