@@ -9,11 +9,21 @@ const inpaintSteps = [
 ]
 
 const letteringSteps = [
-  ['點擊「預排版」', '開啟 WebUI-6008 後，點擊頂部「預排版」，進入 LabelPlus 預排版工作台。', 'images/usage-entry-prelayout.png', '漫畫修圖項目頁面頂部的預排版入口'],
-  ['建立預排版', '上傳漫畫原圖，建立獨立的排版項目。'],
-  ['匯入並匹配譯文', '開啟 Meo.json 或匯入 LabelPlus 文字稿，匹配字級、顏色、中點位置與描邊。'],
-  ['在連續畫布調整', '直接查看前後頁，微調文字位置、字級、方向、旋轉與樣式。'],
-  ['生成 PSD', '導出 Meo.json，再使用配套 Photoshop 腳本生成可繼續編輯的 PSD。'],
+  ['點擊「預排版」', '開啟 WebUI-6008 後，點擊頂部「預排版」，進入 LabelPlus 預排版工作台。', 'images/usage-entry-prelayout.png', '漫畫修圖項目頁面頂部的預排版入口', 'compact'],
+  ['選擇圖片並命名', '輸入項目名稱，再選擇漫畫原圖或資料夾。資料夾只讀第一層；圖片與進度保存在預排版專用項目。', 'images/usage-prelayout-create.png', '新建預排版項目對話框，可輸入名稱並選擇圖片', 'compact'],
+  ['進行文字識別', '匯入完成後會詢問是否進行 CTD 識別，用來取得文字框與字級。識別需要一些時間，右側「偵測與字級」會顯示進度。', [
+    ['images/usage-prelayout-ctd.png', '圖片匯入後詢問是否進行 CTD 識別'],
+    ['images/usage-prelayout-progress.png', '右側偵測與字級面板顯示識別進度'],
+  ], null, 'pair'],
+  ['查看文字資訊', '識別完成後，打開上方「原圖對照」「去字底圖」「偵測框」，即可對照原圖與文字框資訊。此步只需查看。', 'images/usage-prelayout-inspect.png', '打開原圖對照、去字底圖與偵測框以查看文字資訊', 'stack'],
+  ['匯入 LabelPlus.txt', '點擊「匯入LP.txt」，匯入對應的譯文稿。若已有完成的 CTD 結果，會自動匹配本次頁面。', 'images/usage-prelayout-import.png', '工具列上的匯入 LP.txt 入口', 'compact'],
+  ['查看初步排版', '匯入後即可看到譯文已套上位置、字級與樣式的初步排版，之後可再微調。', 'images/usage-prelayout-result.png', '匯入譯文後的初步排版與原稿對照', 'stack'],
+  ['調整文字框', '點選文字後，可左右拖曳調整位置；畫面上的＋／－與旋轉鈕，或快捷鍵，都能改字級與方向。右側可修改文字內容、顏色，並加上描邊。', 'images/usage-prelayout-edit.png', '選中文字框後，可拖曳位置並在右側修改內容、顏色與描邊', 'stack'],
+  ['下載 Meo.json 與腳本', '全部調整完成後，下載 Meo.json 與配套 PS 腳本，並把 Meo.json 放到原圖資料夾中。', 'images/usage-prelayout-export.png', '工具列上的匯出 Meo.json 與配套 PS 腳本入口', 'compact'],
+  ['在 Photoshop 生成 PSD', '將配套腳本壓縮包解壓。開啟 Photoshop，選擇「檔案 → 指令碼 → 瀏覽」，執行解壓後的 LabelPlus_Ps_Script_ZS.jsx。在「Meo格式文本」選取已放到原圖資料夾的 Meo.json；塗白文件夾請選擇已經完成去字修復的圖片。執行後即可依先前排版生成 PSD。', [
+    ['images/usage-prelayout-ps.png', 'LabelPlus PS 腳本視窗中選擇 Meo.json'],
+    ['images/usage-prelayout-ps-clean.png', '塗白文件夾需選擇已完成去字修復的圖片'],
+  ], null, 'stack'],
 ]
 
 const edgeWhiteSteps = [
@@ -44,7 +54,7 @@ const tabs = {
     effectTitle: 'LabelPlus 預排版效果',
     effectDescription: '匯入譯文後自動匹配文字屬性，在連續畫布中快速檢查前後頁。',
     flowTitle: 'LabelPlus 預排版使用方式',
-    flowDescription: '從工作台「預排版」進入，在瀏覽器中完成初步文字配置。',
+    flowDescription: '從工作台「預排版」進入，識別文字、匯入譯文並微調後，完成初步排版。',
     steps: letteringSteps,
   },
   edgewhite: {
@@ -60,25 +70,42 @@ const tabs = {
   },
 }
 
+function getShots(image, alt) {
+  if (!image) return []
+  if (Array.isArray(image)) {
+    return image.map((item) => (Array.isArray(item) ? { src: item[0], alt: item[1] } : item))
+  }
+  return [{ src: image, alt }]
+}
+
 function Steps({ items }) {
   const illustrated = items.filter((item) => item[2]).length > 1
 
   return (
     <ol className={illustrated ? 'step-list illustrated' : 'step-list'}>
-      {items.map(([title, detail, image, alt], index) => (
-        <li key={title} className={image ? 'has-shot' : undefined}>
-          <span className="step-number">{String(index + 1).padStart(2, '0')}</span>
-          <div>
-            <h3>{title}</h3>
-            <p>{detail}</p>
-          </div>
-          {image ? (
-            <a href={`${import.meta.env.BASE_URL}${image}`} target="_blank" rel="noreferrer">
-              <img src={`${import.meta.env.BASE_URL}${image}`} alt={alt} />
-            </a>
-          ) : null}
-        </li>
-      ))}
+      {items.map(([title, detail, image, alt, fit], index) => {
+        const shots = getShots(image, alt)
+        const layout = fit || (shots.length > 1 ? 'pair' : undefined)
+
+        return (
+          <li key={title} className={shots.length ? `has-shot${layout ? ` shot-${layout}` : ''}` : undefined}>
+            <span className="step-number">{String(index + 1).padStart(2, '0')}</span>
+            <div>
+              <h3>{title}</h3>
+              <p>{detail}</p>
+            </div>
+            {shots.length ? (
+              <div className={['step-shots', layout].filter(Boolean).join(' ')}>
+                {shots.map((shot) => (
+                  <a key={shot.src} href={`${import.meta.env.BASE_URL}${shot.src}`} target="_blank" rel="noreferrer">
+                    <img src={`${import.meta.env.BASE_URL}${shot.src}`} alt={shot.alt} />
+                  </a>
+                ))}
+              </div>
+            ) : null}
+          </li>
+        )
+      })}
     </ol>
   )
 }
