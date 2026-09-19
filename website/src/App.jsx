@@ -1,179 +1,169 @@
-const chapters = [
-  { no: '01', href: '#inpaint-result', title: '漫畫去字效果', note: '看處理前後的實際差異' },
-  { no: '02', href: '#lettering-result', title: '預排版效果', note: '了解譯文如何落到漫畫頁面' },
-  { no: '03', href: '#autodl', title: '建立 AutoDL 實例', note: '從零開啟你的工作台' },
-  { no: '04', href: '#inpaint-flow', title: '漫畫去字流程', note: '準備、修復、挑選、導出' },
-  { no: '05', href: '#lettering-flow', title: '預排版流程', note: '匯入、調整、導出' },
-]
+import { useState } from 'react'
 
 const inpaintSteps = [
-  ['建立項目', '放入要處理的漫畫原圖；有 Mask 也可以一起上傳。'],
+  ['點擊「新建項目」', '開啟 WebUI-6008 後，預設停留在漫畫修圖項目。點擊右上角「新建項目」，開始建立去字修復項目。', 'images/usage-entry-inpaint.png', '漫畫修圖項目頁面右上角的新建項目入口'],
+  ['建立項目', '放入要處理的漫畫原圖；已有同名 Mask 也可以一起上傳。'],
   ['準備修補範圍', '使用自動檢測，再依需要以畫筆或選區調整。'],
   ['開始批量修復', '選擇修復方式，工作台會逐頁處理並保存進度。'],
   ['比較與導出', '挑選合適的候選，確認全部頁面後下載成品。'],
 ]
 
 const letteringSteps = [
+  ['點擊「預排版」', '開啟 WebUI-6008 後，點擊頂部「預排版」，進入 LabelPlus 預排版工作台。', 'images/usage-entry-prelayout.png', '漫畫修圖項目頁面頂部的預排版入口'],
   ['建立預排版', '上傳漫畫原圖，建立獨立的排版項目。'],
   ['匯入並匹配譯文', '開啟 Meo.json 或匯入 LabelPlus 文字稿，匹配字級、顏色、中點位置與描邊。'],
   ['在連續畫布調整', '直接查看前後頁，微調文字位置、字級、方向、旋轉與樣式。'],
   ['生成 PSD', '導出 Meo.json，再使用配套 Photoshop 腳本生成可繼續編輯的 PSD。'],
 ]
 
-function ImagePlaceholder({ eyebrow, title, detail, tone = 'warm' }) {
-  return (
-    <div className={`image-placeholder ${tone}`}>
-      <span>{eyebrow}</span>
-      <strong>{title}</strong>
-      <p>{detail}</p>
-      <small>圖片素材待補</small>
-    </div>
-  )
+const edgeWhiteSteps = [
+  ['點擊「邊緣塗白」', '開啟 WebUI-6008 後，點擊頂部「邊緣塗白」，進入邊緣塗白工作台並上傳漫畫圖片。', 'images/usage-entry-edgewhite.png', '漫畫修圖項目頁面頂部的邊緣塗白入口'],
+  ['從四周拉出分割線', '從頁面四邊拖出分割線。每個方向都可以依需求拉多條，用來隔開頁眉、頁腳、黑邊或其他多餘資訊。', 'images/usage-edgewhite-guides.png', '從漫畫頁面四周拉出水平與垂直分割線'],
+  ['尋找合適位置', '點擊頂部方向按鈕，讓分割線吸附到附近的空白分界。也可以用滑鼠拖曳，或 Option／Alt + 方向鍵微調；右側會即時預覽。', 'images/usage-edgewhite-snap.png', '使用方向按鈕讓分割線找到合適位置'],
+  ['點選區域塗白', '點擊分割後的區域即可塗白該處；再點一次即可取消。', 'images/usage-edgewhite-fill.png', '點選分割區域塗白，右側顯示輸出預覽'],
+  ['保存與下載', '確認本頁後按「保存並下一頁」。全部頁面完成後，再下載整批結果。', 'images/usage-edgewhite-save.png', '保存並下一頁與下載整批結果按鈕'],
+]
+
+const tabs = {
+  inpaint: {
+    label: '漫畫去字修復',
+    kicker: 'COMIC INPAINT',
+    title: '清除漫畫文字，保留完整畫面。',
+    intro: '自動檢測修補範圍，依序執行多套修復流程，再挑選最合適的結果。',
+    effectTitle: '漫畫去字修復效果',
+    effectDescription: '同一組漫畫依序比較原圖與三套修復結果。粉紅色區域代表需要處理的位置。',
+    flowTitle: '漫畫去字修復使用方式',
+    flowDescription: '從工作台「新建項目」進入，完成檢測、修復、比較與成品導出。',
+    steps: inpaintSteps,
+  },
+  lettering: {
+    label: 'LabelPlus 預排版',
+    kicker: 'LABELPLUS PRELAYOUT',
+    title: '快速為 LabelPlus 翻譯稿進行基礎排版。',
+    intro: '自動匹配原文字的大小、顏色與描邊，讓譯文在氣泡內居中。手動編輯後生成 PSD。',
+    effectTitle: 'LabelPlus 預排版效果',
+    effectDescription: '匯入譯文後自動匹配文字屬性，在連續畫布中快速檢查前後頁。',
+    flowTitle: 'LabelPlus 預排版使用方式',
+    flowDescription: '從工作台「預排版」進入，在瀏覽器中完成初步文字配置。',
+    steps: letteringSteps,
+  },
+  edgewhite: {
+    label: '邊緣塗白',
+    kicker: 'EDGE WHITE',
+    title: '清理漫畫四邊的無用資訊。',
+    intro: '用參考線尋找空白分界，保留正文與伸出畫框的內容，逐格清理頁面邊緣。',
+    effectTitle: '邊緣塗白效果',
+    effectDescription: '左側放置參考線並選取網格，右側即時預覽塗白結果；保持原尺寸，只塗白選中格子。',
+    flowTitle: '邊緣塗白使用方式',
+    flowDescription: '從工作台「邊緣塗白」進入，拉線、吸附、點選塗白後保存下載。',
+    steps: edgeWhiteSteps,
+  },
 }
 
 function Steps({ items }) {
+  const illustrated = items.filter((item) => item[2]).length > 1
+
   return (
-    <ol className="step-list">
-      {items.map(([title, detail], index) => (
-        <li key={title}>
+    <ol className={illustrated ? 'step-list illustrated' : 'step-list'}>
+      {items.map(([title, detail, image, alt], index) => (
+        <li key={title} className={image ? 'has-shot' : undefined}>
           <span className="step-number">{String(index + 1).padStart(2, '0')}</span>
           <div>
             <h3>{title}</h3>
             <p>{detail}</p>
           </div>
+          {image ? (
+            <a href={`${import.meta.env.BASE_URL}${image}`} target="_blank" rel="noreferrer">
+              <img src={`${import.meta.env.BASE_URL}${image}`} alt={alt} />
+            </a>
+          ) : null}
         </li>
       ))}
     </ol>
   )
 }
 
-export default function App() {
+function InpaintEffect() {
   return (
-    <main>
-      <header className="site-header">
-        <a className="brand" href="#top" aria-label="返回頁首">
-          <span className="brand-mark">漫</span>
-          <span>漫畫去字工作台<small>操作指南</small></span>
-        </a>
-        <nav aria-label="主要章節">
-          {chapters.map(item => <a key={item.no} href={item.href}>{item.no}</a>)}
-        </nav>
-        <a className="github-link" href="https://github.com/ZsIsMe/comic-lettering-helper">GitHub ↗</a>
-      </header>
+    <figure className="result-figure">
+      <a href={`${import.meta.env.BASE_URL}images/inpaint-comparison.jpg`} target="_blank" rel="noreferrer">
+        <img
+          src={`${import.meta.env.BASE_URL}images/inpaint-comparison.jpg`}
+          alt="原圖修復位置與 Flux 2 Klein、FireRed、Qwen Image Edit 三套漫畫去字效果比較"
+        />
+      </a>
+      <figcaption>
+        <span>實際處理對比</span>
+        <p>左起：原圖＋修復位置高亮、Flux 2 Klein、FireRed、Qwen Image Edit。</p>
+        <small>點擊放大 ↗</small>
+      </figcaption>
+    </figure>
+  )
+}
 
-      <section className="hero" id="top">
-        <div className="hero-copy">
-          <p className="kicker">COMIC WORKSPACE · START HERE</p>
-          <h1>使用強大的圖像編輯模型和AI工具，<br />完成漫畫去字與預排版。</h1>
-          <p className="hero-intro">從建立 AutoDL 實例開始，跟著圖片和簡單步驟完成整套操作。</p>
-          <a className="primary-link" href="#inpaint-result">開始閱讀 <span>↓</span></a>
-        </div>
-        <div className="hero-index" aria-label="本頁內容">
-          <p>本頁內容</p>
-          {chapters.map(item => (
-            <a key={item.no} href={item.href}>
-              <b>{item.no}</b>
-              <span><strong>{item.title}</strong><small>{item.note}</small></span>
-            </a>
-          ))}
-        </div>
-      </section>
+function LetteringEffect() {
+  return (
+    <div className="lettering-stage">
+      <a className="lettering-preview" href={`${import.meta.env.BASE_URL}images/prelayout-effect.jpg`} target="_blank" rel="noreferrer">
+        <img
+          src={`${import.meta.env.BASE_URL}images/prelayout-effect.jpg`}
+          alt="漫畫預排版連續畫布，左側顯示原稿，右側顯示匹配位置與樣式後的文字框"
+        />
+        <span>點擊查看原尺寸 ↗</span>
+      </a>
+      <aside>
+        <p>自動匹配內容</p>
+        <ul>
+          <li>文字大小與中點位置</li>
+          <li>文字顏色與描邊設定</li>
+          <li>連續畫布集中調整屬性</li>
+          <li>配套腳本生成 PSD</li>
+        </ul>
+      </aside>
+    </div>
+  )
+}
 
-      <section className="chapter result-chapter" id="inpaint-result">
-        <div className="chapter-heading">
-          <span>01</span>
-          <div><p>RESULT / INPAINT</p><h2>漫畫去字效果</h2></div>
-          <p>同一組漫畫依序比較原圖與三套修復結果。粉紅色區域代表需要處理的位置，點擊圖片可查看原尺寸。</p>
-        </div>
-        <figure className="result-figure">
-          <a href={`${import.meta.env.BASE_URL}images/inpaint-comparison.jpg`} target="_blank" rel="noreferrer">
-            <img
-              src={`${import.meta.env.BASE_URL}images/inpaint-comparison.jpg`}
-              alt="原圖修復位置與 Flux 2 Klein、FireRed、Qwen Image Edit 三套漫畫去字效果比較"
-            />
-          </a>
-          <figcaption>
-            <span>實際處理對比</span>
-            <p>左起：原圖＋修復位置高亮、Flux 2 Klein、FireRed、Qwen Image Edit。</p>
-            <small>點擊放大 ↗</small>
-          </figcaption>
-        </figure>
-      </section>
+function EdgeWhiteEffect() {
+  return (
+    <figure className="result-figure">
+      <a href={`${import.meta.env.BASE_URL}images/edgewhite-effect.png`} target="_blank" rel="noreferrer">
+        <img
+          src={`${import.meta.env.BASE_URL}images/edgewhite-effect.png`}
+          alt="邊緣塗白工作台：左側編輯畫面放置參考線，右側即時顯示塗白輸出預覽"
+        />
+      </a>
+      <figcaption>
+        <span>實際處理對比</span>
+        <p>左為編輯畫面與參考線，右為保持原尺寸的塗白輸出預覽。</p>
+        <small>點擊放大 ↗</small>
+      </figcaption>
+    </figure>
+  )
+}
 
-      <section className="chapter lettering-result" id="lettering-result">
-        <div className="chapter-heading">
-          <span>02</span>
-          <div><p>RESULT / LETTERING</p><h2>預排版效果</h2></div>
-          <p>自動匹配原文字的大小、顏色、中點位置與描邊，再到連續畫布中快速檢查和調整。</p>
-        </div>
-        <div className="lettering-stage">
-          <a className="lettering-preview" href={`${import.meta.env.BASE_URL}images/prelayout-effect.jpg`} target="_blank" rel="noreferrer">
-            <img
-              src={`${import.meta.env.BASE_URL}images/prelayout-effect.jpg`}
-              alt="漫畫預排版連續畫布，左側顯示原稿，右側顯示匹配位置與樣式後的文字框"
-            />
-            <span>點擊查看原尺寸 ↗</span>
-          </a>
-          <aside>
-            <p>自動匹配內容</p>
-            <ul>
-              <li>文字大小與中點位置</li>
-              <li>文字顏色與描邊設定</li>
-              <li>連續畫布集中調整屬性</li>
-              <li>配套腳本生成 PSD</li>
-            </ul>
-          </aside>
-        </div>
-      </section>
-
+function AutoDLSection({ activeTab }) {
+  if (activeTab !== 'inpaint') {
+    const isLettering = activeTab === 'lettering'
+    return (
       <section className="chapter autodl-chapter" id="autodl">
         <div className="chapter-heading">
-          <span>03</span>
-          <div><p>FIRST START</p><h2>如何在 AutoDL 建立實例</h2></div>
-          <p>從社區鏡像建立實例，選好顯卡並開機，大約一分鐘後即可進入漫畫工作台。</p>
+          <span>02</span>
+          <div><p>EXISTING INSTANCE</p><h2>使用既有實例</h2></div>
+          <p>三個工具已整合在同一個 WebUI-6008，建立一次即可使用全部功能。</p>
         </div>
-        <a className="autodl-entry" href="https://www.autodl.art/app/market" target="_blank" rel="noreferrer">
-          前往 AutoDL 鏡像市場 <span>autodl.art/app/market ↗</span>
-        </a>
         <ol className="autodl-steps">
           <li>
             <div className="autodl-step-copy">
-              <span>STEP 01</span>
-              <h3>選擇社區鏡像</h3>
-              <p>點擊「使用非應用鏡像創建」，切換到「社區鏡像」，搜尋 <code>comic</code>。</p>
-              <p>選擇 <strong>ZsIsMe/comic-lettering-helper/comic-lettering-helper</strong>。</p>
-            </div>
-            <div className="autodl-shots two">
-              <a href={`${import.meta.env.BASE_URL}images/autodl-create-instance.png`} target="_blank" rel="noreferrer">
-                <img src={`${import.meta.env.BASE_URL}images/autodl-create-instance.png`} alt="AutoDL 建立實例頁面中的使用非應用鏡像創建入口" />
-              </a>
-              <a href={`${import.meta.env.BASE_URL}images/autodl-community-image.png`} target="_blank" rel="noreferrer">
-                <img src={`${import.meta.env.BASE_URL}images/autodl-community-image.png`} alt="在 AutoDL 社區鏡像搜尋 comic 並選擇漫畫工作台鏡像" />
-              </a>
-            </div>
-          </li>
-          <li>
-            <div className="autodl-step-copy">
-              <span>STEP 02</span>
-              <h3>選擇 32 GB 以上顯存</h3>
-              <p>推薦 <strong>4080(S)-32G</strong>，價格與速度較均衡；<strong>5090-32G</strong> 速度更快。</p>
-              <p>北京 B 區或西北 B 區皆可，依當時庫存選擇。<strong>無需擴容</strong>，直接建立並開機。</p>
-            </div>
-            <div className="autodl-shots two">
-              <a href={`${import.meta.env.BASE_URL}images/autodl-gpu-beijing.png`} target="_blank" rel="noreferrer">
-                <img src={`${import.meta.env.BASE_URL}images/autodl-gpu-beijing.png`} alt="AutoDL 北京 B 區的 32 GB 以上 GPU 選項" />
-              </a>
-              <a href={`${import.meta.env.BASE_URL}images/autodl-gpu-northwest.png`} target="_blank" rel="noreferrer">
-                <img src={`${import.meta.env.BASE_URL}images/autodl-gpu-northwest.png`} alt="AutoDL 西北 B 區的 32 GB 以上 GPU 選項" />
-              </a>
-            </div>
-          </li>
-          <li>
-            <div className="autodl-step-copy">
-              <span>STEP 03</span>
-              <h3>從 WebUI-6008 進入</h3>
-              <p>實例開機後等待約一分鐘，點擊「WebUI-6008」進入漫畫工作台。</p>
-              <aside><strong>順便一提</strong>：WebUI-6006 是對應的 ComfyUI 介面，裡面也提供單張操作的工作流。</aside>
+              <span>READY TO USE</span>
+              <h3>無需重新建立或配置</h3>
+              <p>若已依照「漫畫去字修復」建立 AutoDL 實例，無需重新建立實例、選擇顯卡或配置環境。</p>
+              <p>直接從 WebUI-6008 切換到「{isLettering ? 'LabelPlus 預排版' : '邊緣塗白'}」即可使用。</p>
+              {isLettering ? (
+                <aside>若只使用 LabelPlus 預排版，普通 NVIDIA 顯卡即可；推薦使用個人電腦私有化部署，減少長期租用雲端顯卡的費用。</aside>
+              ) : (
+                <aside>邊緣塗白本身不使用 GPU；推薦使用個人電腦私有化部署，日常使用更省錢。</aside>
+              )}
             </div>
             <div className="autodl-shots">
               <a href={`${import.meta.env.BASE_URL}images/autodl-webui.png`} target="_blank" rel="noreferrer">
@@ -183,27 +173,147 @@ export default function App() {
           </li>
         </ol>
       </section>
+    )
+  }
 
-      <section className="chapter flow-chapter" id="inpaint-flow">
-        <div className="chapter-heading">
-          <span>04</span>
-          <div><p>HOW TO / INPAINT</p><h2>漫畫去字流程（待補圖）</h2></div>
-          <p>每一步只說明使用者要做的動作；模型與技術設定留在工作台內處理。</p>
+  return (
+    <section className="chapter autodl-chapter" id="autodl">
+      <div className="chapter-heading">
+        <span>02</span>
+        <div><p>FIRST START</p><h2>建立 AutoDL 實例</h2></div>
+        <p>從社區鏡像建立實例，選好顯卡並開機，大約一分鐘後即可進入日漫嵌字好幫手。</p>
+      </div>
+      <a className="autodl-entry" href="https://www.autodl.art/app/market" target="_blank" rel="noreferrer">
+        前往 AutoDL 鏡像市場 <span>autodl.art/app/market ↗</span>
+      </a>
+      <ol className="autodl-steps">
+        <li>
+          <div className="autodl-step-copy">
+            <span>STEP 01</span>
+            <h3>選擇社區鏡像</h3>
+            <p>點擊「使用非應用鏡像創建」，切換到「社區鏡像」，搜尋 <code>comic</code>。</p>
+            <p>選擇 <strong>ZsIsMe/comic-lettering-helper/comic-lettering-helper</strong>。</p>
+          </div>
+          <div className="autodl-shots two">
+            <a href={`${import.meta.env.BASE_URL}images/autodl-create-instance.png`} target="_blank" rel="noreferrer">
+              <img src={`${import.meta.env.BASE_URL}images/autodl-create-instance.png`} alt="AutoDL 建立實例頁面中的使用非應用鏡像創建入口" />
+            </a>
+            <a href={`${import.meta.env.BASE_URL}images/autodl-community-image.png`} target="_blank" rel="noreferrer">
+              <img src={`${import.meta.env.BASE_URL}images/autodl-community-image.png`} alt="在 AutoDL 社區鏡像搜尋 comic 並選擇日漫嵌字好幫手鏡像" />
+            </a>
+          </div>
+        </li>
+        <li>
+          <div className="autodl-step-copy">
+            <span>STEP 02</span>
+            <h3>選擇 32 GB 以上顯存</h3>
+            <p>推薦 <strong>4080(S)-32G</strong>，價格與速度較均衡；<strong>5090-32G</strong> 速度更快。</p>
+            <p>北京 B 區或西北 B 區皆可，依當時庫存選擇。<strong>無需擴容</strong>，直接建立並開機。</p>
+          </div>
+          <div className="autodl-shots two">
+            <a href={`${import.meta.env.BASE_URL}images/autodl-gpu-beijing.png`} target="_blank" rel="noreferrer">
+              <img src={`${import.meta.env.BASE_URL}images/autodl-gpu-beijing.png`} alt="AutoDL 北京 B 區的 32 GB 以上 GPU 選項" />
+            </a>
+            <a href={`${import.meta.env.BASE_URL}images/autodl-gpu-northwest.png`} target="_blank" rel="noreferrer">
+              <img src={`${import.meta.env.BASE_URL}images/autodl-gpu-northwest.png`} alt="AutoDL 西北 B 區的 32 GB 以上 GPU 選項" />
+            </a>
+          </div>
+        </li>
+        <li>
+          <div className="autodl-step-copy">
+            <span>STEP 03</span>
+            <h3>從 WebUI-6008 進入</h3>
+            <p>實例開機後等待約一分鐘，點擊「WebUI-6008」進入日漫嵌字好幫手。</p>
+            <aside><strong>順便一提</strong>：WebUI-6006 是對應的 ComfyUI 介面，裡面也提供單張操作的工作流。</aside>
+          </div>
+          <div className="autodl-shots">
+            <a href={`${import.meta.env.BASE_URL}images/autodl-webui.png`} target="_blank" rel="noreferrer">
+              <img src={`${import.meta.env.BASE_URL}images/autodl-webui.png`} alt="AutoDL 運行中的實例與 WebUI-6008 入口" />
+            </a>
+          </div>
+        </li>
+      </ol>
+    </section>
+  )
+}
+
+export default function App() {
+  const [activeTab, setActiveTab] = useState('inpaint')
+  const active = tabs[activeTab]
+
+  function selectTab(key) {
+    setActiveTab(key)
+    window.scrollTo({ top: 0, behavior: 'smooth' })
+  }
+
+  return (
+    <main>
+      <header className="site-header">
+        <a className="brand" href="#top" aria-label="返回頁首">
+          <span className="brand-mark">漫</span>
+          <span>日漫嵌字好幫手<small>操作指南</small></span>
+        </a>
+        <nav className="tool-tabs" aria-label="功能選擇">
+          {Object.entries(tabs).map(([key, tab]) => (
+            <button
+              key={key}
+              type="button"
+              className={activeTab === key ? 'active' : ''}
+              aria-pressed={activeTab === key}
+              onClick={() => selectTab(key)}
+            >
+              {tab.label}
+            </button>
+          ))}
+        </nav>
+        <a className="github-link" href="https://github.com/ZsIsMe/comic-lettering-helper">GitHub ↗</a>
+      </header>
+
+      <section className="hero" id="top">
+        <div className="hero-copy">
+          <p className="kicker">{active.kicker} · START HERE</p>
+          <h1>{active.title}</h1>
+          <p className="hero-intro">{active.intro}</p>
+          <a className="primary-link" href="#effect">開始閱讀 <span>↓</span></a>
         </div>
-        <Steps items={inpaintSteps} />
+        <div className="hero-index" aria-label="本頁內容">
+          <p>{active.label} · 本頁內容</p>
+          <a href="#effect"><b>01</b><span><strong>效果</strong><small>查看實際用途與處理結果</small></span></a>
+          <a href="#autodl">
+            <b>02</b>
+            <span>
+              <strong>{activeTab === 'inpaint' ? '建立 AutoDL 實例' : '使用既有實例'}</strong>
+              <small>{activeTab === 'inpaint' ? '從社區鏡像開啟工作台' : '無需重新建立或配置環境'}</small>
+            </span>
+          </a>
+          <a href="#usage"><b>03</b><span><strong>使用方式</strong><small>跟著步驟完成整套操作</small></span></a>
+        </div>
       </section>
 
-      <section className="chapter flow-chapter alternate" id="lettering-flow">
+      <section className={`chapter result-chapter ${activeTab === 'lettering' ? 'lettering-result' : ''}`} id="effect">
         <div className="chapter-heading">
-          <span>05</span>
-          <div><p>HOW TO / LETTERING</p><h2>預排版流程（待補圖）</h2></div>
-          <p>從漫畫與譯文開始，在瀏覽器中完成初步文字配置。</p>
+          <span>01</span>
+          <div><p>RESULT / {active.kicker}</p><h2>{active.effectTitle}</h2></div>
+          <p>{active.effectDescription}</p>
         </div>
-        <Steps items={letteringSteps} />
+        {activeTab === 'inpaint' && <InpaintEffect />}
+        {activeTab === 'lettering' && <LetteringEffect />}
+        {activeTab === 'edgewhite' && <EdgeWhiteEffect />}
+      </section>
+
+      <AutoDLSection activeTab={activeTab} />
+
+      <section className={`chapter flow-chapter ${activeTab === 'lettering' ? 'alternate' : ''}`} id="usage">
+        <div className="chapter-heading">
+          <span>03</span>
+          <div><p>HOW TO / {active.kicker}</p><h2>{active.flowTitle}</h2></div>
+          <p>{active.flowDescription}</p>
+        </div>
+        <Steps items={active.steps} />
       </section>
 
       <footer>
-        <div><span className="brand-mark">漫</span><strong>漫畫去字工作台</strong></div>
+        <div><span className="brand-mark">漫</span><strong>日漫嵌字好幫手</strong></div>
         <p>這是一份面向使用者的操作指南，內容與圖片將持續補充。</p>
         <a href="#top">回到頁首 ↑</a>
       </footer>

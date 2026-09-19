@@ -64,24 +64,33 @@ body::before {
   transform: rotate(-2deg);
 }
 
-.site-header nav { display: flex; align-items: center; gap: 7px; }
-.site-header nav a {
-  display: grid;
-  place-items: center;
-  width: 33px;
-  height: 33px;
-  border: 1px solid transparent;
-  border-radius: 50%;
+.tool-tabs { display: flex; align-items: stretch; align-self: stretch; gap: 0; }
+.tool-tabs button {
+  position: relative;
+  padding: 0 22px;
+  border: 0;
+  background: transparent;
   color: var(--muted);
-  font: 700 11px ui-monospace, monospace;
-  transition: border-color .18s ease, background .18s ease, color .18s ease;
+  cursor: pointer;
+  font: 700 14px var(--sans);
+  transition: background .18s ease, color .18s ease;
 }
-.site-header nav a:hover, .site-header nav a:focus-visible {
-  border-color: var(--ink);
-  background: var(--paper-light);
-  color: var(--ink);
-  outline: none;
+.tool-tabs button::after {
+  position: absolute;
+  right: 22px;
+  bottom: 0;
+  left: 22px;
+  height: 3px;
+  background: var(--orange);
+  content: "";
+  opacity: 0;
+  transform: scaleX(.45);
+  transition: opacity .18s ease, transform .18s ease;
 }
+.tool-tabs button:hover { background: rgba(250, 247, 239, .58); color: var(--ink); }
+.tool-tabs button:focus-visible { outline: 2px solid var(--orange); outline-offset: -4px; }
+.tool-tabs button.active { color: var(--ink); }
+.tool-tabs button.active::after { opacity: 1; transform: scaleX(1); }
 .github-link { justify-self: end; padding-bottom: 3px; border-bottom: 1px solid var(--ink); font-size: 13px; }
 
 .hero {
@@ -410,6 +419,57 @@ body::before {
   font-size: 12px;
 }
 .flow-chapter .step-list h3 { margin-top: 74px; }
+.flow-chapter .step-list li.has-shot {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: 56px minmax(260px, .52fr) minmax(0, 1.48fr);
+  gap: 8px 28px;
+  align-items: center;
+  min-height: 0;
+  margin-bottom: 22px;
+  padding: 28px 32px;
+  border-right: 1px solid var(--ink);
+}
+.flow-chapter .step-list li.has-shot::after {
+  top: auto;
+  right: auto;
+  bottom: -11px;
+  left: 50%;
+  transform: translateX(-50%);
+  content: "↓";
+}
+.flow-chapter .step-list li.has-shot .step-number { align-self: start; }
+.flow-chapter .step-list li.has-shot h3 { margin-top: 8px; }
+.flow-chapter .step-list li.has-shot a {
+  display: grid;
+  min-height: 168px;
+  place-items: center;
+  padding: 16px 18px;
+  border: 1px solid #aaa397;
+  background:
+    linear-gradient(rgba(31, 33, 30, .035) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(31, 33, 30, .035) 1px, transparent 1px),
+    var(--paper-light);
+  background-size: 18px 18px;
+}
+.flow-chapter .step-list li.has-shot img {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  border: 1px solid #ded9d0;
+  box-shadow: 0 12px 28px rgba(31, 33, 30, .11);
+  transition: transform .2s ease;
+}
+.flow-chapter .step-list li.has-shot a:hover img { transform: scale(1.012); }
+.flow-chapter .step-list li.has-shot a:focus-visible { outline: 3px solid var(--orange); outline-offset: -3px; }
+.flow-chapter .step-list.illustrated {
+  grid-template-columns: minmax(0, 1fr);
+  gap: 18px;
+}
+.flow-chapter .step-list.illustrated li.has-shot {
+  margin-bottom: 0;
+}
+.flow-chapter .step-list.illustrated li.has-shot a { min-height: 0; }
 .flow-chapter.alternate { background: #d7e0dc; }
 .flow-chapter.alternate .step-list li:not(:last-child)::after { background: #d7e0dc; }
 .flow-chapter.alternate .step-number { background: var(--teal); }
