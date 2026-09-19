@@ -1,11 +1,56 @@
 import { useState } from 'react'
 
 const inpaintSteps = [
-  ['點擊「新建項目」', '開啟 WebUI-6008 後，預設停留在漫畫修圖項目。點擊右上角「新建項目」，開始建立去字修復項目。', 'images/usage-entry-inpaint.png', '漫畫修圖項目頁面右上角的新建項目入口'],
-  ['建立項目', '放入要處理的漫畫原圖；已有同名 Mask 也可以一起上傳。'],
-  ['準備修補範圍', '使用自動檢測，再依需要以畫筆或選區調整。'],
-  ['開始批量修復', '選擇修復方式，工作台會逐頁處理並保存進度。'],
-  ['比較與導出', '挑選合適的候選，確認全部頁面後下載成品。'],
+  ['點擊「新建項目」', '開啟 WebUI-6008 後，預設停留在漫畫修圖項目。點擊右上角「新建項目」，開始建立去字修復項目。', 'images/usage-entry-inpaint.png', '漫畫修圖項目頁面右上角的新建項目入口', 'compact'],
+  ['填寫名稱並選圖', '輸入項目名稱，選擇漫畫原圖；Mask 可選。不清楚的設定維持預設即可，然後按「建立項目」。', 'images/usage-inpaint-create.png', '新建漫畫項目對話框：填寫名稱並選擇原圖', 'stack'],
+  ['等待文字區域識別', '建立後會自動檢測缺少 Mask 的頁面。請等候文字區域識別完成，畫面會顯示已運行時間與預估剩餘時間。', 'images/usage-inpaint-detect.png', '準備與編輯步驟顯示文字區域識別進度', 'compact'],
+  ['查看並修改識別結果', {
+    lead: '左側是可編輯的 Mask／原圖，右側是即時填色預覽。識別結果可直接在畫面上修改。',
+    keys: [
+      { color: '#ffffff', label: '白色 · 純色填充', text: '氣泡等可直接塗白的區域。' },
+      { color: '#ff6ea5', label: '粉紅色 · 待修補', text: '需交給模型修復的文字或複雜區域。' },
+    ],
+    rect: '先選 F1 純色填充或 F2 待修補，再拖出矩形。',
+    section: '矩形框選',
+    ops: [
+      ['添加', '把框內加入當前類別。'],
+      ['減去', '移除框內當前類別。'],
+      ['右鍵框選', '清除框內兩類 Mask。'],
+      ['Cmd／Ctrl＋右鍵', '把框內白色與粉紅色對調。'],
+    ],
+  }, 'images/usage-inpaint-mask.png', '識別完成後的 Mask 編輯畫面：左側白色為純色填充，粉紅色為待修補', 'stack'],
+  ['點擊「下一步」', 'Mask 確認後，點擊右上角「下一步」，進入批量修復。', 'images/usage-inpaint-next.png', '準備與編輯步驟右上角的下一步按鈕', 'compact'],
+  ['選擇修復方式並開始', '勾選要使用的修復流程，再按「開始批量修復」。可只選一套，也可多選；多套會依序執行。不清楚時維持預設即可。', 'images/usage-inpaint-batch.png', '批量修復頁面勾選流程並開始批量修復', 'stack'],
+  ['等待修復結果', '開始後請等候任務完成，畫面會顯示已運行時間與進度。刷新網頁不會中斷後台任務。', 'images/usage-inpaint-running.png', '批量修復進行中，顯示已運行時間與進度', 'stack'],
+  ['下載結果並進入合成', '全部完成後，可先按「下載候選結果」保存各套修復結果；再點「比較與局部合成」，進入合成頁面。', 'images/usage-inpaint-done.png', '全部完成後可下載候選結果，或進入比較與局部合成', 'compact'],
+  ['用三種方式合成成品', {
+    lead: '進入合成頁後，用右上角選單切換比較方式。三種方式都能組出想要的圖，切換不會丟掉已挑選的結果。',
+    menu: {
+      src: 'images/usage-inpaint-compose-menu.png',
+      alt: '比較模式選單：多圖對比、整體＋局部、區域卡片',
+    },
+    methods: [
+      {
+        label: '多圖對比',
+        text: '並排查看合成結果與各套修復，適合整頁比較。',
+        src: 'images/usage-inpaint-compose-multi.png',
+        alt: '多圖對比：並排查看合成結果與各套修復',
+      },
+      {
+        label: '整體＋局部',
+        text: '上方看整頁，下方逐區比較，點選採用該區域。',
+        src: 'images/usage-inpaint-compose-context.png',
+        alt: '整體＋局部：上方整頁，下方逐區挑選候選',
+      },
+      {
+        label: '區域卡片',
+        text: '把各修補區域排成卡片，合成結果可拖動對照。',
+        src: 'images/usage-inpaint-compose-cards.png',
+        alt: '區域卡片：各修補區域排成卡片，合成結果可拖動',
+      },
+    ],
+  }],
+  ['確認後導出結果', '每一頁確認完成後，「待確認」會變成 0。此時按右上角「導出結果」，即可下載成品。', 'images/usage-inpaint-export.png', '待確認為 0 時，可按右上角導出結果', 'compact'],
 ]
 
 const letteringSteps = [
@@ -78,27 +123,95 @@ function getShots(image, alt) {
   return [{ src: image, alt }]
 }
 
+function shotHref(src) {
+  return `${import.meta.env.BASE_URL}${src}`
+}
+
+function StepDetail({ detail }) {
+  if (typeof detail === 'string') return <p>{detail}</p>
+
+  return (
+    <div className="step-guide">
+      {detail.lead ? <p>{detail.lead}</p> : null}
+      {detail.menu ? (
+        <a className="step-menu-shot" href={shotHref(detail.menu.src)} target="_blank" rel="noreferrer">
+          <img src={shotHref(detail.menu.src)} alt={detail.menu.alt} />
+        </a>
+      ) : null}
+      {detail.keys?.length ? (
+        <ul className="step-keys">
+          {detail.keys.map((item) => (
+            <li key={item.label}>
+              {item.color ? <span className="step-key-swatch" style={{ background: item.color }} aria-hidden="true" /> : null}
+              <div>
+                <strong>{item.label}</strong>
+                <span>{item.text}</span>
+              </div>
+            </li>
+          ))}
+        </ul>
+      ) : null}
+      {detail.ops ? (
+        <div className="step-ops">
+          {detail.section ? <p>{detail.section}</p> : null}
+          {detail.rect ? <p>{detail.rect}</p> : null}
+          <dl>
+            {detail.ops.map(([term, desc]) => (
+              <div key={term}>
+                <dt>{term}</dt>
+                <dd>{desc}</dd>
+              </div>
+            ))}
+          </dl>
+        </div>
+      ) : null}
+      {detail.methods ? (
+        <ol className="step-methods">
+          {detail.methods.map((method, index) => (
+            <li key={method.label}>
+              <div className="step-method-copy">
+                <span>方式 {String(index + 1).padStart(2, '0')}</span>
+                <h4>{method.label}</h4>
+                <p>{method.text}</p>
+              </div>
+              <a className="step-method-shot" href={shotHref(method.src)} target="_blank" rel="noreferrer">
+                <img src={shotHref(method.src)} alt={method.alt} />
+              </a>
+            </li>
+          ))}
+        </ol>
+      ) : null}
+    </div>
+  )
+}
+
 function Steps({ items }) {
-  const illustrated = items.filter((item) => item[2]).length > 1
+  const illustrated = items.filter((item) => item[2] || (typeof item[1] === 'object' && item[1]?.methods)).length > 1
 
   return (
     <ol className={illustrated ? 'step-list illustrated' : 'step-list'}>
       {items.map(([title, detail, image, alt, fit], index) => {
         const shots = getShots(image, alt)
-        const layout = fit || (shots.length > 1 ? 'pair' : undefined)
+        const hasMethods = typeof detail === 'object' && detail?.methods
+        const layout = hasMethods ? 'stack' : fit || (shots.length > 1 ? 'pair' : undefined)
+        const itemClass = [
+          shots.length || hasMethods ? 'has-shot' : '',
+          layout ? `shot-${layout}` : '',
+          hasMethods ? 'shot-methods' : '',
+        ].filter(Boolean).join(' ') || undefined
 
         return (
-          <li key={title} className={shots.length ? `has-shot${layout ? ` shot-${layout}` : ''}` : undefined}>
+          <li key={title} className={itemClass}>
             <span className="step-number">{String(index + 1).padStart(2, '0')}</span>
-            <div>
+            <div className="step-copy">
               <h3>{title}</h3>
-              <p>{detail}</p>
+              <StepDetail detail={detail} />
             </div>
             {shots.length ? (
               <div className={['step-shots', layout].filter(Boolean).join(' ')}>
                 {shots.map((shot) => (
-                  <a key={shot.src} href={`${import.meta.env.BASE_URL}${shot.src}`} target="_blank" rel="noreferrer">
-                    <img src={`${import.meta.env.BASE_URL}${shot.src}`} alt={shot.alt} />
+                  <a key={shot.src} href={shotHref(shot.src)} target="_blank" rel="noreferrer">
+                    <img src={shotHref(shot.src)} alt={shot.alt} />
                   </a>
                 ))}
               </div>
