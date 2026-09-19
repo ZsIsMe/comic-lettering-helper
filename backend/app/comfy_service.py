@@ -11,9 +11,10 @@ import threading
 import time
 import urllib.error
 import urllib.request
-from urllib.parse import urlsplit
 
 from fastapi import APIRouter, HTTPException, Request
+
+from .request_security import same_page_request
 
 
 class ComfyService:
@@ -156,8 +157,7 @@ def router(service):
     def restart(request: Request):
         if request.headers.get("x-comic-service") != "1":
             raise HTTPException(403, "請從網頁的重啟按鈕操作")
-        origin = request.headers.get("origin")
-        if origin and urlsplit(origin).netloc != request.headers.get("host"):
+        if not same_page_request(request):
             raise HTTPException(403, "重啟要求必須來自同一個網頁")
         return service.launch()
 

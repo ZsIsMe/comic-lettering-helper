@@ -394,6 +394,8 @@ PNG 已是壓縮格式，ZIP 使用 store 模式以降低打包 CPU 與傳輸文
 
 0.2.2 加入 6008 網頁安裝器：保存編輯後確認升級，只接受固定 GitHub 倉庫的較新正式 Tag。獨立程序下載 application.zip 與 SHA-256，逐檔校驗並檢查執行環境需求；只更新 backend/app、backend/imaging、backend/prelayout_core、frontend/dist，不覆蓋模型、環境、設定或資料。更新時封鎖其他應用 API，已有請求／GPU 任務時拒絕；備份後只重啟 6008，新版啟動失敗自動回復。狀態與備份存於資料根 updates/。發布前先 build，再用 deploy/build-update.py 產生更新附件並上傳該 Tag 的 Release。0.2.1 需先部署此安裝器一次，後續由網頁更新。
 
+0.2.8 的更新與 ComfyUI 重啟等敏感同頁操作保留自訂請求標頭，並使用 `Sec-Fetch-Site: same-origin` 跨越平台反向代理的 `Host` 改寫；沒有 Fetch Metadata 的舊瀏覽器改核對 `Origin`、`Host` 與 `X-Forwarded-Host`。明確的跨站 Fetch Metadata 一律拒絕。更新包建置器同時校驗兩處版本、同版本 Git Tag 與乾淨工作樹。
+
 
 ### 0.2.3 批量修復計時
 

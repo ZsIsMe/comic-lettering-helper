@@ -13,6 +13,17 @@ parser.add_argument('output', type=Path)
 args = parser.parse_args()
 root = Path(__file__).resolve().parents[1]
 version = re.search(r'APP_VERSION = "([^"]+)"', (root/'backend/app/updates.py').read_text())[1]
+runtime_version = json.loads((root/'config/runtime.json').read_text())['app_version']
+if runtime_version != version:
+    raise SystemExit(f'版本不一致：updates.py={version}，runtime.json={runtime_version}')
+tags = subprocess.check_output(['git', 'tag', '--points-at', 'HEAD'], cwd=root, text=True).splitlines()
+if version not in tags:
+    raise SystemExit(f'目前 commit 尚未建立 Tag {version}，拒絕產生更新包')
+dirty = subprocess.check_output(
+    ['git', 'status', '--porcelain', '--untracked-files=no'], cwd=root, text=True
+).strip()
+if dirty:
+    raise SystemExit('工作樹仍有未提交修改，拒絕產生更新包')
 commit = subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=root, text=True).strip()
 files = []
 for prefix in ['backend/app', 'backend/imaging', 'backend/prelayout_core', 'frontend/dist']:

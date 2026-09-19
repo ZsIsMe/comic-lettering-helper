@@ -92,6 +92,14 @@ def test_admission_and_maintenance_lock(tmp_path,monkeypatch):
     assert client.post(url,json={'version':'9.0.0'}).status_code==403
     headers={'X-Comic-Update':'1','Origin':'https://evil.invalid'}
     assert client.post(url,json={'version':'9.0.0'},headers=headers).status_code==403
+    proxied={'X-Comic-Update':'1','Origin':'https://public.example:8443',
+             'Host':'127.0.0.1:6008','Sec-Fetch-Site':'same-origin'}
+    assert client.post(url,json={'version':updates.APP_VERSION},headers=proxied).status_code==400
+    forwarded={'X-Comic-Update':'1','Origin':'https://public.example:8443',
+               'Host':'127.0.0.1:6008','X-Forwarded-Host':'public.example:8443'}
+    assert client.post(url,json={'version':updates.APP_VERSION},headers=forwarded).status_code==400
+    cross_site={**proxied,'Sec-Fetch-Site':'cross-site'}
+    assert client.post(url,json={'version':'9.0.0'},headers=cross_site).status_code==403
     headers={'X-Comic-Update':'1'}
     assert client.post(url,json={'version':updates.APP_VERSION},headers=headers).status_code==400
     assert client.post(url,json={'version':'99.0.0'},headers=headers).status_code==400

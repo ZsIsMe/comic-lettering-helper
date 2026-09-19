@@ -10,12 +10,12 @@ import sys
 import threading
 import time
 import uuid
-from urllib.parse import urlsplit
 
 from fastapi import APIRouter, HTTPException, Request
 from starlette.responses import JSONResponse
 
 from . import updates
+from .request_security import same_page_request
 from .update_worker import ACTIVE, atomic
 
 
@@ -117,8 +117,7 @@ def router(installer):
     async def install(request: Request):
         if request.headers.get('x-comic-update') != '1':
             raise HTTPException(403, '請從網頁更新按鈕提交')
-        origin = request.headers.get('origin')
-        if origin and urlsplit(origin).netloc != request.headers.get('host'):
+        if not same_page_request(request):
             raise HTTPException(403, '更新要求必須來自同一個網頁')
         data = await request.json()
         version = data.get('version')

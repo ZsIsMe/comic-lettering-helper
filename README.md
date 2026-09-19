@@ -201,6 +201,8 @@ F1 純色填充與 F2 待修補以常駐按鈕切換，記住上次選擇。工�
 
 0.2.2 加入 6008 網頁安裝器：保存編輯後確認升級，只接受固定 GitHub 倉庫的較新正式 Tag。獨立程序下載 application.zip 與 SHA-256，逐檔校驗並檢查執行環境需求；只更新 backend/app、backend/imaging、backend/prelayout_core、frontend/dist，不覆蓋模型、環境、設定或資料。更新時封鎖其他應用 API，已有請求／GPU 任務時拒絕；備份後只重啟 6008，新版啟動失敗自動回復。狀態與備份存於資料根 updates/。發布前先 build，再用 deploy/build-update.py 產生更新附件並上傳該 Tag 的 Release。0.2.1 需先部署此安裝器一次，後續由網頁更新。
 
+0.2.8 修正更新與 ComfyUI 重啟在 AutoDL／SeetaCloud 反向代理下的同頁判斷：同頁瀏覽器請求以 `Sec-Fetch-Site` 驗證，舊瀏覽器則核對 `Origin`、`Host` 與 `X-Forwarded-Host`；跨站請求仍拒絕。更新包建置會檢查後端與 runtime 版本一致、HEAD 已建立同版本 Tag 且工作樹乾淨，避免再次發布錯標版本。
+
 
 ### 0.2.3 批量修復計時
 

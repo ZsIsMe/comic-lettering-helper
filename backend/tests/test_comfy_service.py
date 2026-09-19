@@ -64,8 +64,15 @@ def test_restart_route_checks_same_origin(tmp_path):
     app = FastAPI(); app.include_router(router(s)); c = TestClient(app)
     assert c.post("/api/app/comfy/restart").status_code == 403
     assert c.post("/api/app/comfy/restart", headers={"X-Comic-Service": "1", "Origin": "https://foreign.example"}).status_code == 403
+    proxy = {"X-Comic-Service": "1", "Origin": "https://public.example:8443",
+             "Host": "127.0.0.1:6008", "Sec-Fetch-Site": "same-origin"}
+    assert c.post("/api/app/comfy/restart", headers=proxy).status_code == 202
+    forwarded = {"X-Comic-Service": "1", "Origin": "https://public.example:8443",
+                 "Host": "127.0.0.1:6008", "X-Forwarded-Host": "public.example:8443"}
+    assert c.post("/api/app/comfy/restart", headers=forwarded).status_code == 202
+    assert c.post("/api/app/comfy/restart", headers={**proxy, "Sec-Fetch-Site": "cross-site"}).status_code == 403
     assert c.post("/api/app/comfy/restart", headers={"X-Comic-Service": "1"}).status_code == 202
-    assert s.launch.call_count == 1
+    assert s.launch.call_count == 3
 
 
 def test_proc_disappearing_is_already_stopped(tmp_path, monkeypatch):

@@ -465,6 +465,10 @@ React 19 的確認視窗使用受控 Modal 或 Modal.useModal。更新前端構�
 
 0.2.2 加入 6008 網頁安裝器：保存編輯後確認升級，只接受固定 GitHub 倉庫的較新正式 Tag。獨立程序下載 application.zip 與 SHA-256，逐檔校驗並檢查執行環境需求；只更新 backend/app、backend/imaging、backend/prelayout_core、frontend/dist，不覆蓋模型、環境、設定或資料。更新時封鎖其他應用 API，已有請求／GPU 任務時拒絕；備份後只重啟 6008，新版啟動失敗自動回復。狀態與備份存於資料根 updates/。發布前先 build，再用 deploy/build-update.py 產生更新附件並上傳該 Tag 的 Release。0.2.1 需先部署此安裝器一次，後續由網頁更新。
 
+平台代理可將公開 `Origin` 轉送至不同的內部 `Host`。更新與 ComfyUI 重啟以瀏覽器 `Sec-Fetch-Site: same-origin` 判斷同頁請求；舊瀏覽器則需代理保留 `X-Forwarded-Host`。部署後應從實際公開 WebUI 網址各測一次更新提交與 ComfyUI 重啟入口，跨站 Origin 測試仍須回傳 403。
+
+發布 0.2.8 起，先同步 `backend/app/updates.py` 與 `config/runtime.json` 的版本並提交，再建立同版本 Tag，最後在乾淨工作樹執行 `deploy/build-update.py`；任一條件不符時建置器會停止。Git Tag 本身不足以供網頁升級，必須建立 GitHub Release 並上傳 `application.zip` 與 `application.zip.sha256`。
+
 
 ### 0.2.3 批量修復計時
 
