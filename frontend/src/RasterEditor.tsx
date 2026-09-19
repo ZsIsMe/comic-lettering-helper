@@ -2,7 +2,7 @@ import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRe
 import { Alert, Button, Checkbox, Dropdown, InputNumber, Select, Slider, Space, Spin, Tooltip } from 'antd'
 import { renderEditViews } from './edit-preview'
 import { combineSelection, magicSelection, polygonSelection, rectangleSelection, type SelectionOperation } from './selection-core'
-import { applyCategoryMask, applySpecialSelection, textRepairMask, categoryMask, mergeLayerRegion, type EditCategory, type EditLayers, type EditRect } from './mask-edit-core'
+import { applyCategoryMask, applySpecialSelection, textRepairMask, categoryMask, mergeLayerRegion, type EditCategory, type EditLayers, type EditRect, type SolidSampleSource } from './mask-edit-core'
 import { RegionComparison } from './RegionComparison'
 import { adoptComparisonRegion, type CompareRegion } from './comparison-regions'
 import { LocalEditWindow } from './LocalEditWindow'
@@ -30,7 +30,6 @@ interface Props {
   clipRect?: EditRect
   onClipRectChange?: (rect: EditRect) => void
   initialCategory?: EditCategory
-  initialColor?: string
   previewUrl?: string
 }
 function blank(width: number, height: number, opaque = false) {
@@ -80,7 +79,7 @@ function replaceLayers(p: Pixels, next: EditLayers, width: number, height: numbe
   return { ...p, overlay: new ImageData(next.overlay as Uint8ClampedArray<ArrayBuffer>, width, height), other: new ImageData(next.other as Uint8ClampedArray<ArrayBuffer>, width, height), edited: new ImageData(next.edited as Uint8ClampedArray<ArrayBuffer>, width, height) }
 }
 type Point = { x: number; y: number }
-type Gesture = Point & { lastX: number; lastY: number; code: number; before: Pixels; panX: number; panY: number; kind: string; operation: SelectionOperation | 'clear' | 'swap'; target: EditCategory; fillColor: string; selection: Uint8Array; edge?: string; roi?: EditRect }
+type Gesture = Point & { lastX: number; lastY: number; code: number; before: Pixels; panX: number; panY: number; kind: string; operation: SelectionOperation | 'clear' | 'swap'; target: EditCategory; selection: Uint8Array; edge?: string; roi?: EditRect }
 type LocalDraft = { rect: EditRect; overlayUrl: string; otherUrl: string; editedUrl: string }
 
 
@@ -123,7 +122,7 @@ export const RasterEditor = forwardRef<RasterHandle, Props>(function RasterEdito
   const [tolerance, setTolerance] = useState(props.viewState?.current.tolerance ?? 28)
   const [expand, setExpand] = useState(props.viewState?.current.expand ?? 0)
   const [intersectOffset, setIntersectOffset] = useState(props.viewState?.current.intersectOffset ?? 0)
-  const [color, setColor] = useState(props.initialColor || props.viewState?.current.color || '#ffffff'); const [size, setSize] = useState(props.viewState?.current.size || 16)
+  const [size, setSize] = useState(props.viewState?.current.size || 16)
   const [zoom, setZoom] = useState(props.viewState?.current.zoom || Math.min(1, 550 / width)); const [compare, setCompare] = useState(props.viewState?.current.compare || 0)
   const [panelOrder, setPanelOrder] = useState(() => props.viewState?.current.order?.filter(code => props.candidates?.some(c => c.code === code)).concat((props.candidates || []).map(c => c.code).filter(code => !props.viewState?.current.order?.includes(code))) || (props.candidates || []).map(c => c.code))
   const divider = useRef(false)
@@ -223,8 +222,8 @@ export const RasterEditor = forwardRef<RasterHandle, Props>(function RasterEdito
   }, [drawNow])
   redrawRef.current = redraw
   useEffect(() => {
-    if (props.viewState) Object.assign(props.viewState.current, {tool, size, zoom, compare, order: panelOrder, show: showSources, operation, category, color, tolerance, expand, intersectOffset})
-  }, [props.viewState, tool, size, zoom, compare, panelOrder, showSources, operation, category, color, tolerance, expand, intersectOffset])
+    if (props.viewState) Object.assign(props.viewState.current, {tool, size, zoom, compare, order: panelOrder, show: showSources, operation, category, tolerance, expand, intersectOffset})
+  }, [props.viewState, tool, size, zoom, compare, panelOrder, showSources, operation, category, tolerance, expand, intersectOffset])
   useEffect(() => () => { if (frame.current !== null) cancelAnimationFrame(frame.current); if (hoverTimer.current) clearTimeout(hoverTimer.current) }, [])
   useEffect(() => {
     if (mode !== 'edit') return
@@ -388,16 +387,27 @@ export const RasterEditor = forwardRef<RasterHandle, Props>(function RasterEdito
     const r = props.clipRect
     return !r || (point.x >= r.x && point.x < r.x + r.width && point.y >= r.y && point.y < r.y + r.height)
   }
-  function editedSelection(before: Pixels, selection: Uint8Array, op: Gesture['operation'], target = category, fillColor = color): Pixels {
+  function solidSample(): SolidSampleSource | undefined {
+    if (!base.current) return undefined
+    const text = detectedText.current
+    let exclude: Uint8Array | undefined
+    if (text) {
+      exclude = new Uint8Array(width * height)
+      for (let n = 0; n < exclude.length; n++) if (text.data[n * 4] > 0) exclude[n] = 1
+    }
+    return { base: base.current.data, width, height, exclude }
+  }
+  function editedSelection(before: Pixels, selection: Uint8Array, op: Gesture['operation'], target = category): Pixels {
     const data = layers(before)
-    if (op === 'clear' || op === 'swap') return replaceLayers(before, applySpecialSelection(data, selection, op, rgb(fillColor), repairText.current), width, height)
+    const sample = solidSample()
+    if (op === 'clear' || op === 'swap') return replaceLayers(before, applySpecialSelection(data, selection, op, [0, 0, 0], repairText.current, sample), width, height)
     const current = categoryMask(data, target)
     const next = combineSelection(current, selection, width, height, op, intersectOffset)
     const paint = ['add', 'selection_inner', 'add_selection_inner'].includes(op) ? combineSelection(new Uint8Array(width * height), selection, width, height, op) : undefined
-    return replaceLayers(before, applyCategoryMask(data, current, next, target, rgb(fillColor), props.clipRect ? clip(new Uint8Array(width * height).fill(1)) : undefined, paint), width, height)
+    return replaceLayers(before, applyCategoryMask(data, current, next, target, [0, 0, 0], props.clipRect ? clip(new Uint8Array(width * height).fill(1)) : undefined, paint, sample), width, height)
   }
   function applyGesture(g: Gesture) {
-    if (mode === 'edit') pixels.current = editedSelection(g.before, clip(g.selection), g.operation, g.target, g.fillColor)
+    if (mode === 'edit') pixels.current = editedSelection(g.before, clip(g.selection), g.operation, g.target)
     else {
       pixels.current = copy(g.before)
       for (let n = 0; n < g.selection.length; n++) if (g.selection[n] && (g.code <= 1 || (candidates.current.get(g.code)?.diff.data[n * 4] || 0) >= 128)) pixels.current.assignment[n] = g.code
@@ -498,7 +508,7 @@ export const RasterEditor = forwardRef<RasterHandle, Props>(function RasterEdito
     const right = event.button === 2
     const kind = pan ? 'pan' : right || special ? 'rectangle' : tool
     const op = right ? (event.metaKey || event.ctrlKey ? 'swap' : 'clear') : special || operation
-    const g: Gesture = { ...p, lastX: p.x, lastY: p.y, code: mode === 'compose' ? (event.button === 2 ? 1 : code || 1) : 0, before: copy(pixels.current), panX: event.clientX, panY: event.clientY, kind, operation: op, target: category, fillColor: color, selection: new Uint8Array(width * height) }
+    const g: Gesture = { ...p, lastX: p.x, lastY: p.y, code: mode === 'compose' ? (event.button === 2 ? 1 : code || 1) : 0, before: copy(pixels.current), panX: event.clientX, panY: event.clientY, kind, operation: op, target: category, selection: new Uint8Array(width * height) }
     if (kind === 'bounds' && props.clipRect) {
       const r = props.clipRect
       const outsideX = Math.max(r.x-p.x, 0, p.x-r.x-r.width); const outsideY = Math.max(r.y-p.y, 0, p.y-r.y-r.height)
@@ -619,7 +629,6 @@ export const RasterEditor = forwardRef<RasterHandle, Props>(function RasterEdito
           <Button aria-pressed={category === 'solid'} type={category === 'solid' ? 'primary' : 'default'} disabled={disabled || props.local} onClick={() => chooseCategory('solid')}>F1 純色填充</Button>
           <Button aria-pressed={category === 'other'} type={category === 'other' ? 'primary' : 'default'} disabled={disabled || props.local} onClick={() => chooseCategory('other')}>F2 待修補</Button>
         </div>
-        {category === 'solid' && <label className="fill-color-control">填色 <input aria-label="填充顏色" type="color" disabled={disabled} value={color} onChange={event => setColor(event.target.value)} /></label>}
         {historyControls}
       </div>
       <div className="edit-control-row">
@@ -681,6 +690,6 @@ export const RasterEditor = forwardRef<RasterHandle, Props>(function RasterEdito
     {loading && !regional && <Spin />}
     {localDraft && <LocalEditWindow open width={width} height={height} initialRect={localDraft.rect} baseUrl={props.baseUrl}
       overlayUrl={localDraft.overlayUrl} otherUrl={localDraft.otherUrl} editedUrl={localDraft.editedUrl} detectedTextUrl={props.detectedTextUrl}
-      initialCategory={category} initialColor={color} onApply={applyLocal} onCancel={() => setLocalDraft(null)} />}
+      initialCategory={category} onApply={applyLocal} onCancel={() => setLocalDraft(null)} />}
   </div>
 })

@@ -8,7 +8,7 @@ interface Props {
   open: boolean
   width: number; height: number
   initialRect: LocalEditRect
-  initialCategory?: 'solid' | 'other'; initialColor?: string
+  initialCategory?: 'solid' | 'other'
   baseUrl: string; overlayUrl?: string; otherUrl?: string; editedUrl?: string; detectedTextUrl?: string
   onApply: (data: RasterSave, rect: LocalEditRect) => Promise<void>
   onCancel: () => void
@@ -80,7 +80,7 @@ function LocalEditSession(props: Props) {
     <p className="local-edit-hint">只編輯藍框內的範圍。選擇「調整邊框」可拖動四邊；按「套用」才會回寫主頁，取消會放棄局部修改。</p>
     {error && <Alert type="error" showIcon message={error} />}
     <RasterEditor ref={editor} mode="edit" local disabled={busy} width={width} height={height}
-      initialCategory={props.initialCategory} initialColor={props.initialColor}
+      initialCategory={props.initialCategory}
       clipRect={rect} onClipRectChange={changeRect} baseUrl={props.baseUrl} overlayUrl={props.overlayUrl}
       otherUrl={props.otherUrl} editedUrl={props.editedUrl} detectedTextUrl={props.detectedTextUrl}
       onSave={async data => { draft.current = data }} />

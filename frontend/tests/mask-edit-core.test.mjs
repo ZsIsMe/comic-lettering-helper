@@ -4,7 +4,7 @@ import test from 'node:test'
 import ts from 'typescript'
 const source=await readFile(new URL('../src/mask-edit-core.ts',import.meta.url),'utf8')
 const compiled=ts.transpileModule(source,{compilerOptions:{target:ts.ScriptTarget.ES2022,module:ts.ModuleKind.ES2022}}).outputText
-const {textRepairMask,categoryMask,applyCategoryMask,applySpecialSelection,mergeLayerRegion}=await import(`data:text/javascript;base64,${Buffer.from(compiled).toString('base64')}`)
+const {textRepairMask,categoryMask,applyCategoryMask,applySpecialSelection,mergeLayerRegion,sampleSolidFills}=await import(`data:text/javascript;base64,${Buffer.from(compiled).toString('base64')}`)
 function fixture() {
  const overlay=new Uint8ClampedArray([255,255,255,255,0,0,0,0,0,0,0,0,0,0,0,0])
  const other=new Uint8ClampedArray([0,0,0,255,255,255,255,255,0,0,0,255,0,0,0,255])
@@ -119,4 +119,44 @@ test('repair text uses 3px ellipse and safely falls back without valid detection
   assert.deepEqual([...categoryMask(swapped,'solid')],[0,1,0,0])
   assert.deepEqual([...categoryMask(swapped,'other')],[1,0,0,0])
  }
+})
+
+function paint(width, height, rgb) {
+  const base = new Uint8ClampedArray(width * height * 4)
+  for (let n = 0; n < width * height; n++) base.set([...rgb, 255], n * 4)
+  return base
+}
+function emptyLayers(width, height) {
+  const overlay = new Uint8ClampedArray(width * height * 4)
+  const other = new Uint8ClampedArray(overlay.length)
+  const edited = new Uint8ClampedArray(overlay.length)
+  for (let n = 0; n < width * height; n++) other[n * 4 + 3] = 255
+  return { overlay, other, edited }
+}
+test('manual solid fill samples original background, not the toolbar colour', () => {
+  const width = 16, height = 16, base = paint(width, height, [8, 8, 8])
+  const region = new Uint8Array(width * height)
+  for (let y = 6; y < 10; y++) region.fill(1, y * width + 6, y * width + 10)
+  assert.deepEqual([...sampleSolidFills(base, width, height, region).slice((7 * width + 7) * 3, (7 * width + 7) * 3 + 3)], [8, 8, 8])
+  const layers = emptyLayers(width, height)
+  const before = new Uint8Array(width * height)
+  const filled = applyCategoryMask(layers, before, region, 'solid', [255, 255, 255], undefined, undefined, { base, width, height })
+  assert.deepEqual([...filled.overlay.slice((7 * width + 7) * 4, (7 * width + 7) * 4 + 4)], [8, 8, 8, 255])
+})
+test('separate solid regions keep their own sampled colours', () => {
+  const width = 20, height = 8, base = paint(width, height, [12, 12, 12])
+  for (let y = 0; y < height; y++) for (let x = 10; x < width; x++) base.set([240, 240, 240, 255], (y * width + x) * 4)
+  const region = new Uint8Array(width * height)
+  for (let y = 2; y < 6; y++) { region.fill(1, y * width + 2, y * width + 5); region.fill(1, y * width + 14, y * width + 17) }
+  const fills = sampleSolidFills(base, width, height, region)
+  assert.deepEqual([...fills.slice((3 * width + 3) * 3, (3 * width + 3) * 3 + 3)], [12, 12, 12])
+  assert.deepEqual([...fills.slice((3 * width + 15) * 3, (3 * width + 15) * 3 + 3)], [240, 240, 240])
+})
+test('swap to solid also samples the original image', () => {
+  const width = 12, height = 12, base = paint(width, height, [4, 9, 18])
+  const layers = emptyLayers(width, height)
+  for (let y = 4; y < 8; y++) for (let x = 4; x < 8; x++) layers.other.set([255, 255, 255, 255], (y * width + x) * 4)
+  const selection = new Uint8Array(width * height).fill(1)
+  const swapped = applySpecialSelection(layers, selection, 'swap', [255, 255, 255], null, { base, width, height })
+  assert.deepEqual([...swapped.overlay.slice((5 * width + 5) * 4, (5 * width + 5) * 4 + 4)], [4, 9, 18, 255])
 })
