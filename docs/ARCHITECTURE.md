@@ -442,3 +442,13 @@ ComfyUI 輸出先複製到暫存檔，通過 PNG 完整性與解碼檢查後才�
 魔法棒懸停使用獨立 requestId 與疊加 Canvas；乾淨的左右 ImageBitmap 只按正式編輯／顯示世代驗證，不因滑鼠移動失效。離開、關閉或提交時立即隱藏並作廢懸停預覽。Worker 保留最多一個同 revision、同完整命令的預算圖層，命中後提交直接採用；所有圖層變更使快取失效。畫筆大小滑塊、數字及方括號快捷鍵共用同一狀態。
 
 魔法棒啟用時，`[`／`]` 改為減少／增加容差，每次 1，限制在 0–100；工具列顯示對應提示，容差改變後重新計算懸停預覽。畫筆仍每次調整 4 px；輸入框與 Ctrl／Cmd／Alt 組合不攔截。
+
+第二輪選區管線：Worker scheduler 保留 FIFO 命令佇列、最新正式 render 與最新 preview 各一槽，每項完成後讓出事件迴圈，再依命令／正式圖／預覽次序取工作。取消預覽帶 beforeId 邊界，回傳正常 null 結果解除 Promise；同步運算中的工作不可中斷。UI 分開兩條在途 render，preview 不再阻擋正式 render 發送。snapshot 從取圖層到 PNG 編碼完成維持命令屏障。
+
+圖層變更以三層 RGBA 實際差量求 bbox（避免純色重採樣及連通區操作超出手勢範圍），保存最多 64 個 revision 的 bbox。UI 傳已呈現 baseRevision，Worker 合併未呈現變更並直接產出 packed rect 像素／小型 bitmap；Canvas 2D 在指定位置貼入。基底不符、歷史超出或顯示設定改變時回復完整重繪。撤銷歷史仍為完整圖層，magicLeft 仍為完整獨立預覽；本輪沒有改成全系統分塊儲存。
+
+魔法棒仍使用固定 seed 色差及 8 連通搜尋；熱迴圈移除逐鄰居 callback。橢圓 morphology 用列上連續區段及差分區間合併，侵蝕用 in-bounds 零值擴展的補集，保留 neutral border 與既有 round／floor 差異。
+
+Morphology 會先統計來源列區段密度；runs > pixels/3 時使用等價 prefix 檢查，避免棋盤格／密集網點的大量短區段使區間法回退。兩條路徑以 frozen oracle 比對。
+
+原圖預載僅接入 edit 模式的 baseUrl；`source-image-cache.ts` 以 URL 與尺寸識別不可變原圖，背景依序預載，限制解碼快取為 64 MiB。ProjectWorkbench 依目前可見頁序安排當頁、後兩頁、前一頁，離開項目清理快取。overlay／other／edited 仍按 revision 重新讀取，導航前保存和項目版本重讀不變。原生 SVG 游標區分矩形、畫筆與魔法棒，熱點為十字中心；指針移動不等待 Worker。

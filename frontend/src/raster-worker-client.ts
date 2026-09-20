@@ -26,7 +26,7 @@ export type {
 } from './raster-worker-protocol'
 
 type ResponseType = 'metadata' | 'render' | 'snapshot'
-type ResponseValue = RasterMetadata | RasterRenderFrame | RasterSnapshot
+type ResponseValue = RasterMetadata | RasterRenderFrame | RasterSnapshot | null
 
 export interface RasterWorkerPort {
   postMessage(message: RasterWorkerRequest, transfer?: Transferable[]): void
@@ -63,6 +63,7 @@ export class RasterWorkerClient {
   private readonly pending = new Map<number, Pending>()
   private nextId = 1
   private latestRenderToken = 0
+  private latestPreviewToken = 0
   private disposed = false
   private terminalError: Error | null = null
 
@@ -98,13 +99,19 @@ export class RasterWorkerClient {
   }
 
   async render(payload: RasterRenderOptions): Promise<RasterRenderFrame | null> {
-    const token = ++this.latestRenderToken
+    const token = payload.previewOnly ? ++this.latestPreviewToken : ++this.latestRenderToken
     const frame = await this.send('render', 'render', payload)
-    if (this.disposed || token !== this.latestRenderToken) {
+    if (!frame) return null
+    if (this.disposed || token !== (payload.previewOnly ? this.latestPreviewToken : this.latestRenderToken)) {
       closeFrame(frame)
       return null
     }
     return frame
+  }
+
+  cancelPreview() {
+    this.latestPreviewToken++
+    if (!this.disposed && !this.terminalError) this.worker.postMessage({ id: 0, type: 'cancelPreview', beforeId: this.nextId - 1 })
   }
 
   snapshot(): Promise<RasterSnapshot> {
@@ -128,7 +135,7 @@ export class RasterWorkerClient {
   private send(type: 'commit', expected: 'metadata', payload: RasterEditCommand): Promise<RasterMetadata>
   private send(type: 'undo' | 'redo' | 'resetHistory', expected: 'metadata'): Promise<RasterMetadata>
   private send(type: 'merge', expected: 'metadata', payload: RasterMergeCommand): Promise<RasterMetadata>
-  private send(type: 'render', expected: 'render', payload: RasterRenderOptions): Promise<RasterRenderFrame>
+  private send(type: 'render', expected: 'render', payload: RasterRenderOptions): Promise<RasterRenderFrame | null>
   private send(type: 'snapshot', expected: 'snapshot'): Promise<RasterSnapshot>
   private send(type: RasterWorkerRequest['type'], expected: ResponseType, payload?: unknown): Promise<ResponseValue> {
     if (this.disposed) return Promise.reject(new Error('Raster worker client was disposed'))
@@ -151,7 +158,7 @@ export class RasterWorkerClient {
     const response = event.data
     const pending = this.pending.get(response.id)
     if (!pending) {
-      if (response.ok && response.type === 'render') closeFrame(response.value)
+      if (response.ok && response.type === 'render' && response.value) closeFrame(response.value)
       return
     }
     this.pending.delete(response.id)
@@ -160,7 +167,7 @@ export class RasterWorkerClient {
       return
     }
     if (response.type !== pending.expected) {
-      if (response.type === 'render') closeFrame(response.value)
+      if (response.type === 'render' && response.value) closeFrame(response.value)
       pending.reject(new Error(`Unexpected raster worker response: ${response.type}`))
       return
     }

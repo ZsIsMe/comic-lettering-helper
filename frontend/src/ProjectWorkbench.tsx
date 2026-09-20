@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Alert, Button, Card, Checkbox, Dropdown, Empty, Input, InputNumber, List, Modal, Progress, Select, Space, Spin, Steps, Tag, Typography, message } from 'antd'
 import LegacyBatch from './App'
 import { ImagePicker } from './ImagePicker'
@@ -6,6 +6,7 @@ import { DetectionSettings } from './DetectionSettings'
 import { createMaskPlan } from './create-mask-plan'
 import { runTiming } from './run-timing'
 import { RasterEditor, type RasterHandle, type ComposeView, type RasterSave } from './RasterEditor'
+import { clearSourceImageCache, scheduleSourceImagePreload, type SourceImageRequest } from './source-image-cache'
 import { active, api, assetUrl, defaultDetectionOptions, json, projectUrl, workflowOptions, type Composition, type DetectionOptions, type Project, type Run, type Workflow } from './workbench-api'
 
 const { Title, Text } = Typography
@@ -179,6 +180,17 @@ function ProjectWorkspace({ initial, initialError, gpuOwner, onExit, onReadyToLe
   const pageStatus = (item: Project['pages'][number]) => !(liveRepair[item.id] !== undefined || item.mask_ready) ? 'untouched' : (liveRepair[item.id] ?? item.has_repair_mask) ? 'repair' : 'complete'
   const visiblePages = project.pages.map((item, index) => ({item, index})).filter(({item}) => step === 2 ? compareFilter === 'all' || (composition?.pages.find(p => p.page_id === item.id)?.confirmed ? 'confirmed' : 'pending') === compareFilter : pageFilter === 'all' || pageStatus(item) === pageFilter)
   const adjacentPage = (direction: number) => direction > 0 ? visiblePages.find(({index}) => index > pageIndex)?.index : visiblePages.slice().reverse().find(({index}) => index < pageIndex)?.index
+  const sourcePreloadRequests = useMemo<SourceImageRequest[]>(() => {
+    if (step !== 0) return []
+    const visible = project.pages.map((item, index) => ({ item, index })).filter(({ item }) => {
+      const status = !(liveRepair[item.id] !== undefined || item.mask_ready) ? 'untouched' : (liveRepair[item.id] ?? item.has_repair_mask) ? 'repair' : 'complete'
+      return pageFilter === 'all' || status === pageFilter
+    })
+    const next = visible.filter(({ index }) => index > pageIndex).slice(0, 2)
+    const previous = visible.filter(({ index }) => index < pageIndex).at(-1)
+    const selected = [{ item: project.pages[pageIndex], index: pageIndex }, ...next, ...(previous ? [previous] : [])]
+    return selected.map(({ item }) => ({ url: assetUrl(project.id, item.source), width: item.width, height: item.height }))
+  }, [liveRepair, pageFilter, pageIndex, project.id, project.pages, step])
   const currentPageId = useRef(page.id); currentPageId.current = page.id
   const url = projectUrl(project.id)
   const compUrl = `${url}/compositions/${runId}`
@@ -187,6 +199,9 @@ function ProjectWorkspace({ initial, initialError, gpuOwner, onExit, onReadyToLe
   const detectionReady = !!(availability?.available ?? availability?.ready)
   const detectionCanConfigure = detectionReady || !!availability?.available_without_bubbles
   const chosenDetectionReady = detectionReady || (!detectionOptions.bubble_enabled && !!availability?.available_without_bubbles)
+
+  useEffect(() => () => clearSourceImageCache(), [project.id])
+  useEffect(() => { scheduleSourceImagePreload(sourcePreloadRequests) }, [sourcePreloadRequests])
 
   async function execute(fn: () => Promise<void>) {
     if (navigating.current) return

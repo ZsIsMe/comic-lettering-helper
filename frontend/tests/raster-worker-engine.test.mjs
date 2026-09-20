@@ -19,6 +19,7 @@ const engineSource = (await compile('raster-worker-engine'))
   .replaceAll("'./mask-edit-core'", JSON.stringify(maskEditUrl))
   .replaceAll("'./edit-preview'", JSON.stringify(previewUrl))
   .replaceAll("'./raster-worker-protocol'", JSON.stringify(protocolUrl))
+const schedulerUrl = moduleUrl(await compile('raster-worker-scheduler'))
 const engineUrl = moduleUrl(engineSource)
 
 const { RasterWorkerEngine } = await import(engineUrl)
@@ -291,6 +292,7 @@ test('worker request queue fences async snapshot serialization and preserves com
   try {
     const workerSource = (await compile('raster-worker'))
       .replaceAll("'./raster-worker-engine'", JSON.stringify(engineUrl))
+    .replaceAll("'./raster-worker-scheduler'", JSON.stringify(schedulerUrl))
       .replaceAll("'./raster-worker-protocol'", JSON.stringify(protocolUrl))
     await import(`${moduleUrl(workerSource)}#queue-test`)
     const input = fixture(3, 2)

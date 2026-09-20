@@ -110,6 +110,7 @@ let measureStart = 0
 let lastFrame = 0
 let pointerAt = -1
 let canvasActionAt = -1
+let canvasActionBaseline: number | null = null
 let pointerPending = false
 let metrics: FixtureMetrics = { elapsedMs: 0, frames: [], pointerToRaf: [], pointerToLeftPaint: [], pointerToCanvasFrame: [], pointerToScroll: [], eventDurations: [], longTasks: [] }
 let stressWorkers: Worker[] = []
@@ -132,9 +133,26 @@ addEventListener('pointermove', event => {
   pointerAt = event.timeStamp
   pointerPending = true
 }, { capture: true, passive: true })
-addEventListener('pointerup', event => {
-  if (!measuring || !(event.target instanceof HTMLCanvasElement) || event.target.getAttribute('aria-label') !== 'Mask / 原圖') return
+
+const isLeftCanvas = (target: EventTarget | null): target is HTMLCanvasElement =>
+  target instanceof HTMLCanvasElement && target.getAttribute('aria-label') === 'Mask / 原圖'
+const magicToolPressed = () =>
+  document.querySelector('[role="group"][aria-label="編輯工具"] button[aria-pressed="true"]')?.textContent?.includes('魔法棒') === true
+const startCanvasAction = (event: PointerEvent) => {
+  const version = Number(event.target instanceof HTMLCanvasElement ? event.target.dataset.renderVersion : NaN)
+  if (!Number.isSafeInteger(version)) return
   canvasActionAt = event.timeStamp
+  canvasActionBaseline = version
+}
+
+addEventListener('pointerdown', event => {
+  if (!measuring || !isLeftCanvas(event.target) || event.button !== 0 || event.metaKey || event.ctrlKey || !magicToolPressed()) return
+  // Magic commits on pointerdown; waiting for pointerup can miss its completed frame.
+  startCanvasAction(event)
+}, { capture: true, passive: true })
+addEventListener('pointerup', event => {
+  if (!measuring || !isLeftCanvas(event.target) || magicToolPressed()) return
+  startCanvasAction(event)
 }, { capture: true, passive: true })
 addEventListener('scroll', event => {
   if (!measuring || pointerAt < 0) return
@@ -166,8 +184,12 @@ function observeLeftFeedback() {
   const canvas = document.querySelector<HTMLCanvasElement>('canvas[aria-label="Mask / 原圖"]')
   if (canvas) {
     canvasFrameObserver = new MutationObserver(records => {
-      if (!measuring || canvasActionAt < 0 || !records.some(record => record.attributeName === 'data-render-version')) return
-      cap(metrics.pointerToCanvasFrame, performance.now() - canvasActionAt); canvasActionAt = -1
+      if (!measuring || canvasActionAt < 0 || canvasActionBaseline === null
+        || !records.some(record => record.attributeName === 'data-render-version')) return
+      const renderedVersion = Number(canvas.dataset.renderVersion)
+      if (!Number.isSafeInteger(renderedVersion) || renderedVersion <= canvasActionBaseline) return
+      cap(metrics.pointerToCanvasFrame, performance.now() - canvasActionAt)
+      canvasActionAt = -1; canvasActionBaseline = null
     })
     canvasFrameObserver.observe(canvas, { attributes: true, attributeFilter: ['data-render-version'] })
   }
@@ -175,7 +197,7 @@ function observeLeftFeedback() {
 
 function resetMetrics() {
   metrics = { elapsedMs: 0, frames: [], pointerToRaf: [], pointerToLeftPaint: [], pointerToCanvasFrame: [], pointerToScroll: [], eventDurations: [], longTasks: [] }
-  measureStart = performance.now(); lastFrame = 0; pointerAt = -1; canvasActionAt = -1; pointerPending = false; measuring = true
+  measureStart = performance.now(); lastFrame = 0; pointerAt = -1; canvasActionAt = -1; canvasActionBaseline = null; pointerPending = false; measuring = true
   observeLeftFeedback()
 }
 function readMetrics() {

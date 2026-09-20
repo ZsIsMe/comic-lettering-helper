@@ -58,6 +58,10 @@ export interface RasterRenderOptions {
   showOther: boolean
   otherPercent: number
   otherColor: readonly number[]
+  /** Last document revision actually displayed; omit after display-option changes. */
+  baseRevision?: number
+  /** Preview requests are disposable and scheduled after document frames. */
+  previewOnly?: boolean
   magicPreview?: RasterMagicPreview | null
   /** Opaque UI generation echoed on the frame so callers can associate it with submitted input. */
   tag?: number
@@ -80,6 +84,9 @@ export interface RasterRenderPixels extends RasterMetadata {
   left: Uint8ClampedArray
   magicLeft?: Uint8ClampedArray
   right: Uint8ClampedArray
+  /** Packed patch location; width/height above remain the document dimensions. */
+  rect?: EditRect
+  baseRevision?: number
   previewRequestId?: number
   tag?: number
 }
@@ -90,6 +97,9 @@ export interface RasterRenderFrame extends RasterMetadata {
   left: ImageBitmap
   magicLeft?: ImageBitmap
   right: ImageBitmap
+  /** Packed patch location; width/height above remain the document dimensions. */
+  rect?: EditRect
+  baseRevision?: number
   previewRequestId?: number
   tag?: number
 }
@@ -119,10 +129,11 @@ export type RasterWorkerRequest =
   | { id: number; type: 'resetHistory' }
   | { id: number; type: 'render'; payload: RasterRenderOptions }
   | { id: number; type: 'snapshot' }
+  | { id: number; type: 'cancelPreview'; beforeId: number }
 
 export type RasterWorkerSuccess =
   | { id: number; ok: true; type: 'metadata'; value: RasterMetadata }
-  | { id: number; ok: true; type: 'render'; value: RasterRenderFrame }
+  | { id: number; ok: true; type: 'render'; value: RasterRenderFrame | null }
   | { id: number; ok: true; type: 'snapshot'; value: RasterSnapshot }
 
 export interface RasterWorkerFailure {

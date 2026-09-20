@@ -24,9 +24,11 @@ import type {
 } from './raster-worker-protocol'
 
 const HISTORY_BYTES = 96 * 1024 * 1024
+const DIRTY_HISTORY_LIMIT = 64
 
 type MagicEditCommand = RasterEditCommand & { selection: Extract<RasterSelectionSpec, { kind: 'magic' }> }
 type MagicCache = { revision: number; command: MagicEditCommand; selection: Uint8Array; next: EditLayers }
+type DirtyTransition = { revision: number; rect: EditRect | null }
 
 function validateRgba(name: string, data: ArrayLike<number>, size: number) {
   if (data.length !== size * 4) throw new RangeError(`${name} dimensions do not match the image`)
@@ -70,6 +72,7 @@ export class RasterWorkerEngine {
   private history: EditLayers[] = []
   private future: EditLayers[] = []
   private revision = 0
+  private dirtyTransitions: DirtyTransition[] = []
   private initialized = false
   private magicCache: MagicCache | null = null
 
@@ -108,6 +111,7 @@ export class RasterWorkerEngine {
     this.history = []
     this.future = []
     this.revision = 0
+    this.dirtyTransitions = []
     this.magicCache = null
     this.initialized = true
     return this.metadata()
@@ -137,7 +141,7 @@ export class RasterWorkerEngine {
     }
     this.pushHistory(before)
     this.future = []
-    this.revision++
+    this.recordTransition(before)
     this.magicCache = null
     return this.metadata()
   }
@@ -146,9 +150,10 @@ export class RasterWorkerEngine {
     this.assertInitialized()
     const previous = this.history.pop()
     if (previous) {
+      const before = this.layers
       this.future.push(cloneLayers(this.layers))
       this.layers = previous
-      this.revision++
+      this.recordTransition(before)
       this.magicCache = null
     }
     return this.metadata()
@@ -158,9 +163,10 @@ export class RasterWorkerEngine {
     this.assertInitialized()
     const next = this.future.pop()
     if (next) {
+      const before = this.layers
       this.pushHistory(this.layers)
       this.layers = next
-      this.revision++
+      this.recordTransition(before)
       this.magicCache = null
     }
     return this.metadata()
@@ -173,7 +179,7 @@ export class RasterWorkerEngine {
     this.layers = mergeLayerRegion(before, command.layers, this.width, this.height, command.rect)
     this.pushHistory(before)
     this.future = []
-    this.revision++
+    this.recordTransition(before)
     this.magicCache = null
     return this.metadata()
   }
@@ -187,14 +193,24 @@ export class RasterWorkerEngine {
 
   render(options: RasterRenderOptions): RasterRenderPixels {
     this.assertInitialized()
-    const views = renderEditViews({
+    const layers = {
       base: this.base,
       overlay: this.layers.overlay,
       other: this.layers.other,
       edited: this.layers.edited,
       detectedText: this.detectedText || undefined,
-    }, options)
-    const magicLeft = options.magicPreview ? views.left.slice() : undefined
+    }
+    const dirty = options.baseRevision === undefined ? undefined : this.dirtySince(options.baseRevision)
+    const rect = dirty === null && this.width > 0 && this.height > 0
+      ? { x: 0, y: 0, width: 1, height: 1 }
+      : dirty
+    const patchRect = rect && rect !== undefined ? rect : undefined
+    const views = renderEditViews(layers, options,
+      patchRect ? { rect: patchRect, imageWidth: this.width } : undefined)
+    const magicBase = options.magicPreview && patchRect
+      ? renderEditViews(layers, options).left
+      : views.left
+    const magicLeft = options.magicPreview ? magicBase.slice() : undefined
     if (options.magicPreview && magicLeft) this.tintMagicPreview(magicLeft, options.magicPreview)
     return {
       ...this.metadata(),
@@ -203,6 +219,7 @@ export class RasterWorkerEngine {
       left: views.left,
       right: views.right,
       magicLeft,
+      ...(patchRect ? { rect: patchRect, baseRevision: options.baseRevision } : {}),
       previewRequestId: options.magicPreview?.requestId,
       tag: options.tag,
     }
@@ -237,6 +254,68 @@ export class RasterWorkerEngine {
     // Keep the desktop editor's cap calculation, including its 2-byte assignment estimate.
     const limit = Math.max(1, Math.min(20, Math.floor(HISTORY_BYTES / (this.width * this.height * 14))))
     while (this.history.length > limit) this.history.shift()
+  }
+
+  private recordTransition(before: EditLayers) {
+    this.revision++
+    this.dirtyTransitions.push({
+      revision: this.revision,
+      rect: this.layerDiffBounds(before, this.layers),
+    })
+    while (this.dirtyTransitions.length > DIRTY_HISTORY_LIMIT) this.dirtyTransitions.shift()
+  }
+
+  /** Returns undefined when the requested basis is not traceable, and null when it is unchanged. */
+  private dirtySince(baseRevision: number): EditRect | null | undefined {
+    if (!Number.isSafeInteger(baseRevision) || baseRevision < 0 || baseRevision > this.revision) return undefined
+    if (baseRevision === this.revision) return null
+    const count = this.revision - baseRevision
+    if (count > this.dirtyTransitions.length) return undefined
+    const transitions = this.dirtyTransitions.slice(-count)
+    if (transitions[0]?.revision !== baseRevision + 1
+      || transitions[transitions.length - 1]?.revision !== this.revision) return undefined
+    let union: EditRect | null = null
+    for (let index = 0; index < transitions.length; index++) {
+      if (transitions[index].revision !== baseRevision + index + 1) return undefined
+      const rect = transitions[index].rect
+      if (!rect) continue
+      if (!union) union = { ...rect }
+      else {
+        const right = Math.max(union.x + union.width, rect.x + rect.width)
+        const bottom = Math.max(union.y + union.height, rect.y + rect.height)
+        union.x = Math.min(union.x, rect.x)
+        union.y = Math.min(union.y, rect.y)
+        union.width = right - union.x
+        union.height = bottom - union.y
+      }
+    }
+    return union
+  }
+
+  private layerDiffBounds(before: EditLayers, after: EditLayers): EditRect | null {
+    let minX = this.width
+    let minY = this.height
+    let maxX = -1
+    let maxY = -1
+    // Internal layers are owned RGBA buffers, so aligned 32-bit equality covers all four channels at once.
+    const beforeLayers = [before.overlay, before.other, before.edited]
+      .map(layer => new Uint32Array(layer.buffer, layer.byteOffset, layer.byteLength / 4))
+    const afterLayers = [after.overlay, after.other, after.edited]
+      .map(layer => new Uint32Array(layer.buffer, layer.byteOffset, layer.byteLength / 4))
+    const pixels = this.width * this.height
+    for (let pixel = 0; pixel < pixels; pixel++) {
+      const changed = beforeLayers[0][pixel] !== afterLayers[0][pixel]
+        || beforeLayers[1][pixel] !== afterLayers[1][pixel]
+        || beforeLayers[2][pixel] !== afterLayers[2][pixel]
+      if (!changed) continue
+      const x = pixel % this.width
+      const y = Math.floor(pixel / this.width)
+      minX = Math.min(minX, x)
+      minY = Math.min(minY, y)
+      maxX = Math.max(maxX, x)
+      maxY = Math.max(maxY, y)
+    }
+    return maxX < 0 ? null : { x: minX, y: minY, width: maxX - minX + 1, height: maxY - minY + 1 }
   }
 
   private sample(): SolidSampleSource {

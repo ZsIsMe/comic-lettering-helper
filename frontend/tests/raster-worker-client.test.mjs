@@ -103,3 +103,22 @@ test('dispose rejects in-flight work and prevents any later postMessage', async 
   assert.deepEqual(port.requests.map(request => request.type), ['snapshot'])
   assert.equal(port.terminated, true)
 })
+
+test('preview cancellation settles normally without invalidating an independent document frame', async () => {
+  const port = new FakePort()
+  const client = new RasterWorkerClient({ workerFactory: () => port })
+  const closed = []
+  const doc = client.render({})
+  const oldPreview = client.render({ previewOnly: true })
+  client.cancelPreview()
+  assert.deepEqual(port.requests.at(-1), { id: 0, type: 'cancelPreview', beforeId: 2 })
+  const preview = client.render({ previewOnly: true })
+  port.respond({ id: 2, ok: true, type: 'render', value: null })
+  port.respond({ id: 3, ok: true, type: 'render', value: frame(3, closed) })
+  port.respond({ id: 1, ok: true, type: 'render', value: frame(1, closed) })
+  assert.equal(await oldPreview, null)
+  assert.equal((await preview).revision, 3)
+  assert.equal((await doc).revision, 1)
+  assert.deepEqual(closed, [])
+  client.dispose()
+})

@@ -20,14 +20,9 @@ function visitNeighbors(index: number, width: number, height: number, visit: (ne
   }
 }
 
-/** OpenCV ellipse morphology. Outside pixels are neutral (the desktop's default border). */
-function offsetMask(mask: Uint8Array, width: number, height: number, offset: number, preciseDisk = false): Uint8Array {
-  const radius = Math.min(Math.max(width, height), Math.abs(Math.trunc(offset)))
-  if (!radius || !mask.some(Boolean)) return mask.slice()
-  const dilate = offset > 0
+function prefixOffsetMask(mask: Uint8Array, width: number, height: number, radius: number, dilate: boolean, preciseDisk: boolean): Uint8Array {
   const result = new Uint8Array(mask.length)
   if (!dilate) result.fill(1)
-  // Prefix sums let every horizontal kernel interval be tested in constant time.
   const sums = new Uint32Array((width + 1) * height)
   for (let y = 0; y < height; y++) {
     const row = y * (width + 1)
@@ -45,6 +40,67 @@ function offsetMask(mask: Uint8Array, width: number, height: number, offset: num
         const count = sums[row + right] - sums[row + left]
         if (dilate ? count > 0 : count < right - left) result[i] = dilate ? 1 : 0
       }
+    }
+  }
+  return result
+}
+
+/** OpenCV ellipse morphology. Outside pixels are neutral (the desktop's default border). */
+function offsetMask(mask: Uint8Array, width: number, height: number, offset: number, preciseDisk = false): Uint8Array {
+  const radius = Math.min(Math.max(width, height), Math.abs(Math.trunc(offset)))
+  if (!radius || !mask.some(Boolean)) return mask.slice()
+  const dilate = offset > 0
+  // Alternating manga screentones can produce nearly one run per two pixels.
+  // Difference-interval bookkeeping is slower than prefix queries at that density.
+  const runLimit = Math.floor(mask.length / 3)
+  let runs = 0
+  for (let y = 0; y < height && runs <= runLimit; y++) {
+    const row = y * width
+    let inside = false
+    for (let x = 0; x < width; x++) {
+      const selected = dilate ? mask[row + x] > 0 : mask[row + x] === 0
+      if (selected && !inside) runs++
+      inside = selected
+    }
+  }
+  if (runs > runLimit) return prefixOffsetMask(mask, width, height, radius, dilate, preciseDisk)
+  // Each source-row run expands to one interval per ellipse row. Difference rows
+  // union those intervals in O(pixels + runs * radius), instead of testing every
+  // output pixel for every vertical kernel offset. Erosion is the complement of
+  // dilating in-bounds zeroes, which preserves the desktop's neutral border.
+  const stride = width + 1
+  const differences = new Int32Array(stride * height)
+  const halves = new Int32Array(radius * 2 + 1)
+  for (let dy = -radius; dy <= radius; dy++) {
+    const span = Math.sqrt(radius * radius - dy * dy)
+    halves[dy + radius] = preciseDisk ? Math.floor(span) : Math.round(span)
+  }
+  for (let sourceY = 0; sourceY < height; sourceY++) {
+    const sourceRow = sourceY * width
+    let x = 0
+    while (x < width) {
+      while (x < width && (dilate ? mask[sourceRow + x] === 0 : mask[sourceRow + x] > 0)) x++
+      if (x >= width) break
+      const start = x++
+      while (x < width && (dilate ? mask[sourceRow + x] > 0 : mask[sourceRow + x] === 0)) x++
+      for (let dy = Math.max(-radius, sourceY - height + 1); dy <= Math.min(radius, sourceY); dy++) {
+        const targetY = sourceY - dy
+        const differenceRow = targetY * stride
+        const half = halves[dy + radius]
+        const left = Math.max(0, start - half)
+        const right = Math.min(width, x + half)
+        differences[differenceRow + left]++
+        differences[differenceRow + right]--
+      }
+    }
+  }
+  const result = new Uint8Array(mask.length)
+  for (let y = 0; y < height; y++) {
+    const differenceRow = y * stride, resultRow = y * width
+    let active = 0
+    for (let x = 0; x < width; x++) {
+      active += differences[differenceRow + x]
+      result[resultRow + x] = Number(dilate ? active > 0 : active === 0)
     }
   }
   return result
@@ -95,18 +151,32 @@ export function magicSelection(rgba: Uint8ClampedArray, width: number, height: n
   if (x < 0 || x >= width || y < 0 || y >= height || !Number.isFinite(x + y)) return result
   const seed = (y * width + x) * 4
   const limit = Math.max(0, Math.min(255, tolerance))
+  if (Number.isNaN(limit)) return result
+  const r0 = rgba[seed] - limit, r1 = rgba[seed] + limit
+  const g0 = rgba[seed + 1] - limit, g1 = rgba[seed + 1] + limit
+  const b0 = rgba[seed + 2] - limit, b1 = rgba[seed + 2] + limit
   const seen = new Uint8Array(size), queue = new Int32Array(size)
   let head = 0, tail = 0
-  const enqueue = (i: number) => {
-    if (seen[i]) return
-    seen[i] = 1
-    const p = i * 4
-    if (Math.abs(rgba[p] - rgba[seed]) <= limit && Math.abs(rgba[p + 1] - rgba[seed + 1]) <= limit && Math.abs(rgba[p + 2] - rgba[seed + 2]) <= limit) {
-      result[i] = 1; queue[tail++] = i
+  const start = y * width + x
+  seen[start] = 1; result[start] = 1; queue[tail++] = start
+  while (head < tail) {
+    const current = queue[head++]
+    const currentX = current % width, currentY = Math.floor(current / width)
+    const left = Math.max(0, currentX - 1), right = Math.min(width - 1, currentX + 1)
+    for (let yy = Math.max(0, currentY - 1); yy <= Math.min(height - 1, currentY + 1); yy++) {
+      const row = yy * width
+      for (let xx = left; xx <= right; xx++) {
+        const next = row + xx
+        if (seen[next]) continue
+        seen[next] = 1
+        const p = next * 4
+        if (rgba[p] >= r0 && rgba[p] <= r1 && rgba[p + 1] >= g0 && rgba[p + 1] <= g1 && rgba[p + 2] >= b0 && rgba[p + 2] <= b1) {
+          result[next] = 1
+          queue[tail++] = next
+        }
+      }
     }
   }
-  enqueue(y * width + x)
-  while (head < tail) visitNeighbors(queue[head++], width, height, enqueue)
   return expand > 0 ? offsetMask(result, width, height, expand, expand > 16) : result
 }
 

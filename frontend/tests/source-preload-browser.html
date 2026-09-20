@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="zh-Hant">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Source image preload probe</title>
+    <style>
+      :root { color-scheme: light; font-family: system-ui, sans-serif; }
+      * { box-sizing: border-box; }
+      body { margin: 0; background: #f3efe7; color: #292722; }
+      main { display: grid; grid-template-rows: auto 1fr; min-height: 100vh; padding: 12px; gap: 10px; }
+      header { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; }
+      button, input { font: inherit; }
+      output { white-space: pre-wrap; font: 12px/1.45 ui-monospace, monospace; }
+      .viewer { min-height: 0; display: grid; grid-template-rows: minmax(0, 1fr) auto; place-items: center; overflow: auto; background: #262626; border-radius: 6px; }
+      canvas { max-width: 100%; max-height: calc(100vh - 130px); background: white; image-rendering: auto; }
+      .viewer output { width: 100%; max-height: 96px; overflow: auto; padding: 6px 8px; color: #eee; border-top: 1px solid #555; }
+    </style>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="./source-preload-browser.tsx"></script>
+  </body>
+</html>

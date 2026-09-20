@@ -1,3 +1,4 @@
+import { createRasterScheduler } from './raster-worker-scheduler'
 import { RasterWorkerEngine } from './raster-worker-engine'
 import type {
   RasterMetadata,
@@ -32,9 +33,11 @@ function frameFromPixels(value: RasterRenderPixels): RasterRenderFrame {
     hasRepairMask: value.hasRepairMask,
     width: value.width,
     height: value.height,
-    left: canvasWithPixels(value.left, value.width, value.height).transferToImageBitmap(),
+    rect: value.rect,
+    baseRevision: value.baseRevision,
+    left: canvasWithPixels(value.left, value.rect?.width ?? value.width, value.rect?.height ?? value.height).transferToImageBitmap(),
     magicLeft: value.magicLeft ? canvasWithPixels(value.magicLeft, value.width, value.height).transferToImageBitmap() : undefined,
-    right: canvasWithPixels(value.right, value.width, value.height).transferToImageBitmap(),
+    right: canvasWithPixels(value.right, value.rect?.width ?? value.width, value.rect?.height ?? value.height).transferToImageBitmap(),
     previewRequestId: value.previewRequestId,
     tag: value.tag,
   }
@@ -67,6 +70,8 @@ function metadataResponse(id: number, value: RasterMetadata): RasterWorkerRespon
 
 async function handle(request: RasterWorkerRequest): Promise<{ response: RasterWorkerResponse; transfer?: Transferable[] }> {
   switch (request.type) {
+    case 'cancelPreview':
+      return { response: { id: request.id, ok: true, type: 'render', value: null } }
     case 'init':
       return { response: metadataResponse(request.id, engine.init(request.payload)) }
     case 'commit':
@@ -99,8 +104,8 @@ async function respond(request: RasterWorkerRequest) {
   }
 }
 
-// Promise chaining is deliberate: async PNG encoding must not let later edits overtake a snapshot.
-let queue = Promise.resolve()
-scope.onmessage = event => {
-  queue = queue.then(() => respond(event.data))
-}
+// Each command, including async snapshot encoding, runs to completion before the next.
+const enqueue = createRasterScheduler(respond, request => {
+  scope.postMessage({ id: request.id, ok: true, type: 'render', value: null })
+})
+scope.onmessage = event => enqueue(event.data)

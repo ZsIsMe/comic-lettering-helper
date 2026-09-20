@@ -8,6 +8,8 @@ import { type EditCategory, type EditRect } from './mask-edit-core'
 import { RegionComparison } from './RegionComparison'
 import { adoptComparisonRegion, type CompareRegion } from './comparison-regions'
 import { LocalEditWindow } from './LocalEditWindow'
+import { rasterCursor } from './raster-cursors'
+import { loadSourceImage } from './source-image-cache'
 
 type Pixels = { overlay: ImageData; other: ImageData; edited: ImageData; assignment: Uint16Array }
 export interface RasterSave {
@@ -106,6 +108,7 @@ export const RasterEditor = forwardRef<RasterHandle, Props>(function RasterEdito
     preview.current = null
     if (hoverTimer.current) clearTimeout(hoverTimer.current)
     hoverGeneration.current++
+    worker.current?.cancelPreview()
     if (magicCanvas.current) magicCanvas.current.style.visibility = 'hidden'
   }, [])
   const worker = useRef<RasterWorkerClient | null>(null)
@@ -119,6 +122,11 @@ export const RasterEditor = forwardRef<RasterHandle, Props>(function RasterEdito
   const renderGeneration = useRef(0)
   const readyFrame = useRef<{ frame: RasterRenderFrame; generation: number; target: number } | null>(null)
   const presentFrameRef = useRef<() => void>(() => {})
+  const presentedRevision = useRef<number | undefined>(undefined)
+  const magicRevision = useRef<number | undefined>(undefined)
+  const previewBusy = useRef(false)
+  const previewWanted = useRef(false)
+  const requestPreviewRef = useRef<() => void>(() => {})
   const renderBusy = useRef(false)
   const renderWanted = useRef(false)
   const renderTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -231,7 +239,7 @@ export const RasterEditor = forwardRef<RasterHandle, Props>(function RasterEdito
       if (!client || !alive.current) return
       renderWanted.current = false; renderBusy.current = true
       const generation = renderGeneration.current, target = version.current
-      void client.render({ ...renderOptions.current, magicPreview: preview.current, tag: generation }).then(result => {
+      void client.render({ ...renderOptions.current, baseRevision: presentedRevision.current, tag: generation }).then(result => {
         if (!result) return
         if (!alive.current || worker.current !== client || generation !== renderGeneration.current) {
           result.left.close(); result.right.close(); result.magicLeft?.close(); return
@@ -249,39 +257,66 @@ export const RasterEditor = forwardRef<RasterHandle, Props>(function RasterEdito
     }, 0)
   }, [])
   requestRenderRef.current = requestRender
-  // Full-frame bitmap adoption is lower priority than an active input gesture.
-  // Keep at most one ready frame; a committed edit may supersede it before display.
+  const requestPreview = useCallback(() => {
+    const client = worker.current
+    if (!client || !alive.current || !preview.current || presentedRevision.current === undefined) return
+    previewWanted.current = true
+    if (previewBusy.current) return
+    previewWanted.current = false; previewBusy.current = true
+    const generation = renderGeneration.current, requested = preview.current
+    void client.render({ ...renderOptions.current, baseRevision: presentedRevision.current, magicPreview: requested, previewOnly: true, tag: generation }).then(result => {
+      if (!result) return
+      try {
+        if (!alive.current || worker.current !== client || generation !== renderGeneration.current
+          || preview.current?.requestId !== result.previewRequestId || gesture.current || lasso.current.length
+          || result.revision !== presentedRevision.current) return
+        const canvas = magicCanvas.current
+        if (canvas && result.magicLeft) {
+          const context = canvas.getContext('bitmaprenderer')
+          if (context) context.transferFromImageBitmap(result.magicLeft)
+          else canvas.getContext('2d')?.drawImage(result.magicLeft, 0, 0)
+          magicRevision.current = result.revision
+          canvas.style.visibility = 'visible'
+        }
+      } finally { result.left.close(); result.right.close(); result.magicLeft?.close() }
+    }).catch(reason => {
+      if (alive.current && worker.current === client) setError(`魔法棒預覽失敗：${String(reason)}`)
+    }).finally(() => {
+      if (worker.current !== client) return
+      previewBusy.current = false
+      if (previewWanted.current) requestPreviewRef.current()
+    })
+  }, [])
+  requestPreviewRef.current = requestPreview
+  // Patches are applied only to their declared baseline, after the active gesture.
   presentFrameRef.current = () => {
     const ready = readyFrame.current
     if (!ready || gesture.current || lasso.current.length) return
     readyFrame.current = null
     if (ready.generation === renderGeneration.current && alive.current) {
-      for (const [code, bitmap] of [[0, ready.frame.left], [-1, ready.frame.right]] as const) {
-        const canvas = canvasRefs.current.get(code)
-        if (!canvas) continue
-        const context = canvas.getContext('bitmaprenderer')
-        if (context) context.transferFromImageBitmap(bitmap)
-        else canvas.getContext('2d')?.drawImage(bitmap, 0, 0)
-        if (canvas.dataset.renderVersion !== String(ready.target)) canvas.dataset.renderVersion = String(ready.target)
-      }
-      const magic = magicCanvas.current
-      if (magic) {
-        magic.style.visibility = 'hidden'
-        if (ready.frame.magicLeft && preview.current?.requestId === ready.frame.previewRequestId) {
-          const context = magic.getContext('bitmaprenderer')
-          if (context) context.transferFromImageBitmap(ready.frame.magicLeft)
-          else magic.getContext('2d')?.drawImage(ready.frame.magicLeft, 0, 0)
-          magic.style.visibility = 'visible'
+      if (ready.frame.rect && ready.frame.baseRevision !== presentedRevision.current) {
+        presentedRevision.current = undefined
+        requestRenderRef.current()
+      } else {
+        for (const [code, bitmap] of [[0, ready.frame.left], [-1, ready.frame.right]] as const) {
+          const canvas = canvasRefs.current.get(code)
+          if (!canvas) continue
+          canvas.getContext('2d')?.drawImage(bitmap, ready.frame.rect?.x ?? 0, ready.frame.rect?.y ?? 0)
+          if (canvas.dataset.renderVersion !== String(ready.target)) canvas.dataset.renderVersion = String(ready.target)
+          canvas.dataset.renderArea = String((ready.frame.rect?.width ?? width) * (ready.frame.rect?.height ?? height))
         }
+        presentedRevision.current = ready.frame.revision
+        if (magicCanvas.current && magicRevision.current !== ready.frame.revision) magicCanvas.current.style.visibility = 'hidden'
+        pendingOutlines.current = pendingOutlines.current.filter(outline => outline.version > ready.target)
+        redrawRef.current()
+        if (preview.current && magicCanvas.current?.style.visibility !== 'visible') requestPreviewRef.current()
       }
-      pendingOutlines.current = pendingOutlines.current.filter(outline => outline.version > ready.target)
-      redrawRef.current()
     }
     ready.frame.left.close(); ready.frame.right.close(); ready.frame.magicLeft?.close()
   }
   useEffect(() => {
     if (mode !== 'edit' || loading) return
-    clearMagicPreview(); renderGeneration.current++; requestRender()
+    clearMagicPreview(); presentedRevision.current = undefined; renderGeneration.current++; requestRender()
   }, [mode, loading, maskPercent, maskColor, showMask, otherPercent, otherColor, requestRender, clearMagicPreview])
 
   const trackMutation = useCallback((task: Promise<RasterMetadata>, action: 'commit' | 'undo' | 'redo' | 'reset' = 'commit') => {
@@ -340,7 +375,7 @@ export const RasterEditor = forwardRef<RasterHandle, Props>(function RasterEdito
     const p = initial.current
     void (async () => {
       const [b, overlay, other, edited, text] = await Promise.all([
-        load(p.baseUrl, p.width, p.height), load(p.overlayUrl || '', p.width, p.height),
+        p.mode === 'edit' ? loadSourceImage(p.baseUrl, p.width, p.height) : load(p.baseUrl, p.width, p.height), load(p.overlayUrl || '', p.width, p.height),
         load(p.otherUrl || '', p.width, p.height, true), load(p.editedUrl || '', p.width, p.height, true),
         p.detectedTextUrl ? load(p.detectedTextUrl, p.width, p.height, true) : Promise.resolve(null),
       ])
@@ -523,7 +558,7 @@ export const RasterEditor = forwardRef<RasterHandle, Props>(function RasterEdito
     if (!magicPreviewEnabled || !point || tool !== 'magic' || special || disabled || gesture.current || !inside(point)) return
     hoverTimer.current = setTimeout(() => {
       preview.current = { requestId: hoverGeneration.current, point, tolerance, expand, operation, category, clipRect: props.clipRect, intersectOffset }
-      requestRender()
+      requestPreviewRef.current()
     }, 60)
   }
   previewHandler.current = previewMagic
@@ -792,7 +827,7 @@ export const RasterEditor = forwardRef<RasterHandle, Props>(function RasterEdito
         <div className="canvas-scroll" ref={node => { if (node) viewRefs.current.set(panel.code, node); else viewRefs.current.delete(panel.code) }}
           onScroll={event => { const el = event.currentTarget; if (props.viewState && !loading) Object.assign(props.viewState.current, {x:el.scrollLeft/(width*zoom), y:el.scrollTop/(height*zoom)}); for (const view of viewRefs.current.values()) if (view !== el && (view.scrollLeft !== el.scrollLeft || view.scrollTop !== el.scrollTop)) { view.scrollLeft = el.scrollLeft; view.scrollTop = el.scrollTop } }}>
           <div className={mode === 'edit' ? 'raster-stage' : 'raster-compose-stage'} style={{ width: width * zoom, height: height * zoom }}>
-          <canvas tabIndex={0} aria-label={panel.label} width={width} height={height} style={{ width: width * zoom, height: height * zoom, cursor: tool === 'pan' ? 'grab' : 'crosshair', touchAction: 'none' }}
+          <canvas key="region-render" tabIndex={0} aria-label={panel.label} width={width} height={height} style={{ width: width * zoom, height: height * zoom, cursor: disabled ? 'default' : mode === 'edit' && panel.code !== 0 && tool !== 'pan' ? 'default' : rasterCursor(special ? 'rectangle' : tool), touchAction: 'none' }}
             ref={node => { if (node) { canvasRefs.current.set(panel.code, node); redraw() } else canvasRefs.current.delete(panel.code) }}
             onContextMenu={e => e.preventDefault()} onPointerDown={e => { if (mode === 'compose' && panel.code > 1 && e.button === 0 && !e.metaKey && !e.ctrlKey && Math.abs(point(e).x-width*compare/100)*zoom < 10) { divider.current=true; e.preventDefault(); e.currentTarget.setPointerCapture(e.pointerId); return } down(e,panel.code) }} onPointerMove={e => { if (divider.current) { setCompare(Math.max(0,Math.min(100,point(e).x/width*100))); return } move(e,panel.code) }}
             onPointerUp={e => { if (gesture.current && gesture.current.pointerId !== e.pointerId) return; if (gesture.current && !['pan', 'bounds'].includes(gesture.current.kind)) move(e, panel.code); if (divider.current) { divider.current=false; return } end() }} onPointerCancel={e => { if (gesture.current && gesture.current.pointerId !== e.pointerId) return; divider.current=false; cancelGesture() }} onDoubleClick={() => { if (mode === 'edit' && tool === 'lasso') finishLasso() }}
