@@ -5,7 +5,10 @@ import { type Availability, type Detection, type Item, type Project, activeDetec
 import { EditorState } from './editor-state'
 import { ContinuousPages } from './ContinuousPages'
 import { type Selection, type PagePointer, color, moved, measureStyle } from './geometry'
-import { adjustedItems, textShortcut, shortcutHelp, type TextAdjustment } from './shortcuts'
+import { adjustedItems, textShortcut, type TextAdjustment } from './shortcuts'
+import { pasteFrame } from './frame-clipboard'
+import { useFrameClipboard } from './use-frame-clipboard'
+import { ShortcutHelp } from './ShortcutHelp'
 import './styles.css'
 
 const showCleanUpload = false
@@ -80,6 +83,13 @@ function Workspace({ project: initial, promptDetection, onExit, onReadyToLeave }
   const refreshingDetection = useRef(false)
   const pointer = useRef<PagePointer | null>(null)
   const pointerChanged = useCallback((value: PagePointer | null) => { pointer.current = value }, [])
+  useEffect(() => {
+    pointer.current = null
+    const invalidate = () => { pointer.current = null }
+    window.addEventListener('scroll', invalidate, true)
+    window.addEventListener('resize', invalidate)
+    return () => { window.removeEventListener('scroll', invalidate, true); window.removeEventListener('resize', invalidate) }
+  }, [zoom, compare])
   const interacting = useRef(false)
   const interactionChanged = useCallback((value: boolean) => { interacting.current = value }, [])
   useEffect(() => {
@@ -163,6 +173,23 @@ function Workspace({ project: initial, promptDetection, onExit, onReadyToLeave }
     const editing = (target: EventTarget | null) => target instanceof Element && !!target.closest('input,textarea,select,[contenteditable]:not([contenteditable="false"]),[role="combobox"],[role="textbox"],[role="spinbutton"]')
     return busy || interacting.current || event.defaultPrevented || !!document.querySelector('.ant-modal-wrap:not([style*="display: none"])') || editing(event.target) || editing(document.activeElement)
   }
+  useFrameClipboard({
+    blocked: shortcutBlocked,
+    selectionCount: selection.ids.length,
+    selected,
+    selectedPage: project.pages.find(page => page.id === selection.page),
+    pointer,
+    notify: value => notices.info(value),
+    paste: async (capture, valid) => {
+      const page = project.pages.find(page => page.id === capture.pointer.page)
+      if (!page) throw new Error('找不到滑鼠所在頁面')
+      const target = await controller.load(page.id)
+      if (!valid()) return
+      const item = pasteFrame(capture.frame, capture.pointer, page, uid, capture.text)
+      controller.edit(page.id, [...target.data.items, item])
+      setSelection({ page: page.id, ids: [item._id] })
+    },
+  })
   function adjust(adjustment: TextAdjustment, continuing = false) {
     const state = controller.pages.get(selection.page)
     if (!state || !selection.ids.length) return false
@@ -242,8 +269,9 @@ function Workspace({ project: initial, promptDetection, onExit, onReadyToLeave }
       {error && <Alert type="error" message={error} />}
     </Modal>
     <header className="pl-toolbar"><div className="pl-title"><Button onClick={() => void execute(async () => { if (await controller.flush()) await onExit() })}>項目列表</Button><strong>{project.name}</strong><Tag color={errors.length ? 'red' : controller.dirty ? 'orange' : 'green'}>{saving ? '保存中' : controller.dirty ? '尚未保存' : '已保存'}</Tag></div>
-      <Space wrap><Button onClick={() => modal.info({ title: '預排版快捷鍵', width: 650, content: <div className="pl-shortcut-help"><p>先點選文字，再使用移動、字級與旋轉快捷鍵。多選時每條文字分別調整；長按可連續操作，放開後記為一次撤銷。編輯輸入框或中文組字期間不攔截按鍵。</p><p>Mac 使用 ⌘／Option，Windows 使用 Ctrl／Alt。移動以原圖像素計算，與畫面縮放無關。</p><dl>{shortcutHelp.map(([action, keys]) => <div key={action}><dt>{action}</dt><dd>{keys}</dd></div>)}</dl></div> })}>快捷鍵</Button><Button onClick={() => void execute(async () => { await controller.flush() })}>保存</Button><Button onClick={downloadMeo}>匯出 Meo.json</Button><Button href="/downloads/LabelPlus_Ps_Script_ZS-1.8.0.zip" download="LabelPlus_Ps_Script_ZS-1.8.0.zip">配套PS腳本</Button></Space>
+      <Space wrap><Button onClick={() => modal.info({ title: '預排版快捷鍵', width: 1000, content: <ShortcutHelp collapsible={false} /> })}>快捷鍵</Button><Button onClick={() => void execute(async () => { await controller.flush() })}>保存</Button><Button onClick={downloadMeo}>匯出 Meo.json</Button><Button href="/downloads/LabelPlus_Ps_Script_ZS-1.8.0.zip" download="LabelPlus_Ps_Script_ZS-1.8.0.zip">配套PS腳本</Button></Space>
     </header>
+    <ShortcutHelp />
     <div className="pl-tool-row"><Space wrap>
       {(['bt', 'labelplus', 'clean'] as const).filter((kind): boolean => kind !== 'clean' || showCleanUpload).map(kind => <Button key={kind} disabled={busy} onClick={() => { importKind.current = kind; if (fileInput.current) { fileInput.current.accept = kind === 'bt' ? '.json' : kind === 'labelplus' ? '.txt' : '.png,.jpg,.jpeg'; fileInput.current.multiple = kind === 'clean'; fileInput.current.click() } }}>{kind === 'bt' ? '開啟 Meo.json' : kind === 'labelplus' ? '匯入LP.txt' : '上傳去字圖'}</Button>)}
       <input hidden ref={fileInput} type="file" onChange={e => { const list = files(e.target.files); e.target.value = ''; void execute(() => importFile(list)) }} />
@@ -257,13 +285,13 @@ function Workspace({ project: initial, promptDetection, onExit, onReadyToLeave }
       <ContinuousPages project={project} controller={controller} selection={selection} onSelect={select} zoom={zoom} onZoom={setZoom} compare={compare} clean={clean} showMeasure={showMeasure} jump={jump} onCurrent={currentPage} onMeasure={onMeasure} onPointer={pointerChanged} onFontWheel={fontWheel} onInteractionChange={interactionChanged} />
       <aside className="pl-inspector">
         <h2>文字編輯</h2>{state?.conflict && <Space wrap><Button onClick={() => void execute(() => controller.resolve(selection.page, true))}>保留我的草稿</Button><Button onClick={() => void execute(() => controller.resolve(selection.page, false))}>載入伺服器版</Button></Space>}
-        {first ? <><p className="pl-muted">雙擊頁面文字可原位編輯，支援直排。Enter 換行；⌘／Ctrl＋Enter 完成；Esc 保存並結束編輯。</p><label>文字 {selected.length > 1 && `· 已選 ${selected.length} 條`}<Input.TextArea rows={5} value={first.text} onChange={e => patch({ text: e.target.value })} /></label>
+        {first ? <><p className="pl-muted">雙擊頁面文字可原位編輯；Mac 也可用 ⌘＋單擊，並支援直排。Enter 換行；⌘／Ctrl＋Enter 完成；Esc 保存並結束編輯。</p><label>文字 {selected.length > 1 && `· 已選 ${selected.length} 條`}<Input.TextArea rows={5} value={first.text} onChange={e => patch({ text: e.target.value })} /></label>
           <div className="pl-two-fields"><label>字級<InputNumber aria-label="字級" value={first['font-size']} min={1} max={999} onChange={v => v !== null && patch({ 'font-size': v })} /></label><label>角度<InputNumber aria-label="角度" value={first.rotation} min={-180} max={180} step={1} onChange={v => v !== null && patch({ rotation: v })} /></label></div>
           <label>方向<Select value={first.orientation} onChange={v => patch({ orientation: v })} options={[{ value: 'vertical', label: '直排' }, { value: 'horizontal', label: '橫排' }]} /></label>
           <div className="pl-two-fields"><label>文字色<input aria-label="文字色" type="color" value={color(first.color)} onChange={e => patch({ color: e.target.value })} /></label><label>描邊色<input aria-label="描邊色" type="color" value={color(first['stroke-color'])} onChange={e => patch({ 'stroke-color': e.target.value })} /></label></div>
           <label>描邊粗細<InputNumber min={0} max={99} value={first['stroke-weight']} onChange={v => v !== null && patch({ 'stroke-weight': v })} /></label><Checkbox checked={!!first.need_inpaint} onChange={e => patch({ need_inpaint: e.target.checked })}>保留修復標記</Checkbox><Checkbox checked={!!first.text_has_stroke} onChange={e => patch({ text_has_stroke: e.target.checked })}>保留原文描邊標記</Checkbox>
           <Space wrap><Button onClick={duplicate}>複製</Button><Button danger onClick={() => { if (state) controller.edit(selection.page, state.data.items.filter(item => !selection.ids.includes(item._id))); setSelection(value => ({ ...value, ids: [] })) }}>刪除</Button><Button onClick={() => void execute(async () => { const values = [...clipboard, { ...first, _id: uid() }]; await request(`${base}/preferences`, body(values, 'PUT')); setClipboard(values) })}>加入常用框</Button></Space>
-        </> : <p className="pl-muted">雙擊文字可原位編輯（橫排／直排）。雙擊底圖新增文字；Shift 點選可多選。</p>}
+        </> : <p className="pl-muted">雙擊文字可原位編輯（橫排／直排）；Mac 也可用 ⌘＋單擊。雙擊底圖新增文字；Shift 點選可多選。</p>}
         <details open><summary>本頁文字</summary><Space wrap><Checkbox checked={pendingOnly} onChange={e => setPendingOnly(e.target.checked)}>只看待處理</Checkbox><Button size="small" onClick={() => void execute(nextPending)}>下一個待處理</Button></Space><div className="pl-items-list">{state?.data.items.filter(item => !pendingOnly || ['unmatched', 'duplicate'].includes(item.match_status || '')).map((item, index) => <button key={item._id} className={selection.ids.includes(item._id) ? 'active' : ''} onClick={() => { setSelection({ page: state.data.id, ids: [item._id] }); setJump({ id: state.data.id, y: item.y, version: Date.now() }) }}><span>{index + 1}. {item.text || '空文字'}</span><small>{({ auto: '自動', manual: '手動', duplicate: '待確認', unmatched: '未匹配' } as Record<string, string>)[item.match_status || '']}</small></button>)}</div></details>
         <details><summary>常用文字框</summary>{clipboard.map(item => <div className="pl-clipboard" key={item._id}><button title="暫存此框，再用 F2 貼到指標位置" onClick={() => { setMemory(structuredClone(item)); notices.info('已暫存，將指標移到頁面後按 F2 貼上') }}>{item.text || '空文字'}</button><Button size="small" onClick={() => void execute(async () => { const next = clipboard.filter(i => i._id !== item._id); await request(`${base}/preferences`, body(next, 'PUT')); setClipboard(next) })}>移除</Button></div>)}</details>
         <details open><summary>偵測與字級</summary><p className="pl-muted">{availability?.methods[method] ? `本地模型已就緒；提交時檢查 ${availability.device === 'mps' ? 'Apple GPU（MPS）' : 'CUDA GPU'}` : '尚未準備模型；可繼續人工編輯。'}</p>
