@@ -49,6 +49,8 @@ export function adjustedItems(items: Item[], ids: string[], adjustment: TextAdju
 }
 
 export const shortcutHelp = [
+  ['原位編輯文字', '雙擊文字（橫排／直排）；Enter 換行；點外面或 ⌘／Ctrl＋Enter 完成；Esc 取消'],
+  ['直排文字游標', '編輯中 ←／→ 換欄，↑／↓ 逐字移動；加 Shift 延伸選字'],
   ['移動文字', '方向鍵：1 px；Shift＋方向鍵：10 px；⌘／Ctrl＋Shift＋方向鍵：50 px'],
   ['放大／縮小文字', '⌘／Ctrl＋＋／－：2；再加 Option／Alt：10（＋也可直接按 =）'],
   ['旋轉文字', '⌘／Ctrl＋[：逆時針 1°；⌘／Ctrl＋]：順時針 1°；再加 Option／Alt：5°'],

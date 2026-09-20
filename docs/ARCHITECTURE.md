@@ -1,10 +1,22 @@
 # 系統架構
 
+預排版左右字級標示只顯示數字，不加「目前」或「計算」前綴；缺少數值時仍顯示「—」。
+
 本專案以項目串接「準備與編輯 → 批量修復 → 比較合成」。第二部分沿用既有 ComfyUI 引擎、批次器與三份固定工作流；第一部分新增獨立 RF-DETR／MangaLens 推理程序，第三部分是 CPU／Canvas 像素合成。
 
 2026-09-12：上述工作台功能已在本機實作整合；新增 CUDA 環境與模型切換尚待目標 GPU 驗收，本次擴充未部署、未建立新 Tag 或鏡像。本文後段保留原第二部分的輸入、任務及性能記錄，只有明確標示的歷史基線已做過遠端 GPU 實測。需求邊界見 [工作台計劃](PROJECT_WORKBENCH_PLAN.md)，偵測部署限制見 [偵測模型說明](DETECTION_MODELS.md)。
 
 ## 獨立資料的網頁預排版
+
+`TextPage` 雙擊文字時掛載 `InlineTextEditor`，沿用同一文字層的 writing-mode、縮放、旋轉與樣式。純文字 contenteditable 的 DOM、選取與組字區間由瀏覽器管理，React 更新不覆寫輸入內容；原生游標命中測試定位雙擊位置。編輯期間隱藏拖曳控制點並隔離鍵盤事件。完成／失焦時只更新該條文字與手動狀態，記一次撤銷；Esc 丟棄本次輸入。`EditorState` 登記未完成的文字草稿，使離頁提醒識別未保存輸入，並在 flush（保存／匯出／跨工作區）及撤銷前提交。只有完成編輯後才進入既有 IndexedDB 與伺服器自動保存流程。
+
+`editable-text.ts` 共同提供保存文字及 DOM 游標位置對照，統一處理純文字換行、DIV／P、BR 與末尾佔位換行，不重寫瀏覽器正在編輯的 DOM。`caret-navigation.ts` 依明確的換行欄位設定 Selection 位置，取代瀏覽器的 `Selection.modify(line)`：←／→ 移到相鄰欄並記住原字位，短欄夾到欄尾，邊界保持不動；↑／↓ 依 Unicode grapheme 逐字移動。Shift 保留選取起點，點擊、輸入及其他鍵重設記憶字位。組字與系統修飾鍵不攔截，橫排沿用原生游標。
+
+Safari／WebKit 已知限制：多欄直排的實際插入位置可能正確，但原生游標繪製向下偏移。2026-09-20 以相同字型、文字和程式在 Safari 重現；Chrome 測試頁與正式第 7 頁、300% 縮放下，「和」字後按 ↑ 正確停在「曾」字後。現階段直排原位編輯建議使用 Chrome；重啟後端不會修正 Safari 的繪製問題。參考 [WebKit 286961](https://bugs.webkit.org/show_bug.cgi?id=286961) 與 [310592](https://bugs.webkit.org/show_bug.cgi?id=310592)。
+
+`frontend/tests/prelayout-caret.test.mjs` 驗證欄位、空欄、換行及 Unicode 邊界。瀏覽器回歸頁以 `node frontend/tests/build-caret-browser.mjs` 產生於 `var-test/caret-probe/regression.html`，可用本機 HTTP 服務開啟，驗證不同 DOM 結構、縮放、游標位置及真正的 `InlineTextEditor` 原生輸入／保存；不操作使用者項目。
+
+左右字級標示由 `TextPage` 的非互動覆蓋層提供：左側取 `item['font-size']`，右側偵測框取 `measure.font_size`。未選取、選取及原位輸入時均顯示；反向補償頁面縮放，左側另補償文字旋轉，使標示保持可讀。計算值缺失顯示「—」，不觸發重新偵測，不更動輸出資料。
 
 頁碼導覽位於頂部工具列下方，橫向排列並自動換行，不佔左側欄位；頁數較多時導覽區最高佔視窗 25%，其餘頁碼可在區內捲動。既有點頁跳轉、目前頁高亮、連續捲動與顯示切換邏輯保留。
 

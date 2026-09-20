@@ -31,7 +31,23 @@ export class EditorState {
   private inflight = new Map<string, Promise<boolean>>()
   private persistence = new Map<string, Promise<unknown>>()
   private groups = new Map<string, { key: string; time: number }>()
+  private textDraft: { page: string; finish: () => void; changed: boolean } | null = null
   constructor(readonly project: string) {}
+  beginTextDraft(page: string, finish: () => void) {
+    this.textDraft?.finish()
+    const session = { page, finish, changed: false }
+    this.textDraft = session
+    return {
+      change: (changed: boolean) => {
+        if (this.textDraft !== session || session.changed === changed) return
+        session.changed = changed; this.emit(page)
+      },
+      end: () => {
+        if (this.textDraft !== session) return
+        this.textDraft = null; this.emit(page)
+      },
+    }
+  }
   subscribe = (id: string, listener: () => void) => {
     const listeners = this.listeners.get(id) || new Set()
     listeners.add(listener); this.listeners.set(id, listeners)
@@ -78,6 +94,7 @@ export class EditorState {
   }
   endGroup(id: string) { this.groups.delete(id) }
   undo(id: string, redo = false) {
+    this.textDraft?.finish()
     const state = this.pages.get(id)
     if (!state) return
     const from = redo ? state.redo : state.undo, to = redo ? state.undo : state.redo
@@ -124,6 +141,7 @@ export class EditorState {
     try { return await promise } finally { this.inflight.delete(id) }
   }
   async flush() {
+    this.textDraft?.finish()
     for (const [id] of this.pages) {
       if (!await this.save(id)) return false
       if (this.pages.get(id)?.dirty && !await this.save(id)) return false
@@ -156,6 +174,6 @@ export class EditorState {
       this.persist(id, true); this.emit(id)
     }
   }
-  get dirty() { return [...this.pages.values()].some(state => state.dirty) }
+  get dirty() { return !!this.textDraft?.changed || [...this.pages.values()].some(state => state.dirty) }
   dispose() { this.timers.forEach(clearTimeout) }
 }

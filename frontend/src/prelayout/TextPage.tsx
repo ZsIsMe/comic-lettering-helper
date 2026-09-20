@@ -6,8 +6,10 @@ import { PreviewLayer } from './PreviewLayer'
 import { color, moved, resized, transform, type Selection, type PagePointer, type VisibleRegion } from './geometry'
 import { adjustedItems, type TextAdjustment } from './shortcuts'
 import { CharacterOverlay, type CharacterOverlayHandle } from './CharacterOverlay'
+import { InlineTextEditor } from './InlineTextEditor'
 
 const noCharacters: CharacterBox[] = []
+const fontLabel = (size?: number) => typeof size === 'number' && Number.isFinite(size) && size > 0 ? String(Math.round(size * 100) / 100) : '—'
 
 const frameControls = [
   { x: 'left', y: 'top', kind: 'font', delta: -2, icon: '−', label: '左上：縮小文字', hint: '字級減少 2；Option／Alt 點擊減少 10' },
@@ -24,6 +26,7 @@ export const TextPage = memo(function TextPage({ project, page, scale, edge, cle
 }) {
   useSyncExternalStore(callback => controller.subscribe(page.id, callback), () => controller.tick(page.id))
   const [error, setError] = useState('')
+  const [editing, setEditing] = useState<{ id: string; x: number; y: number } | null>(null)
   const state = controller.pages.get(page.id)
   const scene = useRef<HTMLDivElement>(null)
   const characterOverlay = useRef<CharacterOverlayHandle>(null)
@@ -130,10 +133,17 @@ export const TextPage = memo(function TextPage({ project, page, scale, edge, cle
       onSelect({ page: page.id, ids: [] })
     }}>
       <PreviewLayer project={project} page={page} edge={edge} scale={scale} clean={clean} region={region} detailed={detailed} interacting={interacting} />
-      {!readonly && state?.data.items.map(item => <div key={item._id} data-item={item._id} className={`pl-text ${selected.includes(item._id) ? 'selected' : ''}`} style={{ left: item.x * page.width, top: item.y * page.height, transform: transform(item), fontSize: item['font-size'], writingMode: item.orientation === 'vertical' ? 'vertical-rl' : 'horizontal-tb', color: color(item.color), WebkitTextStroke: `${item['stroke-weight']}px ${color(item['stroke-color'])}`, outlineWidth: selected.includes(item._id) ? 1.5 / scale : 0 }}
-        onPointerDown={event => down(event, item)} onPointerMove={move} onPointerUp={event => end(event)} onPointerCancel={event => end(event, true)} onDoubleClick={event => event.stopPropagation()}>
-        {item.text || '\u200b'}
-        {selected.includes(item._id) && <>
+      {!readonly && state?.data.items.map(item => <div key={item._id} data-item={item._id} className={`pl-text ${selected.includes(item._id) ? 'selected' : ''} ${editing?.id === item._id ? 'editing' : ''}`} style={{ left: item.x * page.width, top: item.y * page.height, transform: transform(item), fontSize: item['font-size'], writingMode: item.orientation === 'vertical' ? 'vertical-rl' : 'horizontal-tb', color: color(item.color), WebkitTextStroke: `${item['stroke-weight']}px ${color(item['stroke-color'])}`, outlineWidth: selected.includes(item._id) ? 1.5 / scale : 0 }}
+        onPointerDown={event => { if (editing?.id !== item._id) down(event, item) }} onPointerMove={move} onPointerUp={event => end(event)} onPointerCancel={event => end(event, true)} onDoubleClick={event => {
+          event.stopPropagation()
+          if (event.target instanceof Element && event.target.closest('button,.pl-handle,.pl-source-box')) return
+          onSelect({ page: page.id, ids: [item._id] })
+          characterOverlay.current?.clear()
+          setEditing({ id: item._id, x: event.clientX, y: event.clientY })
+        }}>
+        {editing?.id === item._id ? <InlineTextEditor key={item._id} item={item} page={page.id} controller={controller} point={editing} onFinish={() => setEditing(null)} /> : item.text || '\u200b'}
+        <span className="pl-font-label pl-current-font" aria-label={`目前字級 ${fontLabel(item['font-size'])}`} style={{ fontSize: 11 / scale, padding: `${2 / scale}px ${4 / scale}px`, bottom: -19 / scale, transform: `rotate(${item.rotation}deg)`, transformOrigin: 'top right' }}>{fontLabel(item['font-size'])}</span>
+        {selected.includes(item._id) && editing?.id !== item._id && <>
           {frameControls.map(corner => <button key={`${corner.x}-${corner.y}`} type="button" className="pl-text-step" aria-label={corner.label} title={`${corner.hint}（套用所有選取文字）`} style={{
             width: 22 / scale, height: 22 / scale, fontSize: 17 / scale, borderWidth: 1 / scale,
             [corner.x]: -6 / scale, [corner.y]: -6 / scale,
@@ -150,7 +160,7 @@ export const TextPage = memo(function TextPage({ project, page, scale, edge, cle
       </div>)}
       {showMeasure && state?.data.measure.map((measure, index) => {
         const box = measure.xyxy_pixel
-        return box && <button key={index} className="pl-measure" aria-label={`套用偵測框 ${index + 1}`} onPointerDown={event => event.stopPropagation()} onDoubleClick={event => event.stopPropagation()} onClick={event => { event.stopPropagation(); onMeasure(index, page.id) }} style={{ left: box[0], top: box[1], width: box[2] - box[0], height: box[3] - box[1], borderWidth: 2 / scale, fontSize: 13 / scale }}>{index + 1}</button>
+        return box && <button key={index} className="pl-measure" aria-label={`套用偵測框 ${index + 1}`} onPointerDown={event => event.stopPropagation()} onDoubleClick={event => event.stopPropagation()} onClick={event => { event.stopPropagation(); onMeasure(index, page.id) }} style={{ left: box[0], top: box[1], width: box[2] - box[0], height: box[3] - box[1], borderWidth: 2 / scale, fontSize: 13 / scale }}>{index + 1}<span className="pl-font-label pl-calculated-font" aria-label={`計算字級 ${fontLabel(measure.font_size)}`} style={{ fontSize: 11 / scale, padding: `${2 / scale}px ${4 / scale}px` }}>{fontLabel(measure.font_size)}</span></button>
       })}
       {showMeasure && <CharacterOverlay ref={characterOverlay} characters={state?.data.character_boxes || noCharacters} width={page.width} height={page.height} scale={scale} region={region} disabled={interacting} />}
     </div>
