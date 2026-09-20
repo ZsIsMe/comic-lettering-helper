@@ -83,6 +83,8 @@ PYTHONPATH=backend /root/comic-prelayout-venv/bin/python -m prelayout_core.check
   --model-root /root/models/comic-prelayout --method ocr_aligned --require-cuda
 ```
 
+本機 macOS 先複製 `scripts/local.env.example` 為 `var/local/start.env`（或執行 `./scripts/start-local.sh init`）並填入模型與 Python 的絕對路徑，再執行 `make start-local`。腳本會把五項資產連結到 `var/local/prelayout-models`、使用 `COMIC_PRELAYOUT_DEVICE=mps`，並在 `127.0.0.1:6008` 啟動網頁；不啟動 ComfyUI。`var/local/start.env` 不進 Git。停止用 `make stop-local`。此入口不可用於 AutoDL。
+
 本地測試可直接使用已有模型及隔離 Python，不必先放入鏡像。Apple Silicon 可明確設定 `COMIC_PRELAYOUT_DEVICE=mps`，並用 `prelayout_core.check --device mps` 預檢；預設仍為 `cuda`。設備由服務端設定並記入任務，不能由網頁請求改成 CPU。MPS 任務不依賴 CUDA 的 ComfyUI 服務，但仍取得共用 GPU gate，且強制 `PYTORCH_ENABLE_MPS_FALLBACK=0`；設備不可用時明確失敗。本地模型測試使用使用者指定資料夾的副本建立獨立預排版項目，原圖及譯稿保持不變。
 
 預檢只校驗資產、依賴、字型指標與指定 GPU 的可見性，不執行模型推理，回報的 `inference_verified` 固定為 `false`。`GET /api/prelayout/availability` 只檢查基本檔案及環境路徑，不能代替預檢。鏡像還須安裝 `ps`（Linux 通常由 `procps` 提供），供程序群組恢復與安全取消使用。
@@ -111,18 +113,20 @@ AutoDL `WebUI-6006` 保留原生 ComfyUI；`WebUI-6008` 提供工作台。後端
 
 React＋TypeScript＋Vite＋Ant Design 提供頁面，Canvas 提供原尺寸像素編輯。FastAPI、Pillow、NumPy／OpenCV 管理資料及 CPU 影像處理；項目索引與任務記錄使用磁碟 JSON，沒有另建資料庫。RF／MangaLens 使用可選、獨立的 Python CUDA 環境，ComfyUI 環境保持分離。
 
+本機連同預排版／修圖模型一次啟動：
+
 ```bash
-npm --prefix frontend install
-npm --prefix frontend run dev
+./scripts/start-local.sh init   # 首次：複製路徑範本
+# 編輯 var/local/start.env
+make start-local
 ```
 
-在倉庫根目錄的另一個終端啟動後端：
+瀏覽器打開 `http://127.0.0.1:6008/#/prelayout`。只改前端時可另開 `npm --prefix frontend run dev`（代理到同一 6008）。首次安裝仍執行：
 
 ```bash
+npm --prefix frontend install
 python3 -m venv .venv
 .venv/bin/pip install -r backend/requirements-dev.txt
-COMIC_APP_ROOT="$PWD" COMIC_DATA_ROOT="$PWD/var" \
-  .venv/bin/uvicorn app.main:app --app-dir backend --reload --port 6008
 ```
 
 一般 Web 開發不需要安裝偵測模型依賴。檢查命令：

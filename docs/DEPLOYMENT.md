@@ -6,7 +6,7 @@
 
 目前程式和資料契約見 [ARCHITECTURE.md](ARCHITECTURE.md)，需求基線見 [PROJECT_WORKBENCH_PLAN.md](PROJECT_WORKBENCH_PLAN.md)，偵測配置及已知依賴例外見 [DETECTION_MODELS.md](DETECTION_MODELS.md)。
 
-本機測試可由 `COMIC_DETECTION_CONFIG` 指向未提交的配置，明確設 `device: "mps"` 或 `"cpu"`，並設定已有的模型路徑與 `COMIC_DETECTION_PYTHON`。不需要安裝 ComfyUI 才能測第一部分；正式 AutoDL 配置維持 `cuda:0`。更新第一部分雙畫布或模型装置支援後，先建置前端，再重啟本機服務以載入配置；保留原 `COMIC_DATA_ROOT`，不清除試用項目。
+本機測試可由 `COMIC_DETECTION_CONFIG` 指向未提交的配置，明確設 `device: "mps"` 或 `"cpu"`，並設定已有的模型路徑與 `COMIC_DETECTION_PYTHON`。不需要安裝 ComfyUI 才能測第一部分；正式 AutoDL 配置維持 `cuda:0`。更新第一部分雙畫布或模型装置支援後，先建置前端，再重啟本機服務以載入配置；保留原 `COMIC_DATA_ROOT`，不清除試用項目。Apple Silicon 可先複製 `scripts/local.env.example` 為 `var/local/start.env`，再執行 `make start-local`。該入口只綁定 `127.0.0.1:6008`、使用 `var/` 與 `mps`，不執行 `deploy/start-web.sh`，也不啟動 6006。
 
 這份文件同時服務兩種情境，請先確認自己走哪一條路：
 

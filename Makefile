@@ -1,4 +1,4 @@
-.PHONY: frontend backend-test verify-local
+.PHONY: frontend backend-test verify-local start-local stop-local
 
 frontend:
 	npm --prefix frontend run build
@@ -8,3 +8,9 @@ backend-test:
 
 verify-local:
 	.venv/bin/python deploy/verify.py --app-root "$(CURDIR)" --comfy-root "$${COMFY_ROOT:-/root/ComfyUI}"
+
+start-local:
+	./scripts/start-local.sh --no-open
+
+stop-local:
+	./scripts/start-local.sh stop
