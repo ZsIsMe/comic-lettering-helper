@@ -499,3 +499,13 @@ ComfyUI 輸出先複製到暫存檔，通過 PNG 完整性與解碼檢查後才�
 漫畫修圖項目接受部分頁面的同檔名 Mask；拒絕多餘 Mask、重複檔名與尺寸不一致。新建時只自動檢測缺少 Mask 的頁面，已提供的 Mask（包含全黑）保持不變；全部已有 Mask 時不啟動檢測。檢測未啟動或未完成可按「補充缺少的 Mask」重試；原有明確確認的重新檢測仍可取代圖層。此版只本地測試並發布 GitHub 更新包，未部署遠端、未執行 GPU 推理，無新增模型或依賴。
 
 僅修改「OCR 對齊逐字計算」：CTD 階段同時計算並保留既有單字框字級（相同基準／步長），OCR 校準後取 max（單字框字級，OCR 字級）。measure 保留 font_size_char_box、font_size_ocr 及各自方法，最終方法為 max_char_box_ocr_aligned；缺少可靠 OCR 時保留單字框結果，無可靠單字框時沿用原回退／OCR 結果。OCR 跨行同字的字框 IoU ≥ 0.8 時保留較完整的可靠字框，重複樣本標記 duplicate_overlapping_character 後再做原有 MAD 篩選。獨立「單字框計算」算法保持不變。 更新後新啟動的偵測 worker 會載入新算法；既有 measure 與逐頁快取不自動改寫，需重新偵測才能在介面取得新計算值。
+
+## 修圖選區 Worker 資產
+
+選區改造的正式前端構建會額外產生 `raster-worker-*.js`。部署時同步完整 `frontend/dist/`，包含 Worker chunk；代理和 CSP 必須允許同源 module Worker，Worker URL 必須回傳 JavaScript 而不是 SPA HTML。瀏覽器需支援 Worker 內 OffscreenCanvas 2D、transferToImageBitmap 與 convertToBlob；不支援時顯示錯誤，不回退到阻塞主執行緒的像素計算。本版不使用 SharedArrayBuffer，因此無須為此增加 COOP／COEP 標頭。
+
+發布前在實際代理 URL 和目標瀏覽器檢查載入、框選、畫筆、魔法棒、撤銷、保存與重開；本機驗證不能代替 AutoDL 代理驗收。此分支尚未部署，沒有新增 GPU 或後端依賴。
+
+選區驗收補充：檢查魔法棒預覽開關、快速移動／離開不殘留舊預覽，正式選區不被懸停取消；檢查畫筆大小滑塊及 `[`／`]`。本機測試頁人工延遲預設 0 ms；勾選「模擬慢速回覆（1 秒）」只用於隔離壓力測試，日常試用請關閉。
+
+魔法棒啟用時，`[`／`]` 改為減少／增加容差，每次 1，限制在 0–100；工具列顯示對應提示，容差改變後重新計算懸停預覽。畫筆仍每次調整 4 px；輸入框與 Ctrl／Cmd／Alt 組合不攔截。

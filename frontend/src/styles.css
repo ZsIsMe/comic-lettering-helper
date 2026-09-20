@@ -424,3 +424,12 @@ footer { padding: 20px 0; color: #746e63; font-size: 12px; }
 
 .result-export-action { display:flex; flex-direction:column; align-items:flex-end; gap:4px; }
 .result-export-action > span { color:#73501e; font-size:12px; }
+
+/* The input overlay is independent of worker-generated full-resolution pixels. */
+.raster-stage, .raster-compose-stage { position: relative; flex: 0 0 auto; margin: auto; }
+.raster-interaction { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; overflow: hidden; }
+
+.raster-stage > .raster-magic-preview { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; visibility: hidden; }
+
+.brush-settings > .ant-slider { width: 140px; margin-inline: 8px; }
+.brush-shortcut-hint { font-size: 12px; color: #686058; white-space: nowrap; }

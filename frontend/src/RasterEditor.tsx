@@ -1,8 +1,10 @@
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from 'react'
 import { Alert, Button, Checkbox, Dropdown, InputNumber, Select, Slider, Space, Spin, Tooltip } from 'antd'
-import { renderEditViews } from './edit-preview'
-import { combineSelection, magicSelection, polygonSelection, rectangleSelection, type SelectionOperation } from './selection-core'
-import { applyCategoryMask, applySpecialSelection, textRepairMask, categoryMask, mergeLayerRegion, type EditCategory, type EditLayers, type EditRect, type SolidSampleSource } from './mask-edit-core'
+import { RasterWorkerClient } from './raster-worker-client'
+import type { RasterEditCommand, RasterMetadata, RasterMagicPreview, RasterRenderFrame } from './raster-worker-protocol'
+import { drawInteraction, type InteractionShape, type InteractionOutline } from './raster-interaction'
+import { rectangleSelection, type SelectionOperation } from './selection-core'
+import { type EditCategory, type EditRect } from './mask-edit-core'
 import { RegionComparison } from './RegionComparison'
 import { adoptComparisonRegion, type CompareRegion } from './comparison-regions'
 import { LocalEditWindow } from './LocalEditWindow'
@@ -41,11 +43,6 @@ function copy(pixels: Pixels): Pixels {
   const clone = (im: ImageData) => new ImageData(new Uint8ClampedArray(im.data), im.width, im.height)
   return { overlay: clone(pixels.overlay), other: clone(pixels.other), edited: clone(pixels.edited), assignment: pixels.assignment.slice() }
 }
-function surface(im: ImageData) {
-  const canvas = document.createElement('canvas'); canvas.width = im.width; canvas.height = im.height
-  canvas.getContext('2d')!.putImageData(im, 0, 0)
-  return canvas
-}
 async function load(url: string, width: number, height: number, opaque = false): Promise<ImageData> {
   if (!url) return blank(width, height, opaque)
   const image = new Image(); image.src = url
@@ -55,9 +52,6 @@ async function load(url: string, width: number, height: number, opaque = false):
   const context = canvas.getContext('2d', { willReadFrequently: true })!
   context.drawImage(image, 0, 0)
   return context.getImageData(0, 0, width, height)
-}
-async function png(im: ImageData): Promise<Blob> {
-  return new Promise((resolve, reject) => surface(im).toBlob(blob => blob ? resolve(blob) : reject(new Error('圖片編碼失敗')), 'image/png'))
 }
 function rle(values: Uint16Array): number[][] {
   const runs: number[][] = []
@@ -74,12 +68,12 @@ function previewPreference<T>(key: string, fallback: T): T {
   catch { return fallback }
 }
 function rgb(hex: string) { return [1, 3, 5].map(offset => parseInt(hex.slice(offset, offset + 2), 16)) }
-function layers(p: Pixels): EditLayers { return { overlay: p.overlay.data, other: p.other.data, edited: p.edited.data } }
-function replaceLayers(p: Pixels, next: EditLayers, width: number, height: number): Pixels {
-  return { ...p, overlay: new ImageData(next.overlay as Uint8ClampedArray<ArrayBuffer>, width, height), other: new ImageData(next.other as Uint8ClampedArray<ArrayBuffer>, width, height), edited: new ImageData(next.edited as Uint8ClampedArray<ArrayBuffer>, width, height) }
-}
 type Point = { x: number; y: number }
-type Gesture = Point & { lastX: number; lastY: number; code: number; before: Pixels; panX: number; panY: number; kind: string; operation: SelectionOperation | 'clear' | 'swap'; target: EditCategory; selection: Uint8Array; edge?: string; roi?: EditRect }
+type Gesture = Point & { pointerId: number; lastX: number; lastY: number; code: number; before: Pixels; panX: number; panY: number; kind: string; operation: SelectionOperation | 'clear' | 'swap'; target: EditCategory; selection: Uint8Array; points: Point[]; size: number; intersectOffset: number; clipRect?: EditRect; edge?: string; roi?: EditRect }
+function gestureShape(g: Gesture): InteractionShape {
+  return g.kind === 'brush' ? { kind: 'brush', points: g.points, size: g.size }
+    : { kind: 'rectangle', start: {x:g.x,y:g.y}, end: {x:g.lastX,y:g.lastY} }
+}
 type LocalDraft = { rect: EditRect; overlayUrl: string; otherUrl: string; editedUrl: string }
 
 
@@ -96,7 +90,6 @@ export const RasterEditor = forwardRef<RasterHandle, Props>(function RasterEdito
   const pixels = useRef<Pixels | null>(null)
   const base = useRef<ImageData | null>(null)
   const detectedText = useRef<ImageData | null>(null)
-  const repairText = useRef<Uint8Array | null>(null)
   const frame = useRef<number | null>(null)
   const candidates = useRef<Map<number, { image: ImageData; diff: ImageData }>>(new Map())
   const canvasRefs = useRef<Map<number, HTMLCanvasElement>>(new Map())
@@ -106,7 +99,32 @@ export const RasterEditor = forwardRef<RasterHandle, Props>(function RasterEdito
   const lasso = useRef<Point[]>([])
   const hover = useRef<Point | null>(null)
   const hoverTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const preview = useRef<{ add: Uint8Array; remove: Uint8Array } | null>(null)
+  const preview = useRef<RasterMagicPreview | null>(null)
+  const magicCanvas = useRef<HTMLCanvasElement | null>(null)
+  const hoverGeneration = useRef(0)
+  const clearMagicPreview = useCallback(() => {
+    preview.current = null
+    if (hoverTimer.current) clearTimeout(hoverTimer.current)
+    hoverGeneration.current++
+    if (magicCanvas.current) magicCanvas.current.style.visibility = 'hidden'
+  }, [])
+  const worker = useRef<RasterWorkerClient | null>(null)
+  const workerFailure = useRef<Error | null>(null)
+  const pendingWork = useRef<Promise<void>>(Promise.resolve())
+  const pendingCount = useRef(0)
+  const projectedHistory = useRef({ undo: 0, redo: 0 })
+  const interactionSvg = useRef<SVGSVGElement | null>(null)
+  const previewClipSvg = useRef<SVGSVGElement | null>(null)
+  const pendingOutlines = useRef<(InteractionOutline & { version: number })[]>([])
+  const renderGeneration = useRef(0)
+  const readyFrame = useRef<{ frame: RasterRenderFrame; generation: number; target: number } | null>(null)
+  const presentFrameRef = useRef<() => void>(() => {})
+  const renderBusy = useRef(false)
+  const renderWanted = useRef(false)
+  const renderTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const requestRenderRef = useRef<() => void>(() => {})
+  const repairCallback = useRef(props.onRepairMaskChange); repairCallback.current = props.onRepairMaskChange
+  const [computing, setComputing] = useState(false)
   const previewHandler = useRef<(point: Point | null) => void>(() => {})
   const version = useRef(0); const persisted = useRef(0)
   const saving = useRef<Promise<boolean> | null>(null)
@@ -120,6 +138,7 @@ export const RasterEditor = forwardRef<RasterHandle, Props>(function RasterEdito
   const [operation, setOperation] = useState<SelectionOperation>(props.viewState?.current.operation || 'add')
   const [special, setSpecial] = useState<'clear' | null>(null)
   const [tolerance, setTolerance] = useState(props.viewState?.current.tolerance ?? 28)
+  const [magicPreviewEnabled, setMagicPreviewEnabled] = useState(() => previewPreference('magic-preview', true))
   const [expand, setExpand] = useState(props.viewState?.current.expand ?? 0)
   const [intersectOffset, setIntersectOffset] = useState(props.viewState?.current.intersectOffset ?? 0)
   const [size, setSize] = useState(props.viewState?.current.size || 16)
@@ -145,37 +164,15 @@ export const RasterEditor = forwardRef<RasterHandle, Props>(function RasterEdito
     const p = pixels.current; const b = base.current
     if (!p || !b) return
     if (mode === 'edit') {
-      const views = renderEditViews({ base: b.data, overlay: p.overlay.data, other: p.other.data, edited: p.edited.data,
-        detectedText: detectedText.current?.data }, { maskPercent, maskColor: rgb(maskColor), showOther: showMask,
-        otherPercent, otherColor: rgb(otherColor) })
-      for (const [code, canvas] of canvasRefs.current) {
-        const ctx = canvas.getContext('2d')!
-        const data = code === 0 ? views.left : views.right
-        if (code === 0 && preview.current) {
-          for (let n = 0; n < width * height; n++) {
-            const tint = preview.current.remove[n] ? [245, 70, 70] : preview.current.add[n] ? [25, 210, 150] : null
-            if (tint) for (let c = 0; c < 3; c++) data[n * 4 + c] = Math.round(data[n * 4 + c] * .4 + tint[c] * .6)
-          }
-        }
-        ctx.putImageData(new ImageData(data, width, height), 0, 0)
-        const roi = props.clipRect
-        if (roi) {
-          ctx.strokeStyle = '#168cff'; ctx.lineWidth = 2 / zoom; ctx.setLineDash([])
-          ctx.strokeRect(roi.x, roi.y, roi.width, roi.height)
-        }
-        if (code === 0) {
-          const g = gesture.current
-          ctx.strokeStyle = '#168cff'; ctx.lineWidth = 2 / zoom; ctx.setLineDash([5 / zoom, 4 / zoom])
-          if (g && ['rectangle', 'local'].includes(g.kind)) ctx.strokeRect(g.x, g.y, g.lastX - g.x, g.lastY - g.y)
-          if (lasso.current.length) {
-            ctx.beginPath(); ctx.moveTo(lasso.current[0].x, lasso.current[0].y)
-            for (const point of lasso.current.slice(1)) ctx.lineTo(point.x, point.y)
-            if (hover.current) ctx.lineTo(hover.current.x, hover.current.y)
-            ctx.stroke()
-          }
-          ctx.setLineDash([])
-        }
-      }
+      const svg = interactionSvg.current
+      if (previewClipSvg.current) drawInteraction(previewClipSvg.current, [], zoom, props.clipRect)
+      if (!svg) return
+      const outlines: InteractionOutline[] = [...pendingOutlines.current]
+      const g = gesture.current
+      if (g && ['brush', 'rectangle', 'local'].includes(g.kind)) outlines.push({ shape: gestureShape(g), color: g.operation === 'subtract' || g.operation === 'clear' ? '#f54646' : '#168cff' })
+      if (lasso.current.length) outlines.push({ shape: { kind: 'polygon', points: hover.current ? [...lasso.current, hover.current] : lasso.current }, color: '#168cff' })
+      if (tool === 'magic' && hover.current && !g) outlines.push({ shape: { kind: 'magic', point: hover.current }, color: '#168cff' })
+      drawInteraction(svg, outlines, zoom, props.clipRect, tool === 'brush' && hover.current ? { point: hover.current, size } : undefined)
       return
     }
     for (const [code, canvas] of canvasRefs.current) {
@@ -215,12 +212,116 @@ export const RasterEditor = forwardRef<RasterHandle, Props>(function RasterEdito
       const g = gesture.current
       if (g?.kind === 'rectangle') { ctx.strokeStyle = g.code === 1 ? '#d59a45' : '#2daf98'; ctx.lineWidth = 2/zoom; ctx.setLineDash([5/zoom,4/zoom]); ctx.strokeRect(g.x,g.y,g.lastX-g.x,g.lastY-g.y); ctx.setLineDash([]) }
     }
-  }, [width, height, mode, compare, showMask, showSources, maskPercent, maskColor, otherPercent, otherColor, props.clipRect, zoom])
+  }, [width, height, mode, compare, showSources, props.clipRect, zoom, tool, size])
   const redraw = useCallback(() => {
     if (frame.current !== null) cancelAnimationFrame(frame.current)
-    frame.current = requestAnimationFrame(() => { frame.current = null; drawNow() })
+    frame.current = requestAnimationFrame(() => { frame.current = null; drawNow(); presentFrameRef.current() })
   }, [drawNow])
   redrawRef.current = redraw
+  const renderOptions = useRef({ maskPercent, maskColor: rgb(maskColor), showOther: showMask, otherPercent, otherColor: rgb(otherColor) })
+  renderOptions.current = { maskPercent, maskColor: rgb(maskColor), showOther: showMask, otherPercent, otherColor: rgb(otherColor) }
+  const requestRender = useCallback(() => {
+    if (initial.current.mode !== 'edit' || !worker.current || !alive.current) return
+    renderWanted.current = true
+    if (renderBusy.current || renderTimer.current) return
+    // Coalesce preview work; pointer feedback has its own animation frame.
+    renderTimer.current = setTimeout(() => {
+      renderTimer.current = null
+      const client = worker.current
+      if (!client || !alive.current) return
+      renderWanted.current = false; renderBusy.current = true
+      const generation = renderGeneration.current, target = version.current
+      void client.render({ ...renderOptions.current, magicPreview: preview.current, tag: generation }).then(result => {
+        if (!result) return
+        if (!alive.current || worker.current !== client || generation !== renderGeneration.current) {
+          result.left.close(); result.right.close(); result.magicLeft?.close(); return
+        }
+        readyFrame.current?.frame.left.close(); readyFrame.current?.frame.right.close(); readyFrame.current?.frame.magicLeft?.close()
+        readyFrame.current = { frame: result, generation, target }
+        presentFrameRef.current()
+      }).catch(reason => {
+        if (alive.current && worker.current === client) setError(`預覽更新失敗：${String(reason)}`)
+      }).finally(() => {
+        if (worker.current !== client) return
+        renderBusy.current = false
+        if (renderWanted.current) requestRenderRef.current()
+      })
+    }, 0)
+  }, [])
+  requestRenderRef.current = requestRender
+  // Full-frame bitmap adoption is lower priority than an active input gesture.
+  // Keep at most one ready frame; a committed edit may supersede it before display.
+  presentFrameRef.current = () => {
+    const ready = readyFrame.current
+    if (!ready || gesture.current || lasso.current.length) return
+    readyFrame.current = null
+    if (ready.generation === renderGeneration.current && alive.current) {
+      for (const [code, bitmap] of [[0, ready.frame.left], [-1, ready.frame.right]] as const) {
+        const canvas = canvasRefs.current.get(code)
+        if (!canvas) continue
+        const context = canvas.getContext('bitmaprenderer')
+        if (context) context.transferFromImageBitmap(bitmap)
+        else canvas.getContext('2d')?.drawImage(bitmap, 0, 0)
+        if (canvas.dataset.renderVersion !== String(ready.target)) canvas.dataset.renderVersion = String(ready.target)
+      }
+      const magic = magicCanvas.current
+      if (magic) {
+        magic.style.visibility = 'hidden'
+        if (ready.frame.magicLeft && preview.current?.requestId === ready.frame.previewRequestId) {
+          const context = magic.getContext('bitmaprenderer')
+          if (context) context.transferFromImageBitmap(ready.frame.magicLeft)
+          else magic.getContext('2d')?.drawImage(ready.frame.magicLeft, 0, 0)
+          magic.style.visibility = 'visible'
+        }
+      }
+      pendingOutlines.current = pendingOutlines.current.filter(outline => outline.version > ready.target)
+      redrawRef.current()
+    }
+    ready.frame.left.close(); ready.frame.right.close(); ready.frame.magicLeft?.close()
+  }
+  useEffect(() => {
+    if (mode !== 'edit' || loading) return
+    clearMagicPreview(); renderGeneration.current++; requestRender()
+  }, [mode, loading, maskPercent, maskColor, showMask, otherPercent, otherColor, requestRender, clearMagicPreview])
+
+  const trackMutation = useCallback((task: Promise<RasterMetadata>, action: 'commit' | 'undo' | 'redo' | 'reset' = 'commit') => {
+    const client = worker.current
+    const history = projectedHistory.current
+    const limit = Math.max(1, Math.min(20, Math.floor(96 * 1024 * 1024 / (width * height * 14))))
+    if (action === 'reset') { history.undo = 0; history.redo = 0 }
+    else if (action === 'undo') { history.undo--; history.redo++ }
+    else if (action === 'redo') { history.undo = Math.min(limit, history.undo + 1); history.redo-- }
+    else { history.undo = Math.min(limit, history.undo + 1); history.redo = 0 }
+    setHistoryState([history.undo, history.redo])
+    pendingCount.current++; setComputing(true)
+    const settled = task.then(metadata => {
+      if (!alive.current || worker.current !== client) return
+      if (pendingCount.current === 1) {
+        projectedHistory.current = { ...metadata.history }
+        setHistoryState([metadata.history.undo, metadata.history.redo])
+      }
+      repairCallback.current?.(metadata.hasRepairMask)
+    }).catch(reason => {
+      if (!alive.current || worker.current !== client) return
+      workerFailure.current = reason instanceof Error ? reason : new Error(String(reason))
+      setError(`編輯計算失敗，尚未保存：${String(reason)}`)
+    }).finally(() => {
+      if (!alive.current || worker.current !== client) return
+      pendingCount.current--; setComputing(pendingCount.current > 0)
+      requestRenderRef.current()
+    })
+    pendingWork.current = Promise.all([pendingWork.current, settled]).then(() => {})
+  }, [width, height])
+  function submitEdit(command: RasterEditCommand, outline?: InteractionShape) {
+    const client = worker.current
+    if (!client || workerFailure.current) return
+    clearMagicPreview(); renderGeneration.current++
+    // Enqueue synchronously before changed()/flush can observe the new UI version.
+    trackMutation(client.commit(command))
+    if (outline) pendingOutlines.current.push({ version: version.current + 1, shape: outline, color: command.operation === 'subtract' || command.operation === 'clear' ? '#f54646' : '#168cff' })
+    changed()
+    requestRender()
+  }
   useEffect(() => {
     if (props.viewState) Object.assign(props.viewState.current, {tool, size, zoom, compare, order: panelOrder, show: showSources, operation, category, tolerance, expand, intersectOffset})
   }, [props.viewState, tool, size, zoom, compare, panelOrder, showSources, operation, category, tolerance, expand, intersectOffset])
@@ -228,10 +329,10 @@ export const RasterEditor = forwardRef<RasterHandle, Props>(function RasterEdito
   useEffect(() => {
     if (mode !== 'edit') return
     try {
-      for (const [key, value] of Object.entries({ 'preview-layout-v2': previewLayout, 'mask-percent': maskPercent, 'mask-color': maskColor, 'show-other': showMask, 'other-percent': otherPercent, 'other-color': otherColor }))
+      for (const [key, value] of Object.entries({ 'magic-preview': magicPreviewEnabled, 'preview-layout-v2': previewLayout, 'mask-percent': maskPercent, 'mask-color': maskColor, 'show-other': showMask, 'other-percent': otherPercent, 'other-color': otherColor }))
         localStorage.setItem(`comic-editor-${key}`, JSON.stringify(value))
     } catch { /* Display preferences are optional when browser storage is unavailable. */ }
-  }, [mode, previewLayout, maskPercent, maskColor, showMask, otherPercent, otherColor])
+  }, [mode, magicPreviewEnabled, previewLayout, maskPercent, maskColor, showMask, otherPercent, otherColor])
 
   useEffect(() => {
     alive.current = true
@@ -249,12 +350,17 @@ export const RasterEditor = forwardRef<RasterHandle, Props>(function RasterEdito
       const decoded = await Promise.all((p.candidates || []).map(async candidate => ({ code: candidate.code,
         image: await load(candidate.url, p.width, p.height), diff: await load(candidate.diffUrl, p.width, p.height) })))
       if (cancelled) return
-      repairText.current = textRepairMask(text?.data, p.width, p.height)
       base.current = b; detectedText.current = text; pixels.current = { overlay, other, edited, assignment }
       candidates.current = new Map(decoded.map(item => [item.code, item]))
+      if (p.mode === 'edit') {
+        const client = new RasterWorkerClient()
+        worker.current = client
+        await client.init({ width: p.width, height: p.height, base: b.data, overlay: overlay.data, other: other.data, edited: edited.data, detectedText: text?.data })
+        if (cancelled) { client.dispose(); return }
+      }
       setLoading(false)
-    })().catch(err => { if (!cancelled) { setLoading(false); setError(String(err)) } })
-    return () => { cancelled = true; alive.current = false; if (timer.current) clearTimeout(timer.current) }
+    })().catch(err => { if (!cancelled) { if (p.mode === 'edit') workerFailure.current = err instanceof Error ? err : new Error(String(err)); setLoading(false); setError(String(err)) } })
+    return () => { cancelled = true; alive.current = false; worker.current?.dispose(); worker.current = null; readyFrame.current?.frame.left.close(); readyFrame.current?.frame.right.close(); readyFrame.current?.frame.magicLeft?.close(); readyFrame.current = null; if (renderTimer.current) clearTimeout(renderTimer.current); if (timer.current) clearTimeout(timer.current) }
   }, [])
   useEffect(() => { if (!loading) redraw() }, [loading, redraw])
   useEffect(() => {
@@ -323,31 +429,40 @@ export const RasterEditor = forwardRef<RasterHandle, Props>(function RasterEdito
   }, [zoom, loading, props.clipRect])
   useEffect(() => {
     history.current = []; future.current = []; setHistoryState([0, 0])
-  }, [props.clipRect?.x, props.clipRect?.y, props.clipRect?.width, props.clipRect?.height])
-  useEffect(() => { previewHandler.current(hover.current) }, [tolerance, expand, operation, category, special, tool, intersectOffset])
+    if (worker.current) trackMutation(worker.current.resetHistory(), 'reset')
+  }, [props.clipRect?.x, props.clipRect?.y, props.clipRect?.width, props.clipRect?.height, trackMutation])
+  useEffect(() => { previewHandler.current(hover.current) }, [tolerance, expand, operation, category, special, tool, intersectOffset, magicPreviewEnabled, disabled, props.clipRect])
   useEffect(() => () => {
     if (localDraft) for (const url of [localDraft.overlayUrl, localDraft.otherUrl, localDraft.editedUrl]) URL.revokeObjectURL(url)
   }, [localDraft])
 
   const flush = useCallback(async (): Promise<boolean> => {
-    if (gesture.current || lasso.current.length || localBlocked.current) return false
+    if (gesture.current || lasso.current.length || localBlocked.current || workerFailure.current) return false
     if (timer.current) clearTimeout(timer.current)
     if (saving.current) return saving.current
     if (persisted.current >= version.current) return true
     const task = async () => {
       try {
         while (pixels.current && persisted.current < version.current) {
-          const target = version.current; const snapshot = copy(pixels.current)
+          if (gesture.current || lasso.current.length || localBlocked.current) return false
+          const target = version.current
           if (alive.current) setSaveState('保存中…')
-          const [overlay, other, edited] = initial.current.mode === 'edit'
-            ? await Promise.all([png(snapshot.overlay), png(snapshot.other), png(snapshot.edited)])
-            : [new Blob(), new Blob(), new Blob()]
-          await saveCallback.current({ overlay, other, edited, assignment_rle: initial.current.mode === 'compose' ? rle(snapshot.assignment) : [] })
+          if (initial.current.mode === 'edit') {
+            // Snapshot is queued behind all accepted edits. Later input gets a later version.
+            const snapshotTask = worker.current!.snapshot()
+            const [snapshot] = await Promise.all([snapshotTask, pendingWork.current])
+            if (workerFailure.current) throw workerFailure.current
+            await saveCallback.current({ overlay: snapshot.overlay, other: snapshot.other, edited: snapshot.edited, assignment_rle: [] })
+          } else {
+            const snapshot = copy(pixels.current)
+            await saveCallback.current({ overlay: new Blob(), other: new Blob(), edited: new Blob(), assignment_rle: rle(snapshot.assignment) })
+          }
           persisted.current = target
         }
         if (alive.current) { setSaveState('已保存'); setError('') }
         dirtyCallback.current?.(false)
-        return true
+        // Saved pixels are current even when an unfinished gesture still prevents navigation.
+        return !(gesture.current || lasso.current.length || localBlocked.current)
       } catch (err) {
         if (alive.current) { setError(err instanceof Error ? err.message : '保存失敗'); setSaveState('保存失敗，請重試') }
         return false
@@ -370,48 +485,21 @@ export const RasterEditor = forwardRef<RasterHandle, Props>(function RasterEdito
   }, [])
 
   function changed() {
-    if (mode === 'edit' && pixels.current) props.onRepairMaskChange?.(pixels.current.other.data.some((value, index) => index % 4 === 0 && value >= 128))
-    preview.current = null
+    clearMagicPreview()
     if (hoverTimer.current) clearTimeout(hoverTimer.current)
     version.current++; dirtyCallback.current?.(true); setSaveState('尚未保存')
-    setHistoryState([history.current.length, future.current.length]); redraw()
+    if (mode !== 'edit') setHistoryState([history.current.length, future.current.length])
+    redraw()
     if (timer.current) clearTimeout(timer.current)
     timer.current = setTimeout(() => void flush(), 800)
-  }
-  function clip(selection: Uint8Array) {
-    const roi = props.clipRect
-    if (roi) for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) if (x < roi.x || x >= roi.x + roi.width || y < roi.y || y >= roi.y + roi.height) selection[y * width + x] = 0
-    return selection
   }
   function inside(point: Point) {
     const r = props.clipRect
     return !r || (point.x >= r.x && point.x < r.x + r.width && point.y >= r.y && point.y < r.y + r.height)
   }
-  function solidSample(): SolidSampleSource | undefined {
-    if (!base.current) return undefined
-    const text = detectedText.current
-    let exclude: Uint8Array | undefined
-    if (text) {
-      exclude = new Uint8Array(width * height)
-      for (let n = 0; n < exclude.length; n++) if (text.data[n * 4] > 0) exclude[n] = 1
-    }
-    return { base: base.current.data, width, height, exclude }
-  }
-  function editedSelection(before: Pixels, selection: Uint8Array, op: Gesture['operation'], target = category): Pixels {
-    const data = layers(before)
-    const sample = solidSample()
-    if (op === 'clear' || op === 'swap') return replaceLayers(before, applySpecialSelection(data, selection, op, [0, 0, 0], repairText.current, sample), width, height)
-    const current = categoryMask(data, target)
-    const next = combineSelection(current, selection, width, height, op, intersectOffset)
-    const paint = ['add', 'selection_inner', 'add_selection_inner'].includes(op) ? combineSelection(new Uint8Array(width * height), selection, width, height, op) : undefined
-    return replaceLayers(before, applyCategoryMask(data, current, next, target, [0, 0, 0], props.clipRect ? clip(new Uint8Array(width * height).fill(1)) : undefined, paint, sample), width, height)
-  }
   function applyGesture(g: Gesture) {
-    if (mode === 'edit') pixels.current = editedSelection(g.before, clip(g.selection), g.operation, g.target)
-    else {
-      pixels.current = copy(g.before)
-      for (let n = 0; n < g.selection.length; n++) if (g.selection[n] && (g.code <= 1 || (candidates.current.get(g.code)?.diff.data[n * 4] || 0) >= 128)) pixels.current.assignment[n] = g.code
-    }
+    pixels.current = copy(g.before)
+    for (let n = 0; n < g.selection.length; n++) if (g.selection[n] && (g.code <= 1 || (candidates.current.get(g.code)?.diff.data[n * 4] || 0) >= 128)) pixels.current.assignment[n] = g.code
     redraw()
   }
   function stroke(selection: Uint8Array, a: Point, b: Point) {
@@ -428,57 +516,39 @@ export const RasterEditor = forwardRef<RasterHandle, Props>(function RasterEdito
     const rect = event.currentTarget.getBoundingClientRect()
     return { x: Math.max(0, Math.min(width - 1, Math.floor((event.clientX - rect.left) * width / rect.width))), y: Math.max(0, Math.min(height - 1, Math.floor((event.clientY - rect.top) * height / rect.height))) }
   }
-  function magic(point: Point) {
-    if (!base.current || !inside(point)) return new Uint8Array(width * height)
-    const roi = props.clipRect
-    if (!roi) return magicSelection(base.current.data, width, height, point.x, point.y, tolerance, expand)
-    const crop = new Uint8ClampedArray(roi.width * roi.height * 4)
-    for (let y = 0; y < roi.height; y++) crop.set(base.current.data.subarray(((roi.y + y) * width + roi.x) * 4, ((roi.y + y) * width + roi.x + roi.width) * 4), y * roi.width * 4)
-    const selected = magicSelection(crop, roi.width, roi.height, point.x - roi.x, point.y - roi.y, tolerance, expand)
-    const result = new Uint8Array(width * height)
-    for (let y = 0; y < roi.height; y++) result.set(selected.subarray(y * roi.width, (y + 1) * roi.width), (roi.y + y) * width + roi.x)
-    return result
-  }
   function previewMagic(point: Point | null) {
     if (hoverTimer.current) clearTimeout(hoverTimer.current)
-    preview.current = null
-    if (!point || tool !== 'magic' || special || disabled || gesture.current || !pixels.current) { redraw(); return }
+    clearMagicPreview()
+    redraw()
+    if (!magicPreviewEnabled || !point || tool !== 'magic' || special || disabled || gesture.current || !inside(point)) return
     hoverTimer.current = setTimeout(() => {
-      if (!pixels.current) return
-      const before = layers(pixels.current)
-      const next = layers(editedSelection(pixels.current, magic(point), operation))
-      const add = new Uint8Array(width * height); const remove = new Uint8Array(width * height)
-      const a = categoryMask(before, category); const b = categoryMask(next, category)
-      for (let n = 0; n < a.length; n++) { add[n] = +((!a[n] && !!b[n]) || (category === 'solid' && !!b[n] && [0, 1, 2].some(c => before.overlay[n * 4 + c] !== next.overlay[n * 4 + c]))); remove[n] = +(!!a[n] && !b[n]) }
-      preview.current = { add, remove }; redraw()
-    }, 30)
+      preview.current = { requestId: hoverGeneration.current, point, tolerance, expand, operation, category, clipRect: props.clipRect, intersectOffset }
+      requestRender()
+    }, 60)
   }
   previewHandler.current = previewMagic
   function chooseCategory(value: EditCategory) {
     if (disabled || props.local || gesture.current) return
-    setCategory(value); lasso.current = []; preview.current = null
+    setCategory(value); lasso.current = []; clearMagicPreview()
     try { localStorage.setItem('comic-editor-edit-category', JSON.stringify(value)) } catch { /* Optional UI preference. */ }
     if (persisted.current < version.current) timer.current = setTimeout(() => void flush(), 800)
     redraw()
   }
-  function chooseTool(value: string) { lasso.current = []; hover.current = null; preview.current = null; setSpecial(null); setTool(value); if ((value !== 'magic' && ['selection_inner', 'add_selection_inner'].includes(operation)) || (value === 'magic' && operation === 'local_intersect')) setOperation('add'); if (persisted.current < version.current) timer.current = setTimeout(() => void flush(), 800); redraw() }
-  function commitSelection(selection: Uint8Array, op: Gesture['operation'] = operation) {
-    if (!pixels.current) return
-    const before = copy(pixels.current)
-    pixels.current = editedSelection(before, clip(selection), op)
-    preview.current = null; pushHistory(before); future.current = []; changed()
-  }
+  function chooseTool(value: string) { if (gesture.current) return; lasso.current = []; hover.current = null; clearMagicPreview(); setSpecial(null); setTool(value); if ((value !== 'magic' && ['selection_inner', 'add_selection_inner'].includes(operation)) || (value === 'magic' && operation === 'local_intersect')) setOperation('add'); if (persisted.current < version.current) timer.current = setTimeout(() => void flush(), 800); redraw() }
   function finishLasso() {
     if (lasso.current.length < 3 || disabled) return
-    const selection = polygonSelection(lasso.current, width, height)
-    lasso.current = []; hover.current = null; commitSelection(selection)
+    const points = lasso.current
+    lasso.current = []; hover.current = null
+    submitEdit({ selection: { kind: 'polygon', points }, operation, category, clipRect: props.clipRect, intersectOffset }, { kind: 'polygon', points, closed: true })
   }
   async function openLocal(rect: EditRect) {
     if (!pixels.current) return
     setOpeningLocal(true)
     try {
-      const snapshot = copy(pixels.current)
-      const blobs = await Promise.all([png(snapshot.overlay), png(snapshot.other), png(snapshot.edited)])
+      const snapshot = await worker.current!.snapshot()
+      await pendingWork.current
+      if (workerFailure.current) throw workerFailure.current
+      const blobs = [snapshot.overlay, snapshot.other, snapshot.edited]
       setLocalDraft({ rect, overlayUrl: URL.createObjectURL(blobs[0]), otherUrl: URL.createObjectURL(blobs[1]), editedUrl: URL.createObjectURL(blobs[2]) })
     } catch (err) { setError(String(err)) }
     finally { setOpeningLocal(false) }
@@ -488,13 +558,14 @@ export const RasterEditor = forwardRef<RasterHandle, Props>(function RasterEdito
     const urls = [data.overlay, data.other, data.edited].map(blob => URL.createObjectURL(blob))
     try {
       const [overlay, other, edited] = await Promise.all(urls.map(url => load(url, width, height)))
-      const before = copy(pixels.current)
-      pixels.current = replaceLayers(before, mergeLayerRegion(layers(before), { overlay: overlay.data, other: other.data, edited: edited.data }, width, height, rect), width, height)
-      pushHistory(before); future.current = []; setLocalDraft(null); changed()
+      const task = worker.current!.merge({ layers: { overlay: overlay.data, other: other.data, edited: edited.data }, rect })
+      renderGeneration.current++; trackMutation(task)
+      await task
+      setLocalDraft(null); changed()
     } finally { urls.forEach(url => URL.revokeObjectURL(url)) }
   }
   function down(event: React.PointerEvent<HTMLCanvasElement>, code: number) {
-    if (!pixels.current || disabled || confirming.current || ![0, 1, 2].includes(event.button)) return
+    if (!pixels.current || (mode === 'edit' && !worker.current) || loading || workerFailure.current || gesture.current || disabled || confirming.current || ![0, 1, 2].includes(event.button)) return
     const pan = event.button === 1 || (event.button === 0 && (event.metaKey || event.ctrlKey)) || tool === 'pan'
     if ((mode === 'edit' && code !== 0 || mode === 'compose' && code === 0) && !pan) return
     const p = point(event)
@@ -502,13 +573,13 @@ export const RasterEditor = forwardRef<RasterHandle, Props>(function RasterEdito
     event.preventDefault(); event.currentTarget.focus({ preventScroll: true })
     if (timer.current) clearTimeout(timer.current)
     if (hoverTimer.current) clearTimeout(hoverTimer.current)
-    preview.current = null
-    if (!pan && event.button === 0 && !special && tool === 'magic') { commitSelection(magic(p)); return }
+    clearMagicPreview()
+    if (!pan && event.button === 0 && !special && tool === 'magic') { submitEdit({ selection: {kind:'magic',point:p,tolerance,expand}, operation, category, clipRect:props.clipRect, intersectOffset }, {kind:'magic',point:p}); return }
     if (!pan && event.button === 0 && !special && tool === 'lasso') { lasso.current.push(p); hover.current = p; redraw(); return }
     const right = event.button === 2
     const kind = pan ? 'pan' : right || special ? 'rectangle' : tool
     const op = right ? (event.metaKey || event.ctrlKey ? 'swap' : 'clear') : special || operation
-    const g: Gesture = { ...p, lastX: p.x, lastY: p.y, code: mode === 'compose' ? (event.button === 2 ? 1 : code || 1) : 0, before: copy(pixels.current), panX: event.clientX, panY: event.clientY, kind, operation: op, target: category, selection: new Uint8Array(width * height) }
+    const g: Gesture = { ...p, pointerId: event.pointerId, lastX: p.x, lastY: p.y, code: mode === 'compose' ? (event.button === 2 ? 1 : code || 1) : 0, before: mode === 'edit' ? pixels.current : copy(pixels.current), panX: event.clientX, panY: event.clientY, kind, operation: op, target: category, selection: new Uint8Array(mode === 'edit' ? 0 : width * height), points: [p], size, intersectOffset, clipRect: props.clipRect ? {...props.clipRect} : undefined }
     if (kind === 'bounds' && props.clipRect) {
       const r = props.clipRect
       const outsideX = Math.max(r.x-p.x, 0, p.x-r.x-r.width); const outsideY = Math.max(r.y-p.y, 0, p.y-r.y-r.height)
@@ -517,14 +588,16 @@ export const RasterEditor = forwardRef<RasterHandle, Props>(function RasterEdito
       g.edge = distances[0].edge; g.roi = {...r}
     }
     event.currentTarget.setPointerCapture(event.pointerId); gesture.current = g
+    if (mode === 'edit') { renderGeneration.current++; requestRender(); redraw(); return }
     if (kind === 'local') redraw()
     if (kind === 'brush') { stroke(g.selection, p, p); applyGesture(g) }
     else if (kind === 'rectangle') { g.selection = rectangleSelection(p.x, p.y, p.x, p.y, width, height); applyGesture(g) }
   }
   function move(event: React.PointerEvent<HTMLCanvasElement>, code: number) {
     const p = point(event); const g = gesture.current
+    if (g && g.pointerId !== event.pointerId) return
     if (!g) {
-      if (mode === 'edit' && code === 0) { hover.current = p; if (tool === 'magic') previewMagic(p); else if (lasso.current.length) redraw() }
+      if (mode === 'edit' && code === 0) { hover.current = p; if (tool === 'magic') previewMagic(p); else redraw() }
       return
     }
     if (g.kind === 'pan') {
@@ -540,6 +613,20 @@ export const RasterEditor = forwardRef<RasterHandle, Props>(function RasterEdito
       if (g.edge === 'bottom') h = Math.max(1,p.y-r.y+1)
       props.onClipRectChange?.({x,y,width:w,height:h}); return
     }
+    if (mode === 'edit') {
+      if (g.kind === 'brush') {
+        const rect = event.currentTarget.getBoundingClientRect()
+        const events = event.nativeEvent.getCoalescedEvents?.() || []
+        for (const sample of events) {
+          const next = { x: Math.max(0, Math.min(width - 1, Math.floor((sample.clientX - rect.left) * width / rect.width))), y: Math.max(0, Math.min(height - 1, Math.floor((sample.clientY - rect.top) * height / rect.height))) }
+          const last = g.points[g.points.length - 1]
+          if (last.x !== next.x || last.y !== next.y) g.points.push(next)
+        }
+        const last = g.points[g.points.length - 1]
+        if (last.x !== p.x || last.y !== p.y) g.points.push(p)
+      }
+      g.lastX = p.x; g.lastY = p.y; hover.current = p; redraw(); return
+    }
     if (g.kind === 'brush') stroke(g.selection, {x:g.lastX,y:g.lastY}, p)
     else if (g.kind === 'rectangle') g.selection = rectangleSelection(g.x, g.y, p.x, p.y, width, height)
     g.lastX = p.x; g.lastY = p.y
@@ -548,14 +635,22 @@ export const RasterEditor = forwardRef<RasterHandle, Props>(function RasterEdito
   function end() {
     const g = gesture.current; gesture.current = null
     if (!g) return
-    if (['pan', 'bounds'].includes(g.kind)) { if (persisted.current < version.current) timer.current = setTimeout(() => void flush(), 800); return }
+    if (['pan', 'bounds'].includes(g.kind)) { redraw(); if (persisted.current < version.current) timer.current = setTimeout(() => void flush(), 800); return }
     if (g.kind === 'local') { void openLocal({x:Math.min(g.x,g.lastX), y:Math.min(g.y,g.lastY), width:Math.abs(g.x-g.lastX)+1, height:Math.abs(g.y-g.lastY)+1}); redraw(); return }
+    if (mode === 'edit') {
+      const shape = gestureShape(g)
+      const selection = g.kind === 'brush' ? { kind: 'brush' as const, points: g.points, size: g.size }
+        : { kind: 'rectangle' as const, x1: g.x, y1: g.y, x2: g.lastX, y2: g.lastY }
+      submitEdit({ selection, operation: g.operation, category: g.target, clipRect: g.clipRect, intersectOffset: g.intersectOffset }, shape)
+      return
+    }
     pushHistory(g.before); future.current = []; changed()
   }
   function cancelGesture() {
     const g = gesture.current
-    if (g) { pixels.current = g.before; gesture.current = null }
-    lasso.current = []; hover.current = null; preview.current = null
+    if (g) { if (mode !== 'edit') pixels.current = g.before; gesture.current = null }
+    lasso.current = []; hover.current = null; clearMagicPreview()
+    renderGeneration.current++; requestRender()
     if (hoverTimer.current) clearTimeout(hoverTimer.current)
     redraw()
     if (persisted.current < version.current) timer.current = setTimeout(() => void flush(), 800)
@@ -572,6 +667,12 @@ export const RasterEditor = forwardRef<RasterHandle, Props>(function RasterEdito
   }
   function undo(redo = false) {
     if (gesture.current || disabled) return
+    if (mode === 'edit') {
+      const client = worker.current
+      if (!client || workerFailure.current || !(redo ? projectedHistory.current.redo : projectedHistory.current.undo)) return
+      renderGeneration.current++; pendingOutlines.current = []; clearMagicPreview()
+      trackMutation(redo ? client.redo() : client.undo(), redo ? 'redo' : 'undo'); changed(); return
+    }
     const from = redo ? future.current : history.current; const to = redo ? history.current : future.current
     const previous = from.pop()
     if (previous && pixels.current) { to.push(copy(pixels.current)); pixels.current = previous; changed() }
@@ -595,7 +696,7 @@ export const RasterEditor = forwardRef<RasterHandle, Props>(function RasterEdito
     <Button size="small" disabled={disabled || !historyState[0]} onClick={() => undo()}>撤銷</Button>
     <Button size="small" disabled={disabled || !historyState[1]} onClick={() => undo(true)}>重做</Button>
     {(mode === 'edit' || saveState.includes('失敗')) && <Button size="small" onClick={() => void flush()} disabled={disabled}>{props.local ? '更新副本' : '保存'}</Button>}
-    <span className="editor-save-state" role="status">{props.local && saveState === '已保存' ? '副本・尚未套用' : saveState}</span>
+    <span className="editor-save-state" role="status">{computing ? '正在處理選區…' : props.local && saveState === '已保存' ? '副本・尚未套用' : saveState}</span>
   </div>
   const zoomControls = <div className="editor-zoom-controls" onClickCapture={() => { if (props.viewState) props.viewState.current.fit = false }} onChangeCapture={() => { if (props.viewState) props.viewState.current.fit = false }}><Button size="small" aria-label="縮小圖片" onClick={() => setZoom(z => Math.max(.05, z / 1.25))}>−</Button><Button size="small" aria-label="放大圖片" onClick={() => setZoom(z => Math.min(4, z * 1.25))}>＋</Button><Button size="small" onClick={() => setZoom(1)}>原尺寸</Button><label>縮放 <InputNumber size="small" aria-label="縮放百分比" min={5} max={400} value={Math.round(zoom * 100)} onChange={v => setZoom((v || 100) / 100)} /> %</label><Button size="small" onClick={fit}>適合視窗</Button></div>
   const panels = mode === 'edit' ? [{ code: 0, label: 'Mask / 原圖' }, { code: -1, label: '填色預覽' }]
@@ -603,9 +704,18 @@ export const RasterEditor = forwardRef<RasterHandle, Props>(function RasterEdito
   return <div className="raster-editor" onKeyDown={event => {
     const tag = (event.target as HTMLElement).tagName
     if (mode === 'edit' && !['INPUT', 'TEXTAREA', 'SELECT'].includes(tag) && ['F1', 'F2'].includes(event.key)) { event.preventDefault(); chooseCategory(event.key === 'F1' ? 'solid' : 'other'); return }
+    const typing = ['INPUT', 'TEXTAREA', 'SELECT'].includes(tag) || (event.target as HTMLElement).isContentEditable
+    if (!typing && !disabled && (tool === 'brush' || mode === 'edit' && tool === 'magic') && !special && !event.metaKey && !event.ctrlKey && !event.altKey) {
+      const direction = event.code === 'BracketLeft' || event.key === '[' ? -1 : event.code === 'BracketRight' || event.key === ']' ? 1 : 0
+      if (direction) {
+        event.preventDefault()
+        if (tool === 'magic') setTolerance(value => Math.max(0, Math.min(100, value + direction)))
+        else setSize(value => Math.max(1, Math.min(200, value + direction * 4)))
+        return
+      }
+    }
     if (mode === 'compose' && !['INPUT','TEXTAREA','SELECT'].includes(tag)) {
       if (event.key.toLowerCase() === 'm') { event.preventDefault(); setShowSources(v => !v) }
-      if (event.key === '[' || event.key === ']') { event.preventDefault(); setSize(v => Math.max(2,Math.min(200,v+(event.key === '[' ? -4 : 4)))) }
       if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'z' && tag !== 'CANVAS') { event.preventDefault(); undo(event.shiftKey) }
     }
     if (tag !== 'CANVAS') return
@@ -637,9 +747,11 @@ export const RasterEditor = forwardRef<RasterHandle, Props>(function RasterEdito
           {[{value:'rectangle',label:'矩形'},{value:'brush',label:'畫筆'},{value:'magic',label:'魔法棒'},{value:'lasso',label:'套索'}, props.local ? {value:'bounds',label:'調整邊框'} : {value:'local',label:'局部視窗'}].map(item =>
             <Button key={item.value} aria-pressed={tool === item.value && !special} type={tool === item.value && !special ? 'primary' : 'default'} disabled={disabled} onClick={() => chooseTool(item.value)}>{item.label}</Button>)}
         </div>
-        {tool === 'brush' && !special && <label className="tool-setting">大小 <InputNumber size="small" disabled={disabled} aria-label="筆刷像素" min={1} max={200} value={size} onChange={v => setSize(v || 1)} /> px</label>}
+        {tool === 'brush' && !special && <div className="tool-settings brush-settings"><label>大小 <InputNumber size="small" disabled={disabled} aria-label="筆刷像素" min={1} max={200} value={size} onChange={v => setSize(v || 1)} /> px</label><Slider ariaLabelForHandle="筆刷大小" min={1} max={200} value={size} disabled={disabled} onChange={setSize} /><span className="brush-shortcut-hint">[ 縮小 · ] 放大</span></div>}
         {tool === 'magic' && !special && <div className="tool-settings">
+          <Checkbox checked={magicPreviewEnabled} disabled={disabled} onChange={e => { clearMagicPreview(); setMagicPreviewEnabled(e.target.checked) }}>魔法棒預覽</Checkbox>
           <label>容差 <InputNumber size="small" aria-label="魔法棒容差" disabled={disabled} min={0} max={100} value={tolerance} onChange={v => setTolerance(v ?? 28)} /></label>
+          <span className="brush-shortcut-hint">[ 減少容差 · ] 增加容差</span>
           <label>擴展 <InputNumber size="small" aria-label="魔法棒擴展" disabled={disabled} min={0} max={80} value={expand} onChange={v => setExpand(v ?? 0)} /> px</label>
         </div>}
       </div>
@@ -658,7 +770,7 @@ export const RasterEditor = forwardRef<RasterHandle, Props>(function RasterEdito
       <Space wrap className="editor-toolbar">
         <Select aria-label="編輯工具" value={tool} onChange={chooseTool} options={[{value:'brush',label:'筆刷'},{value:'rectangle',label:'矩形'},{value:'pan',label:'平移'}]} />
         <Dropdown menu={{items:[{key:'base',label:'本頁恢復為修復前底圖'},{key:'first',label:`本頁重新採用 ${props.candidates?.[0]?.label || '第一組'}`}],onClick:({key}) => adoptAll(key === 'base' ? 1 : props.candidates?.[0]?.code || 1, true)}} disabled={disabled}><Button>重設本頁 ▾</Button></Dropdown>
-        {tool === 'brush' && <label>筆刷 <InputNumber disabled={disabled} aria-label="筆刷像素" min={1} max={200} value={size} onChange={v => setSize(v || 1)} /> px</label>}
+        {tool === 'brush' && <div className="tool-settings brush-settings"><label>大小 <InputNumber size="small" disabled={disabled} aria-label="筆刷像素" min={1} max={200} value={size} onChange={v => setSize(v || 1)} /> px</label><Slider ariaLabelForHandle="筆刷大小" min={1} max={200} value={size} disabled={disabled} onChange={setSize} /><span className="brush-shortcut-hint">[ 縮小 · ] 放大</span></div>}
         {historyControls}
       </Space>
       <Space wrap className="editor-toolbar">{zoomControls}<Checkbox checked={showSources} onChange={e => setShowSources(e.target.checked)}>M 顯示選區（深色已採用／淡色未採用）</Checkbox></Space>
@@ -667,7 +779,7 @@ export const RasterEditor = forwardRef<RasterHandle, Props>(function RasterEdito
       {panels.map(panel => <section key={panel.code} hidden={mode === 'edit' && panel.code === -1 && previewLayout === 'hidden'} className={mode === 'compose' ? 'compare-panel' : undefined} style={mode === 'compose' && initialView.current.widths?.[panel.code] ? {width: initialView.current.widths[panel.code]} : undefined} onPointerUp={event => { if (props.viewState && event.currentTarget.style.width) { props.viewState.current.widths ||= {}; props.viewState.current.widths[panel.code] = event.currentTarget.style.width } }}>
         {mode === 'compose' && panel.code === 0 && <div className="candidate-controls result-controls">{loading ? '載入中…' : previewReady !== props.previewUrl || saveState !== '已保存' ? '更新中…' : '與輸出一致 · 顯示即確認'}</div>}
         {mode === 'compose' && panel.code > 1 && <Space wrap className="candidate-controls"><Select aria-label={`比較面板 ${panel.code} 的來源`} value={panel.code} options={(props.candidates || []).map(c => ({value:c.code,label:c.label}))} onChange={next => setPanelOrder(order => order.map(c => c === panel.code ? next : c === next ? panel.code : c))} /><Button disabled={disabled} onClick={() => adoptAll(panel.code)}>本頁全部採用</Button></Space>}
-        <strong>{panel.label}{mode === 'edit' && <span className="panel-note">{panel.code === 0 ? `正在編輯：${categoryName}` : '即時更新'}</span>}</strong>
+        <strong>{panel.label}{mode === 'edit' && <span className="panel-note">{panel.code === 0 ? `正在編輯：${categoryName}` : computing ? '更新中…' : '背景更新'}</span>}</strong>
         {mode === 'compose' && <div className="compare-image-controls">{panel.code > 1 ? <><span>原圖</span><Slider aria-label={`${panel.label} 原圖顯示範圍`} value={compare} onChange={setCompare}/><span>{Math.round(compare)}%</span></> : <span>合成結果 · 原圖比例只影響候選預覽</span>}</div>}
         {mode === 'edit' && panel.code === 0 && <div className="panel-controls">
           {zoomControls}
@@ -679,11 +791,15 @@ export const RasterEditor = forwardRef<RasterHandle, Props>(function RasterEdito
         </div>}
         <div className="canvas-scroll" ref={node => { if (node) viewRefs.current.set(panel.code, node); else viewRefs.current.delete(panel.code) }}
           onScroll={event => { const el = event.currentTarget; if (props.viewState && !loading) Object.assign(props.viewState.current, {x:el.scrollLeft/(width*zoom), y:el.scrollTop/(height*zoom)}); for (const view of viewRefs.current.values()) if (view !== el && (view.scrollLeft !== el.scrollLeft || view.scrollTop !== el.scrollTop)) { view.scrollLeft = el.scrollLeft; view.scrollTop = el.scrollTop } }}>
+          <div className={mode === 'edit' ? 'raster-stage' : 'raster-compose-stage'} style={{ width: width * zoom, height: height * zoom }}>
           <canvas tabIndex={0} aria-label={panel.label} width={width} height={height} style={{ width: width * zoom, height: height * zoom, cursor: tool === 'pan' ? 'grab' : 'crosshair', touchAction: 'none' }}
             ref={node => { if (node) { canvasRefs.current.set(panel.code, node); redraw() } else canvasRefs.current.delete(panel.code) }}
             onContextMenu={e => e.preventDefault()} onPointerDown={e => { if (mode === 'compose' && panel.code > 1 && e.button === 0 && !e.metaKey && !e.ctrlKey && Math.abs(point(e).x-width*compare/100)*zoom < 10) { divider.current=true; e.preventDefault(); e.currentTarget.setPointerCapture(e.pointerId); return } down(e,panel.code) }} onPointerMove={e => { if (divider.current) { setCompare(Math.max(0,Math.min(100,point(e).x/width*100))); return } move(e,panel.code) }}
-            onPointerUp={() => { if (divider.current) { divider.current=false; return } end() }} onPointerCancel={() => { divider.current=false; cancelGesture() }} onDoubleClick={() => { if (mode === 'edit' && tool === 'lasso') finishLasso() }}
+            onPointerUp={e => { if (gesture.current && gesture.current.pointerId !== e.pointerId) return; if (gesture.current && !['pan', 'bounds'].includes(gesture.current.kind)) move(e, panel.code); if (divider.current) { divider.current=false; return } end() }} onPointerCancel={e => { if (gesture.current && gesture.current.pointerId !== e.pointerId) return; divider.current=false; cancelGesture() }} onDoubleClick={() => { if (mode === 'edit' && tool === 'lasso') finishLasso() }}
             onPointerLeave={() => { if (!gesture.current) { hover.current=null; previewMagic(null) } }} />
+          {mode === 'edit' && panel.code === 0 && <canvas aria-hidden="true" className="raster-magic-preview" ref={magicCanvas} width={width} height={height} />}
+          {mode === 'edit' && (panel.code === 0 || props.clipRect) && <svg aria-hidden="true" className="raster-interaction" viewBox={`0 0 ${width} ${height}`} ref={panel.code === 0 ? interactionSvg : previewClipSvg} />}
+          </div>
         </div>
       </section>)}
     </div>}
