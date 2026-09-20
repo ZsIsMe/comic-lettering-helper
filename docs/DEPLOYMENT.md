@@ -513,3 +513,5 @@ ComfyUI 輸出先複製到暫存檔，通過 PNG 完整性與解碼檢查後才�
 第二輪回歸增加：快速 hover 後立即點擊、舊預覽取消、局部 patch 經撤銷／重做／保存重開後仍與全圖一致；切換顯示比例／顏色應觸發全圖刷新。部署仍只需完整前端 dist（含 Worker），未新增 WASM、GPU 或後端依賴。
 
 原圖預載驗收：第一部分相鄰切頁後確認原圖正確、已保存圖層未回退；前後預載遵守目前篩選結果，快取限 64 MiB，退出項目後清理。檢查矩形、畫筆、魔法棒游標互異且熱點與落筆位置一致。此功能只需完整前端構建，不新增後端服務或 GPU 依賴。
+
+切頁 Worker 重用須與新版主 bundle／Worker chunk 一起部署，保持 init copyInputs 協定一致。驗收包含連續前後切頁只保留一個主 Worker、畫筆後立即切頁先保存、返回筆畫仍在、退出編輯階段釋放 Worker。DEV 測試頁 `tests/page-navigation-browser.html?pageLoadMode=baseline` 保留舊生命週期及複製路徑作 A/B；正式构建不開放 baseline 開關。

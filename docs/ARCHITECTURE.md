@@ -452,3 +452,7 @@ ComfyUI 輸出先複製到暫存檔，通過 PNG 完整性與解碼檢查後才�
 Morphology 會先統計來源列區段密度；runs > pixels/3 時使用等價 prefix 檢查，避免棋盤格／密集網點的大量短區段使區間法回退。兩條路徑以 frozen oracle 比對。
 
 原圖預載僅接入 edit 模式的 baseUrl；`source-image-cache.ts` 以 URL 與尺寸識別不可變原圖，背景依序預載，限制解碼快取為 64 MiB。ProjectWorkbench 依目前可見頁序安排當頁、後兩頁、前一頁，離開項目清理快取。overlay／other／edited 仍按 revision 重新讀取，導航前保存和項目版本重讀不變。原生 SVG 游標區分矩形、畫筆與魔法棒，熱點為十字中心；指針移動不等待 Worker。
+
+切頁初始化：`ProjectWorkspace` 透過 `RasterWorkerOwner` 延遲建立主編輯 Worker，跨頁借用同一 client；離開 edit、進入 detecting 或退出項目時 dispose。局部編輯仍獨立，借用 editor 的 cleanup 和晚回 init 不得終止共享 client。init 是 FIFO 屏障並使舊 render token 失效；每頁重置圖層、revision、歷史及預覽。傳輸只移交 overlay／other／edited／detectedText 的 owned ArrayBuffer，原圖快取不 detach；Worker 直接接管已隔離的輸入，纯 engine 呼叫仍預設 copy。
+
+`page-load-performance.ts` 在記憶體保留最多 20 次切頁記錄：save.wait（可含 snapshot/upload）、project.reload、並行 assets.*、worker.construct/init 和 firstFrame。total 到首次正式 canvas drawImage 完成，不代表螢幕出光時間。初始化失敗、被新导航取代和離開頁面有獨立狀態；診斷只在開始／完成通知觀察者，不在高頻pointer事件運作。

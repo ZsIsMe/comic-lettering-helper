@@ -29,6 +29,7 @@ const DIRTY_HISTORY_LIMIT = 64
 type MagicEditCommand = RasterEditCommand & { selection: Extract<RasterSelectionSpec, { kind: 'magic' }> }
 type MagicCache = { revision: number; command: MagicEditCommand; selection: Uint8Array; next: EditLayers }
 type DirtyTransition = { revision: number; rect: EditRect | null }
+export type RasterWorkerEngineInitOptions = { copyInputs?: boolean }
 
 function validateRgba(name: string, data: ArrayLike<number>, size: number) {
   if (data.length !== size * 4) throw new RangeError(`${name} dimensions do not match the image`)
@@ -58,7 +59,7 @@ function brushSelection(points: readonly { x: number; y: number }[], size: numbe
 export class RasterWorkerEngine {
   private width = 0
   private height = 0
-  private base = new Uint8ClampedArray()
+  private base: Uint8ClampedArray = new Uint8ClampedArray()
   private layers: EditLayers = {
     overlay: new Uint8ClampedArray(),
     other: new Uint8ClampedArray(),
@@ -67,7 +68,7 @@ export class RasterWorkerEngine {
   private detectedText: Uint8ClampedArray | null = null
   private repairText: Uint8Array | null = null
   private sampleExclude: Uint8Array | null = null
-  private assignment = new Uint16Array()
+  private assignment: Uint16Array = new Uint16Array()
   private candidates = new Map<number, { image: Uint8ClampedArray; diff: Uint8ClampedArray }>()
   private history: EditLayers[] = []
   private future: EditLayers[] = []
@@ -76,7 +77,7 @@ export class RasterWorkerEngine {
   private initialized = false
   private magicCache: MagicCache | null = null
 
-  init(input: RasterWorkerInit): RasterMetadata {
+  init(input: RasterWorkerInit, options: RasterWorkerEngineInitOptions = { copyInputs: true }): RasterMetadata {
     const { width, height } = input
     const size = width * height
     if (!Number.isSafeInteger(width) || !Number.isSafeInteger(height) || width < 0 || height < 0 || !Number.isSafeInteger(size)) {
@@ -93,20 +94,21 @@ export class RasterWorkerEngine {
       validateRgba(`candidate diff ${candidate.code}`, candidate.diff, size)
     }
 
+    const owned = <T extends Uint8ClampedArray | Uint16Array>(value: T): T => options.copyInputs === false ? value : value.slice() as T
     this.width = width
     this.height = height
-    this.base = input.base.slice()
-    this.layers = { overlay: input.overlay.slice(), other: input.other.slice(), edited: input.edited.slice() }
-    this.detectedText = input.detectedText?.slice() || null
+    this.base = owned(input.base)
+    this.layers = { overlay: owned(input.overlay), other: owned(input.other), edited: owned(input.edited) }
+    this.detectedText = input.detectedText ? owned(input.detectedText) : null
     this.repairText = textRepairMask(this.detectedText, width, height)
     this.sampleExclude = this.detectedText ? new Uint8Array(size) : null
     if (this.detectedText && this.sampleExclude) {
       for (let n = 0; n < size; n++) if (this.detectedText[n * 4] > 0) this.sampleExclude[n] = 1
     }
-    this.assignment = input.assignment?.slice() || new Uint16Array(size)
+    this.assignment = input.assignment ? owned(input.assignment) : new Uint16Array(size)
     this.candidates = new Map((input.candidates || []).map(candidate => [candidate.code, {
-      image: candidate.image.slice(),
-      diff: candidate.diff.slice(),
+      image: owned(candidate.image),
+      diff: owned(candidate.diff),
     }]))
     this.history = []
     this.future = []

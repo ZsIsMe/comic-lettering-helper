@@ -10,15 +10,19 @@ import { adoptComparisonRegion, type CompareRegion } from './comparison-regions'
 import { LocalEditWindow } from './LocalEditWindow'
 import { rasterCursor } from './raster-cursors'
 import { loadSourceImage } from './source-image-cache'
+import { baselinePageLoad } from './page-load-options'
+import { measurePageStage, type PageLoadTrace } from './page-load-performance'
 
 type Pixels = { overlay: ImageData; other: ImageData; edited: ImageData; assignment: Uint16Array }
 export interface RasterSave {
   overlay: Blob; other: Blob; edited: Blob; assignment_rle: number[][]
 }
-export interface RasterHandle { flush: () => Promise<boolean> }
+export interface RasterHandle { flush: (trace?: PageLoadTrace) => Promise<boolean> }
 interface Candidate { code: number; label: string; url: string; diffUrl: string }
 export interface ComposeView { widths?: Record<number, string>; panelScroll?: number; operation?: SelectionOperation; category?: EditCategory; color?: string; tolerance?: number; expand?: number; intersectOffset?: number; fit?: boolean; tool?: string; size?: number; zoom?: number; compare?: number; order?: number[]; show?: boolean; x?: number; y?: number }
 interface Props {
+  pageLoadTrace?: PageLoadTrace
+  acquireWorker?: () => { client: RasterWorkerClient; reused: boolean }
   compareLayout?: 'multi' | 'context' | 'cards'
   viewState?: { current: ComposeView }
   onPreviewReady?: () => Promise<void>
@@ -123,6 +127,7 @@ export const RasterEditor = forwardRef<RasterHandle, Props>(function RasterEdito
   const readyFrame = useRef<{ frame: RasterRenderFrame; generation: number; target: number } | null>(null)
   const presentFrameRef = useRef<() => void>(() => {})
   const presentedRevision = useRef<number | undefined>(undefined)
+  const finishFirstFrame = useRef<(() => void) | undefined>(undefined)
   const magicRevision = useRef<number | undefined>(undefined)
   const previewBusy = useRef(false)
   const previewWanted = useRef(false)
@@ -248,7 +253,11 @@ export const RasterEditor = forwardRef<RasterHandle, Props>(function RasterEdito
         readyFrame.current = { frame: result, generation, target }
         presentFrameRef.current()
       }).catch(reason => {
-        if (alive.current && worker.current === client) setError(`預覽更新失敗：${String(reason)}`)
+        if (alive.current && worker.current === client) {
+          finishFirstFrame.current?.(); finishFirstFrame.current = undefined
+          initial.current.pageLoadTrace?.finish('failed')
+          setError(`預覽更新失敗：${String(reason)}`)
+        }
       }).finally(() => {
         if (worker.current !== client) return
         renderBusy.current = false
@@ -306,6 +315,7 @@ export const RasterEditor = forwardRef<RasterHandle, Props>(function RasterEdito
           canvas.dataset.renderArea = String((ready.frame.rect?.width ?? width) * (ready.frame.rect?.height ?? height))
         }
         presentedRevision.current = ready.frame.revision
+        if (finishFirstFrame.current) { finishFirstFrame.current(); finishFirstFrame.current = undefined; initial.current.pageLoadTrace?.finish() }
         if (magicCanvas.current && magicRevision.current !== ready.frame.revision) magicCanvas.current.style.visibility = 'hidden'
         pendingOutlines.current = pendingOutlines.current.filter(outline => outline.version > ready.target)
         redrawRef.current()
@@ -373,12 +383,15 @@ export const RasterEditor = forwardRef<RasterHandle, Props>(function RasterEdito
     alive.current = true
     let cancelled = false
     const p = initial.current
+    const trace = p.pageLoadTrace
     void (async () => {
-      const [b, overlay, other, edited, text] = await Promise.all([
-        p.mode === 'edit' ? loadSourceImage(p.baseUrl, p.width, p.height) : load(p.baseUrl, p.width, p.height), load(p.overlayUrl || '', p.width, p.height),
-        load(p.otherUrl || '', p.width, p.height, true), load(p.editedUrl || '', p.width, p.height, true),
-        p.detectedTextUrl ? load(p.detectedTextUrl, p.width, p.height, true) : Promise.resolve(null),
-      ])
+      const [b, overlay, other, edited, text] = await measurePageStage(trace, 'assets.total', () => Promise.all([
+        measurePageStage(trace, 'assets.source', () => p.mode === 'edit' ? loadSourceImage(p.baseUrl, p.width, p.height) : load(p.baseUrl, p.width, p.height)),
+        measurePageStage(trace, 'assets.overlay', () => load(p.overlayUrl || '', p.width, p.height)),
+        measurePageStage(trace, 'assets.other', () => load(p.otherUrl || '', p.width, p.height, true)),
+        measurePageStage(trace, 'assets.edited', () => load(p.editedUrl || '', p.width, p.height, true)),
+        measurePageStage(trace, 'assets.text', () => p.detectedTextUrl ? load(p.detectedTextUrl, p.width, p.height, true) : Promise.resolve(null)),
+      ]))
       const assignment = new Uint16Array(p.width * p.height)
       let offset = 0
       for (const [value, count] of p.assignmentRle || []) { assignment.fill(value, offset, offset + count); offset += count }
@@ -388,14 +401,21 @@ export const RasterEditor = forwardRef<RasterHandle, Props>(function RasterEdito
       base.current = b; detectedText.current = text; pixels.current = { overlay, other, edited, assignment }
       candidates.current = new Map(decoded.map(item => [item.code, item]))
       if (p.mode === 'edit') {
-        const client = new RasterWorkerClient()
+        const constructDone = trace?.stage('worker.construct')
+        const lease = p.acquireWorker?.()
+        const client = lease?.client || new RasterWorkerClient()
+        trace?.detail('workerReused', lease?.reused ?? false)
+        trace?.detail('ownedLayersTransferred', !baselinePageLoad())
+        trace?.detail('initCopyBytes', baselinePageLoad() ? 2 * (b.data.byteLength + overlay.data.byteLength + other.data.byteLength + edited.data.byteLength + (text?.data.byteLength || 0)) : b.data.byteLength)
+        constructDone?.()
         worker.current = client
-        await client.init({ width: p.width, height: p.height, base: b.data, overlay: overlay.data, other: other.data, edited: edited.data, detectedText: text?.data })
-        if (cancelled) { client.dispose(); return }
+        await measurePageStage(trace, 'worker.init', () => client.init({ width: p.width, height: p.height, base: b.data, overlay: overlay.data, other: other.data, edited: edited.data, detectedText: text?.data }, { transferOwned: !baselinePageLoad(), copyInputs: baselinePageLoad() }))
+        if (cancelled) { if (!p.acquireWorker) client.dispose(); return }
       }
+      finishFirstFrame.current = trace?.stage('firstFrame')
       setLoading(false)
-    })().catch(err => { if (!cancelled) { if (p.mode === 'edit') workerFailure.current = err instanceof Error ? err : new Error(String(err)); setLoading(false); setError(String(err)) } })
-    return () => { cancelled = true; alive.current = false; worker.current?.dispose(); worker.current = null; readyFrame.current?.frame.left.close(); readyFrame.current?.frame.right.close(); readyFrame.current?.frame.magicLeft?.close(); readyFrame.current = null; if (renderTimer.current) clearTimeout(renderTimer.current); if (timer.current) clearTimeout(timer.current) }
+    })().catch(err => { if (!cancelled) { trace?.finish('failed'); if (p.mode === 'edit') workerFailure.current = err instanceof Error ? err : new Error(String(err)); setLoading(false); setError(String(err)) } })
+    return () => { cancelled = true; alive.current = false; queueMicrotask(() => { if (!alive.current) trace?.finish('cancelled') }); if (!p.acquireWorker) worker.current?.dispose(); worker.current = null; readyFrame.current?.frame.left.close(); readyFrame.current?.frame.right.close(); readyFrame.current?.frame.magicLeft?.close(); readyFrame.current = null; if (renderTimer.current) clearTimeout(renderTimer.current); if (timer.current) clearTimeout(timer.current) }
   }, [])
   useEffect(() => { if (!loading) redraw() }, [loading, redraw])
   useEffect(() => {
@@ -471,7 +491,7 @@ export const RasterEditor = forwardRef<RasterHandle, Props>(function RasterEdito
     if (localDraft) for (const url of [localDraft.overlayUrl, localDraft.otherUrl, localDraft.editedUrl]) URL.revokeObjectURL(url)
   }, [localDraft])
 
-  const flush = useCallback(async (): Promise<boolean> => {
+  const flush = useCallback(async (trace?: PageLoadTrace): Promise<boolean> => {
     if (gesture.current || lasso.current.length || localBlocked.current || workerFailure.current) return false
     if (timer.current) clearTimeout(timer.current)
     if (saving.current) return saving.current
@@ -484,10 +504,10 @@ export const RasterEditor = forwardRef<RasterHandle, Props>(function RasterEdito
           if (alive.current) setSaveState('保存中…')
           if (initial.current.mode === 'edit') {
             // Snapshot is queued behind all accepted edits. Later input gets a later version.
-            const snapshotTask = worker.current!.snapshot()
+            const snapshotTask = measurePageStage(trace, 'save.snapshot', () => worker.current!.snapshot())
             const [snapshot] = await Promise.all([snapshotTask, pendingWork.current])
             if (workerFailure.current) throw workerFailure.current
-            await saveCallback.current({ overlay: snapshot.overlay, other: snapshot.other, edited: snapshot.edited, assignment_rle: [] })
+            await measurePageStage(trace, 'save.upload', () => saveCallback.current({ overlay: snapshot.overlay, other: snapshot.other, edited: snapshot.edited, assignment_rle: [] }))
           } else {
             const snapshot = copy(pixels.current)
             await saveCallback.current({ overlay: new Blob(), other: new Blob(), edited: new Blob(), assignment_rle: rle(snapshot.assignment) })

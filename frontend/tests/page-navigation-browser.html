@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="zh-Hant">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Project page navigation probe</title>
+    <style>
+      html, body, #root { min-height: 100%; margin: 0; }
+      body { background: #eee9df; }
+      .page-navigation-fixture { min-height: 100vh; }
+      .page-navigation-fixture > header { position: sticky; z-index: 100; top: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; padding: 8px 12px; background: #fff8; backdrop-filter: blur(10px); border-bottom: 1px solid #bbb; font: 13px system-ui; }
+      .page-navigation-fixture > header output { max-width: 100%; font: 11px/1.35 ui-monospace, monospace; white-space: pre-wrap; }
+      .page-navigation-fixture .fixture-log { max-height: 76px; overflow: auto; flex-basis: 100%; }
+    </style>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="./page-navigation-browser.tsx"></script>
+  </body>
+</html>

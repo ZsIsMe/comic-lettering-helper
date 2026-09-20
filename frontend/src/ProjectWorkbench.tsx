@@ -6,6 +6,9 @@ import { DetectionSettings } from './DetectionSettings'
 import { createMaskPlan } from './create-mask-plan'
 import { runTiming } from './run-timing'
 import { RasterEditor, type RasterHandle, type ComposeView, type RasterSave } from './RasterEditor'
+import { RasterWorkerOwner } from './raster-worker-owner'
+import { baselinePageLoad } from './page-load-options'
+import { startPageLoad, type PageLoadTrace } from './page-load-performance'
 import { clearSourceImageCache, scheduleSourceImagePreload, type SourceImageRequest } from './source-image-cache'
 import { active, api, assetUrl, defaultDetectionOptions, json, projectUrl, workflowOptions, type Composition, type DetectionOptions, type Project, type Run, type Workflow } from './workbench-api'
 
@@ -160,6 +163,8 @@ function ProjectWorkspace({ initial, initialError, gpuOwner, onExit, onReadyToLe
   const [assignment, setAssignment] = useState<number[][] | null>(null)
   const [busy, setBusy] = useState(false); const [error, setError] = useState(initialError); const [dirty, setDirty] = useState(false)
   const [editorKey, setEditorKey] = useState(0)
+  const [editWorkerOwner] = useState(() => new RasterWorkerOwner())
+  const [pageLoadTrace, setPageLoadTrace] = useState(() => startPageLoad(initial.pages[0].id, 'initial'))
   const [availability, setAvailability] = useState<{ available?: boolean; ready?: boolean; available_without_bubbles?: boolean; defaults?: DetectionOptions; errors?: string[]; message?: string } | null>(null)
   const [clock, setClock] = useState(Date.now())
   const [liveRepair, setLiveRepair] = useState<Record<string, boolean>>({})
@@ -200,6 +205,8 @@ function ProjectWorkspace({ initial, initialError, gpuOwner, onExit, onReadyToLe
   const detectionCanConfigure = detectionReady || !!availability?.available_without_bubbles
   const chosenDetectionReady = detectionReady || (!detectionOptions.bubble_enabled && !!availability?.available_without_bubbles)
 
+  useEffect(() => () => editWorkerOwner.dispose(), [editWorkerOwner])
+  useEffect(() => { if (step !== 0 || detecting) editWorkerOwner.dispose() }, [editWorkerOwner, step, detecting])
   useEffect(() => () => clearSourceImageCache(), [project.id])
   useEffect(() => { scheduleSourceImagePreload(sourcePreloadRequests) }, [sourcePreloadRequests])
 
@@ -210,7 +217,7 @@ function ProjectWorkspace({ initial, initialError, gpuOwner, onExit, onReadyToLe
     try { await fn() } catch (err) { setError(err instanceof Error ? err.message : String(err)) }
     finally { navigating.current = false; setBusy(false) }
   }
-  async function flush() { return !editor.current || await editor.current.flush() }
+  async function flush(trace?: PageLoadTrace) { return !editor.current || await editor.current.flush(trace) }
   useEffect(() => {
     onReadyToLeave?.(async () => !navigating.current && (!editor.current || await editor.current.flush()))
     return () => onReadyToLeave?.(async () => true)
@@ -267,15 +274,19 @@ function ProjectWorkspace({ initial, initialError, gpuOwner, onExit, onReadyToLe
   }, [step, runId, page.id, compUrl, loadComposition, editorKey])
 
   async function navigate(nextStep: number, nextPage = pageIndex, accepted = false) {
-    if (!await flush()) return
-    if (nextStep === 2 && run?.state !== 'completed' && !run?.partial_results_accepted && !accepted) { message.info('修復完成後即可比較合成'); return }
-    const p = await reloadProject()
-    editRevision.current = p.pages[nextPage].edit_revision
-    if (nextStep === 2) {
-      const a = await api<{ revision: number; assignment_rle: number[][] }>(`${compUrl}/pages/${p.pages[nextPage].id}/assignment`)
-      compositionRevision.current = a.revision; setAssignment(a.assignment_rle)
-    }
-    setPageIndex(nextPage); setStep(nextStep); setDirty(false); setEditorKey(k => k + 1)
+    const trace = nextStep === 0 ? startPageLoad(project.pages[nextPage].id, 'navigate') : undefined
+    try {
+      if (!await (trace ? trace.measure('save.wait', () => flush(trace)) : flush())) { trace?.finish('cancelled'); return }
+      if (nextStep === 2 && run?.state !== 'completed' && !run?.partial_results_accepted && !accepted) { message.info('修復完成後即可比較合成'); return }
+      const p = await (trace ? trace.measure('project.reload', reloadProject) : reloadProject())
+      editRevision.current = p.pages[nextPage].edit_revision
+      if (nextStep === 2) {
+        const a = await api<{ revision: number; assignment_rle: number[][] }>(`${compUrl}/pages/${p.pages[nextPage].id}/assignment`)
+        compositionRevision.current = a.revision; setAssignment(a.assignment_rle)
+      }
+      setPageIndex(nextPage); setStep(nextStep); setDirty(false); setEditorKey(k => k + 1)
+      if (trace) { pageLoadTrace.finish('superseded'); setPageLoadTrace(trace) }
+    } catch (error) { trace?.finish('failed'); throw error }
   }
   useEffect(() => {
     const keydown = (event: KeyboardEvent) => {
@@ -416,7 +427,7 @@ function ProjectWorkspace({ initial, initialError, gpuOwner, onExit, onReadyToLe
         {!detectionCanConfigure && <span className="detection-unavailable">自動檢測暫不可用，可手動編輯</span>}
         {detecting && <p className="detection-estimate">參考估算：首次準備約 20 秒，每張約 8 秒；第一張合計約 28 秒，之後每張約 8 秒。{project.pages.length} 張合計約 {Math.floor((20 + project.pages.length * 8) / 60)} 分 {(20 + project.pages.length * 8) % 60} 秒（依圖片與設備浮動）。</p>}
         {detecting && detection?.created_at && <p role="timer">{detecting ? '已運行' : '本次耗時'} {Math.max(0, Math.floor(((detecting ? clock : Date.parse(detection.updated_at || detection.created_at)) - Date.parse(detection.created_at)) / 1000))} 秒{detecting && <> · {clock - Date.parse(detection.created_at) < (20 + (detection.total || project.pages.length) * 8) * 1000 ? `預估剩餘約 ${Math.ceil(((20 + (detection.total || project.pages.length) * 8) * 1000 - clock + Date.parse(detection.created_at)) / 1000)} 秒` : '已超過參考時間，仍在處理'}</>}</p>}
-        {detecting ? <Alert type="info" showIcon message={detection?.progress ? `${detectionLabels[detection.state] || detectionLabels[detection.progress.stage] || '自動檢測中'} · ${detection.progress.completed} / ${detection.progress.total} 頁` : detectionLabels[detection?.state || ''] || '自動檢測中，完成後即可編輯'} action={<Button danger onClick={() => void execute(async () => { await api(`${url}/detection/${detection?.state === 'recovery_required' ? 'recover' : 'cancel'}`, { method: 'POST' }); await reloadProject(); setEditorKey(k => k + 1) })}>{detection?.state === 'recovery_required' ? '檢查恢復' : '停止偵測'}</Button>} /> : <RasterEditor key={`${page.id}-${editorKey}`} ref={editor} width={page.width} height={page.height} mode="edit" viewState={editView}
+        {detecting ? <Alert type="info" showIcon message={detection?.progress ? `${detectionLabels[detection.state] || detectionLabels[detection.progress.stage] || '自動檢測中'} · ${detection.progress.completed} / ${detection.progress.total} 頁` : detectionLabels[detection?.state || ''] || '自動檢測中，完成後即可編輯'} action={<Button danger onClick={() => void execute(async () => { await api(`${url}/detection/${detection?.state === 'recovery_required' ? 'recover' : 'cancel'}`, { method: 'POST' }); await reloadProject(); setEditorKey(k => k + 1) })}>{detection?.state === 'recovery_required' ? '檢查恢復' : '停止偵測'}</Button>} /> : <RasterEditor key={`${page.id}-${editorKey}`} ref={editor} width={page.width} height={page.height} mode="edit" viewState={editView} pageLoadTrace={pageLoadTrace} acquireWorker={baselinePageLoad() ? undefined : editWorkerOwner.acquire}
           baseUrl={assetUrl(project.id, page.source)} overlayUrl={`${assetUrl(project.id, page.overlay)}?v=${page.edit_revision}`} otherUrl={`${assetUrl(project.id, page.other)}?v=${page.edit_revision}`} editedUrl={`${assetUrl(project.id, page.edited)}?v=${page.edit_revision}`}
           detectedTextUrl={page.detected_text ? assetUrl(project.id, page.detected_text) : undefined}
           onSave={saveEdit} onDirty={setDirty} onRepairMaskChange={value => setLiveRepair(previous => ({ ...previous, [page.id]: value }))} disabled={busy} />}

@@ -130,3 +130,30 @@ Sol high 子代理實測同一真圖：第 7 頁白區 solid expand=0 正式冷�
 使用 `tests/source-preload-browser.html` 在 IAB 選入使用者第 15–18 頁真圖（各 1121×1600），不預先讀圖探測尺寸。15→16→17→16→15：第一次原圖讀取 20.7 ms；預載命中第 16／17 頁為 4.4／4.9 ms；返回已提取頁均為 0.1 ms。四張只解碼四次，快取 28,697,600 bytes（約 27.4 MiB），重訪像素抽樣簽章一致、無載入錯誤。這是本機 Blob URL 的原圖讀取樣本，不包含網路遠端延遲、保存、圖層載入、Worker 初始化或整頁切換耗時，不承諾整頁數毫秒。實際 RasterEditor 另使用第 16 頁確認三個工具的原生 cursor 均不同。
 
 本次最終驗證：112/112 前端測試、238/238 後端測試、lint、正式 build、git diff --check 通過。獨立 Sol high 複審無阻塞問題。改動留在同一獨立工作樹，尚未提交或部署。
+
+
+## 完整切頁量測、Worker 重用與初始化複製
+
+本輪從 `9848457` 開始。主代理負責完整切頁計時與 Worker owner；Sol high 子代理分別處理 init ownership、真正 ProjectWorkbench 測試 fixture、獨立生命週期與排序審核。
+
+新 `tests/page-navigation-browser.html` 掛載真正 ProjectWorkbench／RasterEditor，使用使用者第 15–18 頁（1121×1600）；本機 fixture 模擬項目 API、空白初始 revision 圖層和保存，原圖是實際 JPEG。啟用 React StrictMode；baseline 與 optimized 共用相同 API、原圖預載與顯示方式，僅前者保留每頁新 Worker／雙重複製。測試頁本身的 React、API 記錄與 StrictMode 重複 effect 都有額外成本，因此不是正式環境絕對延遲或遠端網路驗收。
+
+先取得各段基準，再實作：項目主編輯器延遲取得共用 Worker，切頁以 FIFO init 重置文件，舊 render／preview token 失效；不再建立新執行緒。轉移 overlay／other／edited／detectedText 後，主執行緒只保留其 wrapper 作初始化狀態判斷，不讀已 detach 資料；Worker 直接接管收到的隔離輸入，省第二次 slice。Base 保留在原圖快取，送 Worker 仍複製一次。純 engine API 預設 copy，保留呼叫者資料隔離。
+
+相同頁序 15→16→17→18→17→16→15，共六次切頁：
+
+| 項目 | Baseline | Optimized |
+| --- | ---: | ---: |
+| 完整切頁 ms（逐次） | 304.9, 305.5, 305.8, 205.1, 179.1, 206.8 | 266.7, 182.3, 244.7, 183.0, 155.4, 215.1 |
+| 完整切頁中位數 | 255.85 ms | 199.05 ms |
+| Worker init 中位數 | 62.35 ms | 9.55 ms |
+| Worker 建立／終止／存活 | 7 / 6 / 1 | 1 / 0 / 1 |
+| 每頁 init 像素複製量（無 detectedText，程式路徑推算） | 57,395,200 bytes | 7,174,400 bytes |
+
+此樣本完整切頁中位數改善約 22%，Worker init 約 85%；仍有單次回退，不能對所有圖片宣稱固定倍率。初次開頁仍要載圖及啟動 Worker，這次約 336／341 ms，沒有顯著改善。assets.total 與 firstFrame 已成為主要剩餘成本，並行 asset durations 不應相加。首次非 StrictMode 探索數字不與此表混算。
+
+畫筆 80 px 點下後立刻切頁：save.snapshot 41.1 ms、save.upload 29.9 ms、save.wait 71.1 ms，之後才 project.reload／下一頁 init；返回第 15 頁顯示 saves=1、revision=2，左右畫布可見粉色筆畫。這裡 upload 是 fixture API 保存，不能代表遠端上傳。離開編輯到批量階段後 Worker 存活數從 1 降到 0，返回後才建立第 2 個 Worker，內容仍保留。
+
+新增測試涵蓋 owned buffer transfer 不 detach 原圖、預設 copy／adopt 對等、跨頁舊幀回收、lazy owner／terminal replacement、snapshot→init FIFO 屏障與文件歷史重置；計時記錄涵蓋失敗與晚回 callback，不讓診斷 listener 改變任務結果。
+
+本輪最終驗證：122/122 前端測試、238/238 後端測試、lint、正式 build、git diff --check 通過。獨立複審無阻塞問題。性能改動未提交、推送或部署。

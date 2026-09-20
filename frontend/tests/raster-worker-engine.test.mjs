@@ -157,6 +157,43 @@ test('history is atomic, redo is cleared by a new edit, and returned snapshots c
   assert.deepEqual(initial.overlay, original.overlay, 'init must retain ownership of caller buffers')
 })
 
+test('worker-owned init adopts buffers while the public default copies and both reset document state', () => {
+  const copiedInput = fixture(4, 3)
+  const copied = new RasterWorkerEngine()
+  copied.init(copiedInput)
+  copiedInput.other[0] = 201
+  assert.notEqual(copied.snapshot().other[0], 201, 'default engine callers retain their input ownership')
+
+  const adoptedInput = fixture(4, 3)
+  const adopted = new RasterWorkerEngine()
+  adopted.init(adoptedInput, { copyInputs: false })
+  adoptedInput.other[0] = 202
+  assert.equal(adopted.snapshot().other[0], 202, 'the isolated worker payload becomes authoritative without another copy')
+  adopted.commit({ selection: { kind: 'rectangle', x1: 1, y1: 1, x2: 2, y2: 2 }, operation: 'add', category: 'other' })
+  assert.equal(adopted.metadata().revision, 1)
+
+  const replacement = fixture(2, 2)
+  assert.deepEqual(adopted.init(replacement, { copyInputs: false }), {
+    revision: 0, history: { undo: 0, redo: 0 }, hasRepairMask: false,
+  })
+  replacement.overlay[3] = 255
+  assert.equal(adopted.snapshot().overlay[3], 255)
+})
+
+test('legacy-copy and adopted init paths produce identical edits and renders', () => {
+  const input = fixture(7, 6)
+  const copied = new RasterWorkerEngine()
+  const adopted = new RasterWorkerEngine()
+  copied.init(input, { copyInputs: true })
+  adopted.init(input, { copyInputs: false })
+  const command = { selection: { kind: 'magic', point: { x: 6, y: 5 }, tolerance: 2, expand: 1 }, operation: 'add', category: 'solid' }
+  copied.commit(command)
+  adopted.commit(command)
+  assert.deepEqual(adopted.snapshot(), copied.snapshot())
+  const options = { maskPercent: 70, maskColor: [255, 255, 255], showOther: true, otherPercent: 38, otherColor: [255, 110, 165] }
+  assert.deepEqual(adopted.render(options), copied.render(options))
+})
+
 test('merge is one undoable region operation and never aliases the supplied draft', () => {
   const initial = fixture(4, 3)
   const engine = new RasterWorkerEngine()

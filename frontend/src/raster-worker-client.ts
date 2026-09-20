@@ -42,6 +42,13 @@ export interface RasterWorkerClientOptions {
   workerFactory?: () => RasterWorkerPort
 }
 
+export interface RasterWorkerInitOptions {
+  /** Transfer disposable edit-layer inputs. The cached base buffer is always retained by the caller. */
+  transferOwned?: boolean
+  /** DEV A/B switch that asks the worker engine to retain the legacy second copy. */
+  copyInputs?: boolean
+}
+
 interface Pending {
   expected: ResponseType
   resolve(value: ResponseValue): void
@@ -74,8 +81,16 @@ export class RasterWorkerClient {
     this.worker.addEventListener('messageerror', this.onWorkerError)
   }
 
-  init(payload: RasterWorkerInit): Promise<RasterMetadata> {
-    return this.send('init', 'metadata', payload)
+  get usable(): boolean {
+    return !this.disposed && !this.terminalError
+  }
+
+  init(payload: RasterWorkerInit, options: RasterWorkerInitOptions = {}): Promise<RasterMetadata> {
+    // Frames from the previous document must be closed even when they arrive after this init reply.
+    this.latestRenderToken++
+    this.latestPreviewToken++
+    const transfer = options.transferOwned ? this.ownedInitTransfers(payload) : undefined
+    return this.send('init', 'metadata', payload, transfer, options.copyInputs)
   }
 
   commit(payload: RasterEditCommand): Promise<RasterMetadata> {
@@ -131,27 +146,36 @@ export class RasterWorkerClient {
     this.pending.clear()
   }
 
-  private send(type: 'init', expected: 'metadata', payload: RasterWorkerInit): Promise<RasterMetadata>
+  private send(type: 'init', expected: 'metadata', payload: RasterWorkerInit, transfer?: Transferable[], copyInputs?: boolean): Promise<RasterMetadata>
   private send(type: 'commit', expected: 'metadata', payload: RasterEditCommand): Promise<RasterMetadata>
   private send(type: 'undo' | 'redo' | 'resetHistory', expected: 'metadata'): Promise<RasterMetadata>
   private send(type: 'merge', expected: 'metadata', payload: RasterMergeCommand): Promise<RasterMetadata>
   private send(type: 'render', expected: 'render', payload: RasterRenderOptions): Promise<RasterRenderFrame | null>
   private send(type: 'snapshot', expected: 'snapshot'): Promise<RasterSnapshot>
-  private send(type: RasterWorkerRequest['type'], expected: ResponseType, payload?: unknown): Promise<ResponseValue> {
+  private send(type: RasterWorkerRequest['type'], expected: ResponseType, payload?: unknown, transfer?: Transferable[], copyInputs?: boolean): Promise<ResponseValue> {
     if (this.disposed) return Promise.reject(new Error('Raster worker client was disposed'))
     if (this.terminalError) return Promise.reject(this.terminalError)
     const id = this.nextId++
-    const request = (payload === undefined ? { id, type } : { id, type, payload }) as RasterWorkerRequest
+    const request = (payload === undefined ? { id, type } : { id, type, payload, ...(type === 'init' && copyInputs !== undefined ? { copyInputs } : {}) }) as RasterWorkerRequest
     return new Promise<ResponseValue>((resolve, reject) => {
       this.pending.set(id, { expected, resolve, reject })
       try {
-        // Init deliberately clones rather than transfers; RasterEditor may retain its decoded inputs.
-        this.worker.postMessage(request)
+        this.worker.postMessage(request, transfer)
       } catch (error) {
         this.pending.delete(id)
         reject(error instanceof Error ? error : new Error(String(error)))
       }
     })
+  }
+
+  private ownedInitTransfers(payload: RasterWorkerInit): Transferable[] {
+    const retained = payload.base.buffer
+    const buffers = new Set<ArrayBuffer>()
+    for (const pixels of [payload.overlay, payload.other, payload.edited, payload.detectedText]) {
+      const buffer = pixels?.buffer
+      if (buffer instanceof ArrayBuffer && buffer !== retained) buffers.add(buffer)
+    }
+    return [...buffers]
   }
 
   private onMessage = (event: MessageEvent<RasterWorkerResponse>) => {

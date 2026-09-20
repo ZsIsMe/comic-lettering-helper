@@ -73,7 +73,8 @@ async function handle(request: RasterWorkerRequest): Promise<{ response: RasterW
     case 'cancelPreview':
       return { response: { id: request.id, ok: true, type: 'render', value: null } }
     case 'init':
-      return { response: metadataResponse(request.id, engine.init(request.payload)) }
+      // Worker messages already isolate non-transferred inputs. Adopt them unless a DEV A/B run asks to retain the legacy copy.
+      return { response: metadataResponse(request.id, engine.init(request.payload, { copyInputs: request.copyInputs === true })) }
     case 'commit':
       return { response: metadataResponse(request.id, engine.commit(request.payload)) }
     case 'undo':

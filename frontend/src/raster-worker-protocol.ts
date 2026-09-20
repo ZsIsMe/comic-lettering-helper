@@ -121,7 +121,7 @@ export interface RasterSnapshot extends RasterMetadata {
 }
 
 export type RasterWorkerRequest =
-  | { id: number; type: 'init'; payload: RasterWorkerInit }
+  | { id: number; type: 'init'; payload: RasterWorkerInit; copyInputs?: boolean }
   | { id: number; type: 'commit'; payload: RasterEditCommand }
   | { id: number; type: 'undo' }
   | { id: number; type: 'redo' }
