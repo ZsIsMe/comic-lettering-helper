@@ -157,3 +157,5 @@ Sol high 子代理實測同一真圖：第 7 頁白區 solid expand=0 正式冷�
 新增測試涵蓋 owned buffer transfer 不 detach 原圖、預設 copy／adopt 對等、跨頁舊幀回收、lazy owner／terminal replacement、snapshot→init FIFO 屏障與文件歷史重置；計時記錄涵蓋失敗與晚回 callback，不讓診斷 listener 改變任務結果。
 
 本輪最終驗證：122/122 前端測試、238/238 後端測試、lint、正式 build、git diff --check 通過。獨立複審無阻塞問題。性能改動未提交、推送或部署。
+
+發布整合：已合入最新 main 的預排版文字與剪貼功能，0.2.10 對應整合後版本；135/135 前端測試、238/238 後端測試、lint、正式 build 和 diff check 通過。上方未提交／未發布為各輪開發時狀態。正式更新包僅包含應用程式與 dist，不包含 tests 驗證頁或使用者漫畫。
