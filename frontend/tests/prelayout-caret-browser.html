@@ -1,1 +1,26 @@
-<!doctype html><html lang="zh-Hant"><meta charset="utf-8"><title>原位編輯換行回歸</title><style>body{font:16px sans-serif}output{display:block;white-space:pre-wrap;overflow-wrap:anywhere}#probe,#mount{writing-mode:vertical-rl;white-space:pre;font:36px sans-serif;line-height:1.3;width:max-content;margin:20px}#probe{position:absolute;left:600px;top:100px}#mount{border:1px solid orange}.pl-inline-editor{outline:none;white-space:pre;min-inline-size:1em;min-block-size:1.25em}</style><button id="run">執行完整回歸</button><output id="result"></output><button id="edit">開啟實際編輯器</button><button id="place">長欄第九字後</button><output id="saved"></output><div id="mount"></div><output id="status"></output><div id="probe" contenteditable="plaintext-only"></div><script type="module" src="./regression.js"></script></html>
+<!doctype html>
+<html lang="zh-Hant">
+<meta charset="utf-8">
+<title>原位編輯與文字快捷操作回歸</title>
+<link rel="stylesheet" href="./regression.css">
+<style>
+body{font:16px sans-serif;margin:20px}output{display:block;white-space:pre-wrap;overflow-wrap:anywhere}
+#probe,#mount{writing-mode:vertical-rl;white-space:pre;font:36px sans-serif;line-height:1.3;width:max-content;margin:20px}
+#probe{position:absolute;left:900px;top:100px}#mount{border:1px solid orange}
+.pl-inline-editor{outline:none;white-space:pre;min-inline-size:1em;min-block-size:1.25em}
+h2{margin-top:32px}.fixture-tools{display:flex;gap:8px;margin:8px 0}
+#action-status{max-height:240px;overflow:auto;background:#f6f3ef;padding:8px}
+</style>
+<button id="run">執行完整回歸</button><output id="result"></output>
+<button id="edit">開啟實際編輯器</button><button id="place">長欄第九字後</button>
+<output id="saved"></output><div id="mount"></div><output id="status"></output>
+<div id="probe" contenteditable="plaintext-only"></div>
+<h2>實際 TextPage 快捷按鈕／分割驗收</h2>
+<p>單擊文字可測試「色／描／排」；雙擊或 ⌘＋單擊文字後，用下方按鈕建立原生選區，再按文字旁的「分割」。</p>
+<div class="fixture-tools">
+  <button id="select-partial">選取局部文字</button><button id="select-multiline">選取跨行文字</button>
+  <button id="action-undo">撤銷</button><button id="action-redo">重做</button>
+</div>
+<div id="action-mount"></div><output id="action-status"></output>
+<script type="module" src="./regression.js"></script>
+</html>

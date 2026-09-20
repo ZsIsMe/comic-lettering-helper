@@ -8,7 +8,7 @@
 
 ## 獨立資料的網頁預排版
 
-`TextPage` 雙擊文字時掛載 `InlineTextEditor`，沿用同一文字層的 writing-mode、縮放、旋轉與樣式。純文字 contenteditable 的 DOM、選取與組字區間由瀏覽器管理，React 更新不覆寫輸入內容；原生游標命中測試定位雙擊位置。編輯期間隱藏拖曳控制點並隔離鍵盤事件。完成／失焦時只更新該條文字與手動狀態，記一次撤銷；Esc 提交文字、結束編輯並立即 flush 保存。`EditorState` 登記未完成的文字草稿，使離頁提醒識別未保存輸入，並在 flush（保存／匯出／跨工作區）及撤銷前提交。只有完成編輯後才進入既有 IndexedDB 與伺服器自動保存流程。
+`TextPage` 雙擊文字或 ⌘＋單擊文字時掛載 `InlineTextEditor`，沿用同一文字層的 writing-mode、縮放、旋轉與樣式。純文字 contenteditable 的 DOM、選取與組字區間由瀏覽器管理，React 更新不覆寫輸入內容；原生游標命中測試定位點擊位置。編輯期間隱藏拖曳控制點並隔離鍵盤事件。完成／失焦時只更新該條文字與手動狀態，記一次撤銷；Esc 提交文字、結束編輯並立即 flush 保存。`EditorState` 登記未完成的文字草稿，使離頁提醒識別未保存輸入，並在 flush（保存／匯出／跨工作區）及撤銷前提交。只有完成編輯後才進入既有 IndexedDB 與伺服器自動保存流程。
 
 `editable-text.ts` 共同提供保存文字及 DOM 游標位置對照，統一處理純文字換行、DIV／P、BR 與末尾佔位換行，不重寫瀏覽器正在編輯的 DOM。`caret-navigation.ts` 依明確的換行欄位設定 Selection 位置，取代瀏覽器的 `Selection.modify(line)`：←／→ 移到相鄰欄並記住原字位，短欄夾到欄尾，邊界保持不動；↑／↓ 依 Unicode grapheme 逐字移動。Shift 保留選取起點，點擊、輸入及其他鍵重設記憶字位。組字與系統修飾鍵不攔截，橫排沿用原生游標。
 
@@ -44,6 +44,10 @@ CTD 階段沿用來源核心的 OpenCV Telea 生成 `output/inpainted/<stem>.png
 頁面採不可變 JSON 修訂與原子 manifest 發布；文字保存带 `expected_revision` 和冪等操作 ID。瀏覽器按頁訂閱，700 ms 停頓後串行保存；IndexedDB 保存預排版草稿，多分頁版本衝突由使用者選擇。滑鼠拖曳移動與旋轉只在 rAF 更新選中元素的 transform，結束後記錄一次撤銷；點選本身不修改文字或匹配狀態。
 
 `shortcuts.ts` 集中處理文字快捷鍵與相對增減：方向鍵以原圖像素移動 1／10／50，字級增減 2／10，旋轉增減 1°／5°。每條選取文字獨立計算，不套用第一條的絕對值；角度沿用來源核心的 (-180, 180] 範圍，字級限制 1–999。符號鍵兼用 `code` 與 `key`，支援 macOS Option 變更輸入符號及數字鍵盤。`EditorState` 原有 350 ms 分組保留；鍵盤 repeat 可跨初始延遲延續同組，keyup／失焦結束分組，不同操作或選取另記撤銷。未實際改變的上下限操作不寫草稿。輸入框、組字、彈窗與指標手勢期間避讓快捷鍵；點選文字把焦點移回漫畫視窗。Alt 滾輪只在漫畫視窗調字級，普通滾輪仍連續捲動。`TextPage` 選框上方兩角為縮小／放大文字（2／10），下方兩角為逆時針／順時針旋轉（1°／5°）；共用 `adjustedItems` 逐條增減字級或角度，每次點擊記錄一筆撤銷。按鈕阻止 pointerdown 冒泡，避免觸發拖動或清除多選；尺寸隨 scene scale 反向調整，上方拖曳旋轉點保留。這些操作只更新文字狀態，不重新偵測或生成底圖。
+
+`ShortcutHelp` 使用 `shortcuts.ts` 的分組資料，在項目頁標題列下方、工具列上方呈現完整操作表。區塊預設展開、可收起，展開內容限制為約 25vh 並獨立捲動；一般操作、文字編輯、畫面與滑鼠三欄在窄畫面改為兩欄或單欄。舊 `shortcutHelp` 扁平匯出由同一份分組資料產生，保留既有 Modal 或其他呼叫端相容性。
+
+非編輯狀態的文字框剪貼分開處理內部快照與作業系統剪貼簿。⌘／Ctrl＋C 只接受單一所選框並保存完整文字與樣式，不寫入系統剪貼簿；⌘／Ctrl＋V 以該快照在左側編輯畫布指標中心建立完整框；⌘／Ctrl＋P 讀取系統純文字、保留換行，以同一快照作樣式模板建立新框。多選、缺少快照或無有效左側畫布指標時不修改資料並提示。`shortcutBlocked` 繼續使原位編輯保留瀏覽器原生 C／V，P 也不在編輯中攔截。
 
 `ContinuousPages` 保留可視範圍、前後約一個視窗及操作中的頁面；卸載節點不卸載資料。底圖與文字各自渲染；JPEG 預覽級別為 384／768／1536／3072，巨圖使用可見區圖塊，原圖座標不變。瀏覽器圖片快取上限 256 MiB（估計解碼像素）及 40 項，不是整個瀏覽器記憶體限制；伺服器每項目預覽快取 256 MiB、同時兩個預覽解碼。預覽 reader 不佔用長時間編輯鎖，上傳準備限一份並行。效能證據見 [本地驗證](PRELAYOUT_LOCAL_VALIDATION.md)。
 
@@ -456,3 +460,7 @@ Morphology 會先統計來源列區段密度；runs > pixels/3 時使用等價 p
 切頁初始化：`ProjectWorkspace` 透過 `RasterWorkerOwner` 延遲建立主編輯 Worker，跨頁借用同一 client；離開 edit、進入 detecting 或退出項目時 dispose。局部編輯仍獨立，借用 editor 的 cleanup 和晚回 init 不得終止共享 client。init 是 FIFO 屏障並使舊 render token 失效；每頁重置圖層、revision、歷史及預覽。傳輸只移交 overlay／other／edited／detectedText 的 owned ArrayBuffer，原圖快取不 detach；Worker 直接接管已隔離的輸入，纯 engine 呼叫仍預設 copy。
 
 `page-load-performance.ts` 在記憶體保留最多 20 次切頁記錄：save.wait（可含 snapshot/upload）、project.reload、並行 assets.*、worker.construct/init 和 firstFrame。total 到首次正式 canvas drawImage 完成，不代表螢幕出光時間。初始化失敗、被新导航取代和離開頁面有獨立狀態；診斷只在開始／完成通知觀察者，不在高頻pointer事件運作。
+
+預排版新增框旁文字顏色／描邊／方向切換，依各選取條目的原值切換並以單次 EditorState.edit 記錄。黑字白描邊，其餘文字黑描邊；描邊粗細從非零切換至 0、從 0 切換至 4。原位分割使用 editable-text 的 DOM／文字映射取得選取範圍，點擊控制項保留文字選取，不直接改寫 contenteditable。將未選取文字與新框以同一次編輯保存，以分割前完整草稿作為撤銷快照，原框中心保持不變，新框位於頁面水平方向右側並繼承樣式、使用獨立 ID，不沿用原偵測匹配關聯。組字期間、空選取與全選不執行分割。
+
+⌘＋單擊只在文字本體進入編輯，不啟動拖曳；框旁按鈕、旋轉及參考框控制點維持各自功能。普通單擊選取與拖曳、多選及雙擊入口保持不變。

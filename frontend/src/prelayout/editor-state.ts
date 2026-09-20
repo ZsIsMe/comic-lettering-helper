@@ -83,11 +83,11 @@ export class EditorState {
     this.loads.set(id, promise)
     try { return await promise } finally { this.loads.delete(id) }
   }
-  edit(id: string, items: Item[], record = true, group?: string, continuing = false) {
+  edit(id: string, items: Item[], record = true, group?: string, continuing = false, undoSnapshot?: Item[]) {
     const state = this.pages.get(id)
     if (!state) return
     const previous = this.groups.get(id), time = performance.now()
-    if (record && (!group || previous?.key !== group || (!continuing && time - previous.time > 350))) { state.undo.push(copy(state.data.items)); state.undo = state.undo.slice(-100); state.redo = [] }
+    if (record && (!group || previous?.key !== group || (!continuing && time - previous.time > 350))) { state.undo.push(copy(undoSnapshot || state.data.items)); state.undo = state.undo.slice(-100); state.redo = [] }
     if (group) this.groups.set(id, { key: group, time }); else this.groups.delete(id)
     state.data.items = copy(items); state.dirty = true; state.version += 1
     this.persist(id); this.emit(id); this.schedule(id)

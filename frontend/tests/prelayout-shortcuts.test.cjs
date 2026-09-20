@@ -38,6 +38,7 @@ const fixture = () => [
   { _id: 'c', text: '未選', x: .5, y: .75, 'font-size': 50, rotation: 0, orientation: 'vertical', color: '#000000', 'stroke-color': '#ffffff', 'stroke-weight': 0, match_status: 'auto' },
 ]
 const { textShortcut, adjustedItems } = sources().load('shortcuts')
+const { splitTextItem, splitTextParts } = sources().load('split-text')
 const { characterLabel, characterAt, characterPath } = sources().load('character-overlay')
 
 test('character hover labels use original width/height and the estimated font size', () => {
@@ -129,6 +130,63 @@ test('font bounds and empty selection do not create artificial edits', () => {
   }
   const items = fixture()
   assert.strictEqual(adjustedItems(items, [], { kind: 'rotate', delta: 1 }, 2000, 2000), items)
+})
+
+test('quick color, stroke and orientation toggles use each selected item own state', () => {
+  const items = fixture()
+  Object.assign(items[0], { color: '000', 'stroke-color': '#123456', 'stroke-weight': 3, orientation: 'vertical' })
+  Object.assign(items[1], { color: '#c03030', 'stroke-color': '#ffffff', 'stroke-weight': 0, orientation: 'horizontal' })
+  let after = adjustedItems(items, ['a', 'b'], { kind: 'color' }, 2000, 2000)
+  assert.deepEqual(after.slice(0, 2).map(item => [item.color, item['stroke-color']]), [['#ffffff', '#000000'], ['#000000', '#ffffff']])
+  after = adjustedItems(after, ['a', 'b'], { kind: 'stroke' }, 2000, 2000)
+  assert.deepEqual(after.slice(0, 2).map(item => [item['stroke-weight'], item['stroke-color']]), [[0, '#000000'], [4, '#ffffff']])
+  after = adjustedItems(after, ['a', 'b'], { kind: 'orientation' }, 2000, 2000)
+  assert.deepEqual(after.map(item => item.orientation), ['horizontal', 'vertical', 'vertical'])
+  assert(after.slice(0, 2).every(item => item.match_status === 'manual'))
+  assert.strictEqual(after[2], items[2])
+})
+
+test('quick actions record one undo for a multiselection', () => {
+  const { controller, state, original } = editorFixture()
+  controller.edit('page', adjustedItems(state.data.items, ['a', 'b'], { kind: 'stroke' }, 2000, 2000))
+  assert.equal(state.undo.length, 1)
+  assert.deepEqual(state.data.items.slice(0, 2).map(item => item['stroke-weight']), [0, 4])
+  controller.undo('page'); assert.deepEqual(state.data.items, original)
+  controller.dispose()
+})
+
+test('split keeps the original center and style while making a fresh manual item to its right', () => {
+  const items = fixture()
+  Object.assign(items[0], { text: '前😀選\n取後', groupId: 7, index: 4, source_block_index: 12, match_source_block_index: 12, need_inpaint: true, text_has_stroke: true })
+  items[1].index = 9
+  const result = splitTextItem(items, 'a', items[0].text, 3, 5, 2000,
+    { remainder: { width: 80, height: 120 }, selected: { width: 60, height: 100 } }, () => 't_fresh')
+  assert(result)
+  const original = result.items[0], fresh = result.items.at(-1)
+  assert.equal(original.text, '前😀取後'); assert.equal(original.x, items[0].x); assert.equal(original.y, items[0].y)
+  assert.equal(fresh.text, '選\n'); assert.equal(fresh._id, 't_fresh'); assert.equal(fresh.index, 10); assert.equal(fresh.groupId, 7)
+  assert(fresh.x > original.x); assert.equal(fresh.y, original.y)
+  for (const key of ['font-size', 'rotation', 'orientation', 'color', 'stroke-color', 'stroke-weight']) assert.equal(fresh[key], items[0][key])
+  for (const key of ['xyxy_pixel', 'source_block_index', 'match_source_block_index', 'need_inpaint', 'text_has_stroke']) assert.equal(fresh[key], undefined)
+})
+
+test('split respects Unicode boundaries and rejects collapsed, blank and whole-text selections', () => {
+  assert.deepEqual(splitTextParts('A😀B', 2, 3), { start: 1, end: 3, selectedText: '😀', remainder: 'AB' })
+  assert.equal(splitTextParts('A😀B', 2, 2), null, 'collapsed caret inside surrogate stays collapsed')
+  assert.equal(splitTextParts('ABC', 0, 3), null)
+  assert.equal(splitTextParts('A  B', 1, 3), null)
+})
+
+test('split including an in-progress draft is one undo operation', () => {
+  const { controller, state, original } = editorFixture()
+  const draft = '草稿中的選字', result = splitTextItem(state.data.items, 'a', draft, 4, 6, 2000, undefined, () => 't_split')
+  assert(result)
+  const undoSnapshot = state.data.items.map(item => item._id === 'a' ? { ...item, text: draft, match_status: 'manual' } : item)
+  controller.edit('page', result.items, true, undefined, false, undoSnapshot)
+  assert.equal(state.undo.length, 1); assert.equal(state.data.items.length, 4)
+  assert.equal(state.data.items[0].text, '草稿中的'); assert.equal(state.data.items[3].text, '選字')
+  controller.undo('page'); assert.equal(state.data.items.length, original.length); assert.equal(state.data.items[0].text, draft); assert.equal(state.data.items[0].match_status, 'manual')
+  controller.dispose()
 })
 
 test('IME composition and handled events never become text adjustments', () => {

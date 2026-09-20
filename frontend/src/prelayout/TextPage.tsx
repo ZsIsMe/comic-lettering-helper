@@ -17,6 +17,11 @@ const frameControls = [
   { x: 'left', y: 'bottom', kind: 'rotate', delta: 1, icon: '↶', label: '左下：逆時針旋轉', hint: '逆時針 1°；Option／Alt 點擊 5°' },
   { x: 'right', y: 'bottom', kind: 'rotate', delta: -1, icon: '↷', label: '右下：順時針旋轉', hint: '順時針 1°；Option／Alt 點擊 5°' },
 ] as const
+const quickControls = [
+  { kind: 'color', icon: '色', label: '切換黑白文字', hint: '黑色文字切換為白色，其他顏色切換為黑色' },
+  { kind: 'stroke', icon: '描', label: '切換文字描邊', hint: '有描邊時關閉，無描邊時設為 4' },
+  { kind: 'orientation', icon: '排', label: '切換橫直排', hint: '在橫排與直排之間切換' },
+] as const
 
 export const TextPage = memo(function TextPage({ project, page, scale, edge, clean, readonly, controller, selection, onSelect, onInteracting, showMeasure, onMeasure, region, detailed, interacting, onPointer }: {
   project: string; page: Page; scale: number; edge: number; clean: boolean; readonly?: boolean;
@@ -118,6 +123,14 @@ export const TextPage = memo(function TextPage({ project, page, scale, edge, cle
     const items = adjustedItems(state.data.items, selection.ids, adjustment, page.width, page.height)
     if (items !== state.data.items) controller.edit(page.id, items)
   }
+  function beginInlineEdit(event: { clientX: number; clientY: number; target: EventTarget; stopPropagation: () => void }, item: Item) {
+    event.stopPropagation()
+    if (event.target instanceof Element && event.target.closest('button,.pl-handle,.pl-source-box')) return false
+    onSelect({ page: page.id, ids: [item._id] })
+    characterOverlay.current?.clear()
+    setEditing({ id: item._id, x: event.clientX, y: event.clientY })
+    return true
+  }
   const selected = selection.page === page.id ? selection.ids : []
   return <div className="pl-page" data-page={page.id} data-readonly={!!readonly} style={{ width: page.width * scale, height: page.height * scale }} onPointerMove={event => {
     if (interacting || dragging.current) return
@@ -134,14 +147,14 @@ export const TextPage = memo(function TextPage({ project, page, scale, edge, cle
     }}>
       <PreviewLayer project={project} page={page} edge={edge} scale={scale} clean={clean} region={region} detailed={detailed} interacting={interacting} />
       {!readonly && state?.data.items.map(item => <div key={item._id} data-item={item._id} className={`pl-text ${selected.includes(item._id) ? 'selected' : ''} ${editing?.id === item._id ? 'editing' : ''}`} style={{ left: item.x * page.width, top: item.y * page.height, transform: transform(item), fontSize: item['font-size'], writingMode: item.orientation === 'vertical' ? 'vertical-rl' : 'horizontal-tb', color: color(item.color), WebkitTextStroke: `${item['stroke-weight']}px ${color(item['stroke-color'])}`, outlineWidth: selected.includes(item._id) ? 1.5 / scale : 0 }}
-        onPointerDown={event => { if (editing?.id !== item._id) down(event, item) }} onPointerMove={move} onPointerUp={event => end(event)} onPointerCancel={event => end(event, true)} onDoubleClick={event => {
-          event.stopPropagation()
-          if (event.target instanceof Element && event.target.closest('button,.pl-handle,.pl-source-box')) return
-          onSelect({ page: page.id, ids: [item._id] })
-          characterOverlay.current?.clear()
-          setEditing({ id: item._id, x: event.clientX, y: event.clientY })
-        }}>
-        {editing?.id === item._id ? <InlineTextEditor key={item._id} item={item} page={page.id} controller={controller} point={editing} onFinish={() => setEditing(null)} /> : item.text || '\u200b'}
+        onPointerDown={event => {
+          if (event.button === 0 && event.metaKey) {
+            if (beginInlineEdit(event, item)) event.preventDefault()
+            return
+          }
+          if (editing?.id !== item._id) down(event, item)
+        }} onPointerMove={move} onPointerUp={event => end(event)} onPointerCancel={event => end(event, true)} onDoubleClick={event => { beginInlineEdit(event, item) }}>
+        {editing?.id === item._id ? <InlineTextEditor key={item._id} item={item} page={page.id} controller={controller} point={editing} pageWidth={page.width} scale={scale} onSplit={ids => onSelect({ page: page.id, ids: [ids.at(-1)!] })} onFinish={() => setEditing(current => current?.id === item._id ? null : current)} /> : item.text || '\u200b'}
         <span className="pl-font-label pl-current-font" aria-label={`目前字級 ${fontLabel(item['font-size'])}`} style={{ fontSize: 11 / scale, padding: `${2 / scale}px ${4 / scale}px`, bottom: -19 / scale, transform: `rotate(${item.rotation}deg)`, transformOrigin: 'top right' }}>{fontLabel(item['font-size'])}</span>
         {selected.includes(item._id) && editing?.id !== item._id && <>
           {frameControls.map(corner => <button key={`${corner.x}-${corner.y}`} type="button" className="pl-text-step" aria-label={corner.label} title={`${corner.hint}（套用所有選取文字）`} style={{
@@ -152,6 +165,14 @@ export const TextPage = memo(function TextPage({ project, page, scale, edge, cle
             event.stopPropagation(); event.preventDefault()
             scene.current?.closest<HTMLElement>('.pl-viewport')?.focus({ preventScroll: true })
           }} onClick={event => { event.stopPropagation(); adjust({ kind: corner.kind, delta: corner.delta * (event.altKey ? 5 : 1) }) }}>{corner.icon}</button>)}
+          {quickControls.map((control, index) => <button key={control.kind} type="button" className="pl-text-quick" aria-label={control.label} title={`${control.hint}（套用所有選取文字）`} style={{
+            width: 24 / scale, height: 22 / scale, fontSize: 11 / scale, borderWidth: 1 / scale,
+            right: -38 / scale, top: '50%',
+            transform: `translate(100%, calc(-50% + ${(index - 1) * 27 / scale}px)) rotate(${item.rotation}deg)`,
+          }} onPointerDown={event => {
+            event.stopPropagation(); event.preventDefault()
+            scene.current?.closest<HTMLElement>('.pl-viewport')?.focus({ preventScroll: true })
+          }} onClick={event => { event.stopPropagation(); adjust({ kind: control.kind }) }}>{control.icon}</button>)}
           <span className="pl-handle pl-rotate" title="拖曳旋轉" role="button" aria-label="旋轉文字" style={{ width: 12 / scale, height: 12 / scale, top: -26 / scale }} onPointerDown={event => down(event, item, 'rotate')} />
           <span className="pl-source-box" style={{ width: item.xyxy_pixel ? item.xyxy_pixel[2] - item.xyxy_pixel[0] : 60, height: item.xyxy_pixel ? item.xyxy_pixel[3] - item.xyxy_pixel[1] : 60, borderWidth: 1 / scale }}>
             <span className="pl-handle pl-resize" title="調整參考框" style={{ width: 10 / scale, height: 10 / scale }} onPointerDown={event => down(event, item, 'resize')} />
