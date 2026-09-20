@@ -90,11 +90,13 @@ const output = path.resolve(process.env.PRELAYOUT_TEST_OUTPUT || 'var-test/inlin
       await button('重做').click(); await save()
       assert.equal((await read()).items[index].text, '第一行\n\n第二行 ABC！')
     }
+    await node(1).dblclick(); await editor().fill('Esc 保存的內容'); await editor().press('Escape')
+    await page.waitForSelector('.pl-inline-editor', { state: 'detached' })
+    await page.waitForFunction(() => document.querySelector('.pl-toolbar')?.textContent.includes('已保存'))
+    assert.equal((await read()).items[1].text, 'Esc 保存的內容', 'Escape saves without clicking Save')
     const stable = await read()
-    await node(1).dblclick(); await editor().fill('取消的內容'); await editor().press('Escape'); await save()
-    assert.deepEqual((await read()).items, stable.items, 'Escape discards the draft')
     await node(1).dblclick(); await editor().press('Escape'); await save()
-    assert.equal((await read()).revision, stable.revision, 'Entering and cancelling must not save a revision')
+    assert.equal((await read()).revision, stable.revision, 'Finishing unchanged text must not save a revision')
 
     await node(1).dblclick()
     await editor().dispatchEvent('compositionstart', { data: '' })
@@ -143,7 +145,7 @@ const output = path.resolve(process.env.PRELAYOUT_TEST_OUTPUT || 'var-test/inlin
     await page.screenshot({ path: path.join(output, 'font-size-comparison.png') })
     await editor().press('Escape')
     assert.deepEqual(errors, [])
-    fs.writeFileSync(path.join(output, 'report.json'), JSON.stringify({ passed: true, checks: ['horizontal/vertical/rotated geometry', 'line breaks and blank lines', 'selection and delete keys', 'single undo/redo', 'Escape cancellation', 'composition event guards', 'save and route flush', 'reload', 'empty item', 'current/calculated font sizes before and during editing'], errors }, null, 2))
+    fs.writeFileSync(path.join(output, 'report.json'), JSON.stringify({ passed: true, checks: ['horizontal/vertical/rotated geometry', 'line breaks and blank lines', 'selection and delete keys', 'single undo/redo', 'Escape save and finish', 'composition event guards', 'save and route flush', 'reload', 'empty item', 'current/calculated font sizes before and during editing'], errors }, null, 2))
     console.log('PASS inline text browser acceptance')
   } catch (error) {
     await page.screenshot({ path: path.join(output, 'failure.png') }).catch(() => {})

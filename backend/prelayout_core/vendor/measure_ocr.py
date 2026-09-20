@@ -450,12 +450,20 @@ def apply_calibrated_font_sizes(
             measure_item = measure_items[item_index]
             old_size = measure_item.get('font_size')
             measure_item.setdefault('font_size_detected', old_size)
-            measure_item['font_size'] = font_size
+            measure_item['font_size_ocr'] = font_size
             measure_item['font_size_method'] = (
                 'mit48_cached_font_ink_overlap_inherited'
                 if fit_status == 'ready_overlap_inherited'
                 else 'mit48_cached_font_ink_candidate_grid'
             )
+            measure_item['font_size_ocr_method'] = measure_item['font_size_method']
+            char_box_size = measure_item.get('font_size_char_box')
+            if (isinstance(char_box_size, (int, float)) and not isinstance(char_box_size, bool)
+                    and np.isfinite(char_box_size) and char_box_size > 0):
+                font_size = round(max(font_size, min(999.0, char_box_size)), 1)
+                measure_item['font_size_method'] = 'max_char_box_ocr_aligned'
+                fit['char_box_font_size'] = char_box_size
+            measure_item['font_size'] = font_size
             fit['applied_font_size'] = font_size
             fit['applied_font_size_source_float'] = round(suggested_float, 3)
             try:

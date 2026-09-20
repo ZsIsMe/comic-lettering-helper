@@ -8,7 +8,7 @@
 
 ## 獨立資料的網頁預排版
 
-`TextPage` 雙擊文字時掛載 `InlineTextEditor`，沿用同一文字層的 writing-mode、縮放、旋轉與樣式。純文字 contenteditable 的 DOM、選取與組字區間由瀏覽器管理，React 更新不覆寫輸入內容；原生游標命中測試定位雙擊位置。編輯期間隱藏拖曳控制點並隔離鍵盤事件。完成／失焦時只更新該條文字與手動狀態，記一次撤銷；Esc 丟棄本次輸入。`EditorState` 登記未完成的文字草稿，使離頁提醒識別未保存輸入，並在 flush（保存／匯出／跨工作區）及撤銷前提交。只有完成編輯後才進入既有 IndexedDB 與伺服器自動保存流程。
+`TextPage` 雙擊文字時掛載 `InlineTextEditor`，沿用同一文字層的 writing-mode、縮放、旋轉與樣式。純文字 contenteditable 的 DOM、選取與組字區間由瀏覽器管理，React 更新不覆寫輸入內容；原生游標命中測試定位雙擊位置。編輯期間隱藏拖曳控制點並隔離鍵盤事件。完成／失焦時只更新該條文字與手動狀態，記一次撤銷；Esc 提交文字、結束編輯並立即 flush 保存。`EditorState` 登記未完成的文字草稿，使離頁提醒識別未保存輸入，並在 flush（保存／匯出／跨工作區）及撤銷前提交。只有完成編輯後才進入既有 IndexedDB 與伺服器自動保存流程。
 
 `editable-text.ts` 共同提供保存文字及 DOM 游標位置對照，統一處理純文字換行、DIV／P、BR 與末尾佔位換行，不重寫瀏覽器正在編輯的 DOM。`caret-navigation.ts` 依明確的換行欄位設定 Selection 位置，取代瀏覽器的 `Selection.modify(line)`：←／→ 移到相鄰欄並記住原字位，短欄夾到欄尾，邊界保持不動；↑／↓ 依 Unicode grapheme 逐字移動。Shift 保留選取起點，點擊、輸入及其他鍵重設記憶字位。組字與系統修飾鍵不攔截，橫排沿用原生游標。
 
@@ -428,3 +428,5 @@ ComfyUI 輸出先複製到暫存檔，通過 PNG 完整性與解碼檢查後才�
 ### 0.2.6 新建項目保留上傳 Mask
 
 漫畫修圖項目接受部分頁面的同檔名 Mask；拒絕多餘 Mask、重複檔名與尺寸不一致。新建時只自動檢測缺少 Mask 的頁面，已提供的 Mask（包含全黑）保持不變；全部已有 Mask 時不啟動檢測。檢測未啟動或未完成可按「補充缺少的 Mask」重試；原有明確確認的重新檢測仍可取代圖層。此版只本地測試並發布 GitHub 更新包，未部署遠端、未執行 GPU 推理，無新增模型或依賴。
+
+僅修改「OCR 對齊逐字計算」：CTD 階段同時計算並保留既有單字框字級（相同基準／步長），OCR 校準後取 max（單字框字級，OCR 字級）。measure 保留 font_size_char_box、font_size_ocr 及各自方法，最終方法為 max_char_box_ocr_aligned；缺少可靠 OCR 時保留單字框結果，無可靠單字框時沿用原回退／OCR 結果。OCR 跨行同字的字框 IoU ≥ 0.8 時保留較完整的可靠字框，重複樣本標記 duplicate_overlapping_character 後再做原有 MAD 篩選。獨立「單字框計算」算法保持不變。

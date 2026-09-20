@@ -200,6 +200,42 @@ def _median_absolute_deviation(values: list[float]) -> tuple[float, float]:
     return median, mad
 
 
+def _deduplicate_character_fits(fits: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Count the same glyph covered by overlapping OCR lines only once.
+
+    Prefer the fuller accepted ink box. Adjacent repeated glyphs and samples
+    without a usable position remain independent.
+    """
+    def area(fit):
+        box = fit.get('bbox')
+        if not isinstance(box, list) or len(box) != 4:
+            return 0.0
+        return max(0.0, box[2] - box[0]) * max(0.0, box[3] - box[1])
+
+    kept = []
+    for fit in sorted(fits, key=area, reverse=True):
+        size = area(fit)
+        duplicate = None
+        if size > 0:
+            a = fit['bbox']
+            for other in kept:
+                if (other.get('character') != fit.get('character')
+                        or other.get('line_index') == fit.get('line_index') or area(other) <= 0):
+                    continue
+                b = other['bbox']
+                overlap = max(0, min(a[2], b[2]) - max(a[0], b[0])) * max(0, min(a[3], b[3]) - max(a[1], b[1]))
+                if overlap / (size + area(other) - overlap) >= 0.8:
+                    duplicate = other
+                    break
+        if duplicate is None:
+            kept.append(fit)
+        else:
+            fit['accepted'] = False
+            fit['reason'] = 'duplicate_overlapping_character'
+            fit['duplicate_of'] = {key: duplicate.get(key) for key in ('line_index', 'character_index')}
+    return [fit for fit in fits if fit.get('accepted')]
+
+
 def fit_ocr_item(
     item: dict[str, Any],
     *,
@@ -257,6 +293,7 @@ def fit_ocr_item(
                     result['reason'] = 'fit_error_too_large'
         character_results.append(result)
 
+    accepted_fits = _deduplicate_character_fits(accepted_fits)
     sizes = [float(fit['estimated_pixel_size']) for fit in accepted_fits]
     if not sizes:
         status = 'no_reliable_characters'

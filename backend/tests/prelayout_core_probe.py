@@ -4,6 +4,7 @@ The synthetic detector substitutes neural predictions only; this is not a GPU te
 Run with the external inference Python and PYTHONPATH=backend.
 """
 import argparse
+import copy
 import json
 import tempfile
 from pathlib import Path
@@ -43,6 +44,27 @@ def main():
             measure = validate_measure(load(images / 'ctd' / 'measure.json'), record['pages'])
             assert measure['pages']['001.png'], 'Expected the fixture text region'
             assert measure['pages']['002.png'] == [], 'Blank pages must survive'
+            if method == 'single_char':
+                single_char_sizes = [item['font_size'] for item in measure['pages']['001.png']]
+                assert all('font_size_char_box' not in item for item in measure['pages']['001.png'])
+            else:
+                assert [item['font_size_char_box'] for item in measure['pages']['001.png']] == single_char_sizes
+                for suggested, status in ((16, 'ready'), (80, 'ready'), (16, 'ready_overlap_inherited'), (None, 'no_reliable_characters')):
+                    updated = copy.deepcopy(measure)
+                    fits = {'pages': {'001.png': [{'measure_item_index': index, 'font_fit': {
+                        'status': status, 'suggested_font_size': suggested}}
+                        for index in range(len(single_char_sizes))]}}
+                    measure_ocr.apply_calibrated_font_sizes(updated, fits)
+                    for index, item in enumerate(updated['pages']['001.png']):
+                        assert item['font_size'] == max(single_char_sizes[index], suggested or 0)
+                        assert item['font_size_char_box'] == single_char_sizes[index]
+                        if suggested:
+                            assert item['font_size_ocr'] == suggested
+                            assert item['font_size_method'] == 'max_char_box_ocr_aligned'
+                    # Applying cached OCR twice must not feed the previous result back into the baseline.
+                    expected = copy.deepcopy(updated)
+                    assert measure_ocr.apply_calibrated_font_sizes(updated, fits) == 0
+                    assert updated == expected
             # Exercise real OCR crop/line alignment without a model or font calibration.
             output = measure_ocr.run(str(images / 'ctd' / 'measure.json'), str(images), None,
                 model_path='', alphabet_path='', implementation_path='', device='cuda', pads=[4, 8], minimum_probability=.3,

@@ -76,11 +76,12 @@ document.querySelector<HTMLButtonElement>('#run')!.onclick = () => {
 
 const item = { _id:'fixture', text:sample, x:.5, y:.5, 'font-size':36, rotation:0, orientation:'vertical', color:'#000', 'stroke-color':'#fff', 'stroke-weight':0 } satisfies Item
 let stored = sample
+let saves = 0, edits = 0
 const controller = {
   beginTextDraft: () => ({ change() {}, end() {} }),
   pages: new Map([['fixture',{data:{items:[item]}}]]),
-  edit: (_page: string, items: Item[]) => { stored = items[0].text },
-  flush: async () => {},
+  edit: (_page: string, items: Item[]) => { stored = items[0].text; edits++ },
+  flush: async () => { document.querySelector('#saved')!.textContent = JSON.stringify({text:stored,saves:++saves,edits}) },
 } as unknown as EditorState
 const root = createRoot(document.querySelector('#mount')!)
 function mount() {

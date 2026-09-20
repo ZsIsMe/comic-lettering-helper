@@ -926,7 +926,7 @@ def _build_measure_maps(
         mask_path = _mask_path_for_page(paths, page_name)
         mask = (
             imread(mask_path, cv2.IMREAD_GRAYSCALE)
-            if font_size_calculation_method == 'char_box' and osp.isfile(mask_path)
+            if font_size_calculation_method in {'char_box', 'ocr_aligned'} and osp.isfile(mask_path)
             else None
         )
         block_items = block_pages.get(page_name, [])
@@ -942,7 +942,7 @@ def _build_measure_maps(
 
             matched_lines = line_groups.get(source_index, [])
             orientation = _orientation_from_lines(matched_lines)
-            if font_size_calculation_method == 'char_box':
+            if font_size_calculation_method in {'char_box', 'ocr_aligned'}:
                 char_boxes = _char_boxes_for_lines(mask, matched_lines)
                 detected_font_size, font_debug = _paragraph_font_size_from_char_boxes(char_boxes, orientation)
                 if detected_font_size is not None:
@@ -1009,7 +1009,12 @@ def _build_measure_maps(
                 'font_size_method': font_method,
                 **(
                     {'font_size_detected': round(float(detected_font_size), 1)}
-                    if font_size_calculation_method == 'char_box'
+                    if font_size_calculation_method in {'char_box', 'ocr_aligned'}
+                    else {}
+                ),
+                **(
+                    {'font_size_char_box': font_size, 'font_size_char_box_method': font_method}
+                    if font_size_calculation_method == 'ocr_aligned' and font_debug.get('accepted')
                     else {}
                 ),
             })

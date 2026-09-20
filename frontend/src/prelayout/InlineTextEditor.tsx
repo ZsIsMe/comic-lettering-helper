@@ -76,8 +76,7 @@ export function InlineTextEditor({ item, page, controller, point, onFinish }: {
         event.preventDefault()
         return
       }
-      if (event.key === 'Escape') { event.preventDefault(); finish.current(true, true) }
-      else if ((event.metaKey || event.ctrlKey) && (event.key === 'Enter' || event.key.toLowerCase() === 's')) {
+      if (event.key === 'Escape' || ((event.metaKey || event.ctrlKey) && (event.key === 'Enter' || event.key.toLowerCase() === 's'))) {
         event.preventDefault(); finish.current(false, true)
         void controller.flush()
       }
