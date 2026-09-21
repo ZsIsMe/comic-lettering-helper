@@ -13,6 +13,8 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 
+from inpaint_report_summary import capture_environment
+
 
 QUERY = (
     "timestamp,index,name,memory.total,memory.used,memory.free,"
@@ -49,6 +51,7 @@ def main() -> int:
     parser.add_argument("--summary", type=Path, required=True)
     parser.add_argument("--log", type=Path, required=True)
     parser.add_argument("--interval", type=float, default=1.0)
+    parser.add_argument("--comfy-url", help="Local ComfyUI URL for the saved environment snapshot")
     parser.add_argument("command", nargs=argparse.REMAINDER)
     args = parser.parse_args()
     command = args.command[1:] if args.command[:1] == ["--"] else args.command
@@ -90,6 +93,12 @@ def main() -> int:
                 elif result.stderr.strip():
                     sample_errors.append(result.stderr.strip())
                 stop.wait(max(0.2, args.interval))
+
+    # Store alongside the job logs; the PDF reader never substitutes its own host.
+    environment_path = args.summary.with_name(args.summary.name.replace("_vram_summary.json", "_environment.json"))
+    if environment_path == args.summary:
+        environment_path = args.summary.with_name(args.summary.stem + "_environment.json")
+    environment_path.write_text(json.dumps(capture_environment(args.comfy_url), ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
 
     started_at = iso_now()
     started = time.monotonic()

@@ -7,6 +7,7 @@ import argparse
 from pathlib import Path
 
 from PIL import Image, ImageDraw
+from inpaint_report_summary import collect_report, draw_cover, diffusion_model_files, saved_prompts
 try:
     from natsort import natsorted
 except ImportError:
@@ -39,7 +40,7 @@ def paste_centered(canvas: Image.Image, image: Image.Image, box: tuple[int, int,
     canvas.paste(fitted, (x0 + (x1 - x0 - fitted.width) // 2, y0 + (y1 - y0 - fitted.height) // 2))
 
 
-def build_pdf(root: Path, output: Path, alpha: float) -> Path:
+def build_pdf(root: Path, output: Path, alpha: float, *, logs_dir: Path | None = None, job_file: Path | None = None, environment_file: Path | None = None) -> Path:
     originals = index_images(root / "pair")
     masks = index_images(root / "pair_mask")
     result_maps = (
@@ -58,7 +59,19 @@ def build_pdf(root: Path, output: Path, alpha: float) -> Path:
         raise SystemExit("所有 Mask 都是全黑，沒有需要加入 PDF 的圖片")
     title_font = _load_cjk_font(38)
     label_font = _load_cjk_font(25)
-    pages = []
+    keys = ("flux2klein_lanpaint", "firered", "qwen2511_lanpaint")
+    report = collect_report(root, logs_dir, job_file, environment_file,
+        prompts={key: saved_prompts(mapping[stem] for stem in originals if stem in mapping)
+                 for key, mapping in zip(keys, result_maps)},
+        model_files={key: diffusion_model_files(mapping[stem] for stem in originals if stem in mapping)
+                     for key, mapping in zip(keys, result_maps)}, counts={
+        "pairs": len(originals), "black": len(originals) - len(stems),
+        "results": {key: sum(stem in mapping for stem in originals)
+                    for key, mapping in zip(("flux2klein_lanpaint", "firered", "qwen2511_lanpaint"), result_maps)},
+    })
+    cover = draw_cover(report, PAGE_W, PAGE_H, _load_cjk_font)
+    pages = [_as_jpeg_image(cover)]
+    cover.close()
     col_w = (PAGE_W - 2 * MARGIN - 3 * GAP) // 4
     top = MARGIN + TITLE_H + LABEL_H
     bottom = PAGE_H - MARGIN
@@ -98,8 +111,11 @@ def main() -> None:
     parser.add_argument("root", type=Path)
     parser.add_argument("-o", "--output", type=Path, required=True)
     parser.add_argument("--alpha", type=float, default=DEFAULT_ALPHA)
+    parser.add_argument("--logs-dir", type=Path, help="任務日誌目錄")
+    parser.add_argument("--job-file", type=Path, help="任務 job.json")
+    parser.add_argument("--environment-file", type=Path, help="生成機器環境快照 JSON")
     args = parser.parse_args()
-    print(f"已寫入：{build_pdf(args.root.resolve(), args.output.resolve(), args.alpha)}")
+    print(f"已寫入：{build_pdf(args.root.resolve(), args.output.resolve(), args.alpha, logs_dir=args.logs_dir, job_file=args.job_file, environment_file=args.environment_file)}")
 
 
 if __name__ == "__main__":

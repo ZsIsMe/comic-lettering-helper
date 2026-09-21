@@ -11,6 +11,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from io import BytesIO
 from pathlib import Path
@@ -99,7 +100,13 @@ def overlay_pink(orig: Image.Image, mask: Image.Image, alpha: float = DEFAULT_AL
 
 
 def _load_cjk_font(size: int) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
-    for candidate in CJK_FONT_CANDIDATES:
+    configured = os.environ.get("CJK_FONT_PATH")
+    candidates = ([configured] if configured else []) + [
+        str(Path(__file__).resolve().parent / "fonts" / "SourceHanSansTC-Regular.otf"),
+        "/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc",
+        "/usr/share/fonts/truetype/wqy/wqy-microhei.ttc",
+    ] + list(CJK_FONT_CANDIDATES)
+    for candidate in candidates:
         path = Path(candidate)
         if not path.is_file():
             continue
@@ -107,7 +114,7 @@ def _load_cjk_font(size: int) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
             return ImageFont.truetype(str(path), size=size)
         except OSError:
             continue
-    return ImageFont.load_default()
+    raise RuntimeError("找不到中文字型，請設定 CJK_FONT_PATH；停止輸出以避免中文亂碼。")
 
 
 def _fit_in_box(image: Image.Image, box_w: int, box_h: int) -> Image.Image:

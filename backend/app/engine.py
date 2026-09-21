@@ -453,6 +453,7 @@ class JobManager:
             str(log_path),
             "--interval",
             "1",
+            "--comfy-url", self.settings.comfy_url,
             "--",
             *command,
         ]
@@ -643,6 +644,8 @@ class JobManager:
             str(stage),
             "-o",
             str(pdf),
+            "--logs-dir", str(logs),
+            "--job-file", str(job_dir / "job.json"),
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.STDOUT,
             start_new_session=True,
