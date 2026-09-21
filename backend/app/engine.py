@@ -593,8 +593,11 @@ class JobManager:
         return len(names)
 
     def _normalize_outputs(self, record: JobRecord, workflow: WorkflowId, prefix: str, stems: list[str]) -> None:
-        self._sync_available_outputs(record, workflow, prefix, stems, require_all=True)
-        self.repository.write(record)
+        # The runner persists fresh progress on separately loaded records. The caller's
+        # pre-run snapshot must never overwrite those timings or terminal states.
+        latest = self.repository.read(record.id)
+        self._sync_available_outputs(latest, workflow, prefix, stems, require_all=True)
+        self.repository.write(latest)
 
     async def _package(self, record: JobRecord, batch_name: str) -> str | None:
         job_dir = self.repository.job_dir(record.id)

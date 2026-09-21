@@ -343,3 +343,74 @@ def test_terminal_job_freezes_active_workflow(tmp_path):
     assert progress.elapsed_seconds == 12
     assert progress.remaining_seconds is None
     assert progress.finished_at
+
+
+def test_serial_workflow_statistics_survive_final_sync_switch_and_reload(tmp_path, monkeypatch):
+    """Exercise the real orchestration and disk writes without a ComfyUI/GPU service."""
+    import json
+    from pathlib import Path
+    from unittest.mock import Mock
+
+    manager, repository = make_manager(tmp_path)
+    record = make_record()
+    record.workflows = ['flux2klein_lanpaint', 'firered', 'qwen2511_lanpaint']
+    record.total_runs = 6
+    repository.write(record)
+    for folder, color in [('pair', 'gray'), ('pair_mask', 'white')]:
+        root = repository.job_dir(record.id) / 'uploads' / folder
+        root.mkdir(parents=True)
+        for stem in ['01', '02']:
+            Image.new('RGB', (16, 16), color).save(root / f'{stem}.png')
+    manager.settings.comfy_output.mkdir(parents=True)
+    manager._wait_comfy = AsyncMock()
+    manager._package = AsyncMock(return_value=None)
+    completed_workflows = []
+    snapshots = {}
+
+    def assert_saved_statistics():
+        # A fresh repository models a new browser/API read, with no in-memory state.
+        reloaded = JobRepository(manager.settings.jobs_root).read(record.id)
+        for workflow in completed_workflows:
+            progress = reloaded.workflow_progress[workflow]
+            assert progress.model_dump() == snapshots[workflow]
+            assert progress.state == 'completed'
+            assert progress.completed == 2
+            assert progress.first_seconds == 75
+            assert progress.warm_average_seconds == 18
+            assert progress.generated == 2
+            assert progress.elapsed_seconds > 0
+            assert progress.remaining_seconds == 0
+            assert progress.finished_at is not None
+            assert len(reloaded.results[workflow]) == 2
+
+    async def spawn(*args, **kwargs):
+        assert_saved_statistics()
+        workflow = args[args.index('--label') + 1]
+        log = Path(args[args.index('--log') + 1])
+        prefix = f"web_{record.id.replace('-', '')[:12]}_" + {'flux2klein_lanpaint': 'flux', 'firered': 'firered', 'qwen2511_lanpaint': 'qwen'}[workflow] + '_'
+        rows = []
+        for stem, seconds in [('01', 75), ('02', 18)]:
+            Image.new('RGB', (16, 16), 'gray').save(manager.settings.comfy_output / f'{prefix}{stem}_00001_.png')
+            rows.append({'stem': stem, 'status': 'completed', 'elapsed_seconds': seconds})
+        log.write_text(''.join(json.dumps(row) + '\n' for row in rows))
+        process = Mock(returncode=0)
+        process.wait = AsyncMock(return_value=0)
+        process.communicate = AsyncMock(return_value=(b'', None))
+        return process
+
+    # Capture what the process actually saved before output normalization runs.
+    original_run_process = manager._run_process
+    async def run_process(*args, **kwargs):
+        await original_run_process(*args, **kwargs)
+        workflow = args[1]
+        snapshots[workflow] = repository.read(record.id).workflow_progress[workflow].model_dump()
+        completed_workflows.append(workflow)
+    manager._run_process = run_process
+    monkeypatch.setattr('app.engine.asyncio.create_subprocess_exec', spawn)
+    asyncio.run(manager._run_job(record.id))
+    assert_saved_statistics()
+    final = JobRepository(manager.settings.jobs_root).read(record.id)
+    assert final.state == JobState.completed
+    assert final.completed_total == 6
+    assert final.download_ready
+    assert completed_workflows == record.workflows
