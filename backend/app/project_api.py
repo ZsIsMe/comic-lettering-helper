@@ -17,7 +17,7 @@ from starlette.background import BackgroundTask
 from .projects import ACTIVE_STATES, ProjectConflict, ProjectStore, atomic_json, digest_file, relative_path
 from .detection_options import DetectionOptions
 from .repository import now_iso
-from .schemas import JobRecord
+from .schemas import JobRecord, WorkflowProgress
 from .storage import save_uploads
 from .comfy_cleanup import CleanupConflict
 
@@ -482,6 +482,7 @@ def create_project_router(settings, repository, manager, store: ProjectStore, co
                     from datetime import datetime
                     timestamp = now_iso()
                     record = JobRecord(id=job_id, name=f"{project['name']}_{datetime.now().astimezone().strftime('%m%d_%H%M%S')}", project_id=pid, snapshot_id=snapshot['id'], workflows=[item for item in ORDER if item in workflows], pair_count=len(snapshot['pages']), black_mask_count=sum(page['passthrough'] for page in snapshot['pages']), total_runs=len(snapshot['pages']) * len(workflows), created_at=timestamp, updated_at=timestamp)
+                    record.workflow_progress = {workflow: WorkflowProgress(total=record.pair_count) for workflow in record.workflows}
                     repository.write(record)
                     project['runs'].append({'id': job_id, 'snapshot_id': snapshot['id'], 'workflows': record.workflows, 'created_at': timestamp})
                     project['current_run_id'] = job_id

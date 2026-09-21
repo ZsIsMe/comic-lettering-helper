@@ -20,6 +20,22 @@ class JobState(StrEnum):
     failed = "failed"
 
 
+class WorkflowProgress(BaseModel):
+    state: Literal["waiting", "preparing", "running", "completed", "failed", "abandoned"] = "waiting"
+    completed: int = 0
+    total: int = 0
+    generated: int = 0
+    passthrough: int = 0
+    first_seconds: float | None = None
+    warm_average_seconds: float | None = None
+    elapsed_seconds: float = 0
+    remaining_seconds: float | None = None
+    started_at: str | None = None
+    finished_at: str | None = None
+    active_started_at: str | None = None
+    timing_samples: dict[str, float] = Field(default_factory=dict)
+
+
 class JobRecord(BaseModel):
     id: str
     name: str
@@ -27,6 +43,7 @@ class JobRecord(BaseModel):
     workflows: list[WorkflowId]
     pair_count: int
     black_mask_count: int = 0
+    workflow_progress: dict[WorkflowId, WorkflowProgress] = Field(default_factory=dict)
     current_workflow: WorkflowId | None = None
     completed_in_current: int = 0
     completed_total: int = 0

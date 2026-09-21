@@ -223,6 +223,15 @@ button, input { font: inherit; }
 .job-title-row > .anticon { color: var(--orange); font-size: 26px; }
 .job-meta { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 8px 20px; margin: 10px 0 18px; color: #746e63; font-size: 13px; }
 .job-actions { margin-top: 2px; }
+.workflow-progress-summary { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 12px; margin: 16px 0; }
+.workflow-progress-item { min-width: 0; padding: 14px; border: 1px solid var(--line); border-radius: 8px; background: rgba(255,255,255,.45); }
+.workflow-progress-item.missing { color: #746e63; }
+.workflow-progress-heading { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
+.workflow-progress-metrics { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 7px 12px; margin: 10px 0 0; }
+.workflow-progress-metrics div { min-width: 0; }
+.workflow-progress-metrics dt { color: #746e63; font-size: 12px; }
+.workflow-progress-metrics dd { margin: 1px 0 0; overflow-wrap: anywhere; font-weight: 600; }
+.workflow-progress-detail, .workflow-progress-item.missing p { margin: 10px 0 0; color: #746e63; font-size: 12px; }
 .server-location { display: grid; gap: 6px; margin-top: 18px; padding-top: 16px; border-top: 1px dashed var(--line); }
 .server-location code, .history-description code { overflow-wrap: anywhere; color: #544f47; font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; }
 .history-section {

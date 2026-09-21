@@ -18,7 +18,7 @@ from fastapi.staticfiles import StaticFiles
 from .config import settings
 from .engine import JobManager
 from .repository import JobRepository, now_iso
-from .schemas import HealthResponse, JobRecord, JobState, WorkflowId
+from .schemas import HealthResponse, JobRecord, JobState, WorkflowId, WorkflowProgress
 from .storage import save_uploads, validate_pairs
 from .projects import ProjectStore
 from .project_api import create_project_router, project_download
@@ -198,6 +198,7 @@ async def create_job(
         id=job_id,
         name=timestamped_job_name(name),
         workflows=selected,
+        workflow_progress={workflow: WorkflowProgress(total=len(stems)) for workflow in selected},
         pair_count=len(stems),
         black_mask_count=len(black_masks),
         total_runs=len(stems) * len(selected),

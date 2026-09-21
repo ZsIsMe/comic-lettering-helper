@@ -330,6 +330,7 @@ def main() -> None:
             "seed": args.seed_base + index,
             "started_at": now_iso(),
         }
+        print(json.dumps({"event": "item_start", "stem": stem, "time": record["started_at"]}), flush=True)
         try:
             if not mask_has_edit_pixels(mask_path):
                 output_name = f"{args.output_prefix}{stem}_00001_.png"

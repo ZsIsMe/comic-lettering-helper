@@ -23,6 +23,12 @@ class JobRepository:
         record.updated_at = now_iso()
         if record.finished_at is None and record.state in {"completed", "failed", "abandoned"}:
             record.finished_at = record.updated_at
+        if record.state in {"completed", "failed", "abandoned"}:
+            for progress in record.workflow_progress.values():
+                if progress.state in {"preparing", "running"}:
+                    progress.state = record.state.value
+                    progress.finished_at = record.finished_at
+                    progress.remaining_seconds = 0 if record.state == "completed" else None
         path = self.job_dir(record.id) / "job.json"
         path.parent.mkdir(parents=True, exist_ok=True)
         temporary = path.with_suffix(".tmp")

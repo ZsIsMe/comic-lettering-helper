@@ -20,6 +20,8 @@ import {
   message,
 } from 'antd'
 import type { UploadProps } from 'antd'
+import { WorkflowProgressSummary } from './WorkflowProgressSummary'
+import { friendlyWorkflowText, workflowName as displayWorkflowName, type WorkflowId, type WorkflowProgressMap } from './workflow-progress'
 import {
   ArrowLeftOutlined,
   ArrowRightOutlined,
@@ -35,7 +37,6 @@ import {
 
 const { Title, Text, Paragraph } = Typography
 
-type WorkflowId = 'firered' | 'qwen2511_lanpaint' | 'flux2klein_lanpaint'
 type JobState = 'queued' | 'validating' | 'running' | 'packaging' | 'abandoning' | 'abandoned' | 'completed' | 'failed'
 
 interface Health {
@@ -60,6 +61,7 @@ interface Job {
   completed_in_current: number
   completed_total: number
   total_runs: number
+  workflow_progress?: WorkflowProgressMap
   message: string
   error: string | null
   download_ready: boolean
@@ -131,7 +133,7 @@ function uploadProps(
 }
 
 function workflowName(value: WorkflowId | null): string {
-  return workflows.find((item) => item.value === value)?.title || '等待中'
+  return value ? displayWorkflowName(value) : '等待中'
 }
 
 function formatDuration(totalSeconds: number): string {
@@ -362,12 +364,13 @@ export default function App() {
                 </div>
                 <Progress percent={progress} strokeColor={{ '0%': '#2d6671', '100%': '#da4f2a' }} />
                 <div className="job-meta">
-                  <span>{job.message}</span>
+                  <span>{friendlyWorkflowText(job.message)}</span>
                   <span>{workflowName(job.current_workflow)}</span>
                   <span>{job.completed_total} / {job.total_runs} 次</span>
                   <span><ClockCircleOutlined /> 已運行 {formatDuration(elapsedSeconds)}</span>
                 </div>
-                {job.error ? <Alert type="error" showIcon message={job.error} /> : null}
+                <WorkflowProgressSummary workflows={job.workflows} progress={job.workflow_progress} />
+                {job.error ? <Alert type="error" showIcon message={friendlyWorkflowText(job.error)} /> : null}
                 <Space wrap className="job-actions">
                   {(processing || (job.state === 'failed' && job.completed_total > 0)) ? (
                     <Button
@@ -533,7 +536,7 @@ export default function App() {
                     title={item.name}
                     description={(
                       <div className="history-description">
-                        <span>{item.pair_count} 組 · {item.message}</span>
+                        <span>{item.pair_count} 組 · {friendlyWorkflowText(item.message)}</span>
                         {item.archive_path ? <code>{item.archive_path}</code> : null}
                         {item.archive_path ? <code>{sshDownloadCommand(item.archive_path)}</code> : null}
                         <span>JupyterLab：進入 comic-inpaint/jobs/對應任務，下載 download.zip。</span>

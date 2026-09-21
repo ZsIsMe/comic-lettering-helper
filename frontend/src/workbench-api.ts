@@ -1,4 +1,6 @@
-export type Workflow = 'flux2klein_lanpaint' | 'firered' | 'qwen2511_lanpaint'
+import type { WorkflowId, WorkflowProgressMap } from './workflow-progress'
+
+export type Workflow = WorkflowId
 export const workflowOptions: { value: Workflow; label: string }[] = [
   { value: 'flux2klein_lanpaint', label: 'Flux2 Klein + LanPaint' },
   { value: 'firered', label: 'FireRed FP8' },
@@ -30,6 +32,7 @@ export interface Run {
   id: string; name: string; state: string; message: string; error: string | null
   workflows: Workflow[]; pair_count: number; black_mask_count: number
   completed_total: number; total_runs: number; download_ready: boolean; partial_results_accepted?: boolean
+  workflow_progress?: WorkflowProgressMap
   result_directory: string | null; archive_path: string | null
 }
 export interface CompositionPage {

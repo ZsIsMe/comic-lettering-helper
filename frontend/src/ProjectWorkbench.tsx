@@ -5,6 +5,8 @@ import { ImagePicker } from './ImagePicker'
 import { DetectionSettings } from './DetectionSettings'
 import { createMaskPlan } from './create-mask-plan'
 import { runTiming } from './run-timing'
+import { WorkflowProgressSummary } from './WorkflowProgressSummary'
+import { friendlyWorkflowText } from './workflow-progress'
 import { RasterEditor, type RasterHandle, type ComposeView, type RasterSave } from './RasterEditor'
 import { RasterWorkerOwner } from './raster-worker-owner'
 import { baselinePageLoad } from './page-load-options'
@@ -437,7 +439,7 @@ function ProjectWorkspace({ initial, initialError, gpuOwner, onExit, onReadyToLe
       {step === 1 && <>
         <Title level={3}>批量修復</Title><p>確認後固定本次底圖與 Mask。全黑 Mask 直接沿用底圖，最終仍輸出全部 {project.pages.length} 頁。</p>
         {project.runs.length > 0 && <Select className="run-select" aria-label="修復記錄" value={runId} onChange={id => { setRunId(id); setComposition(null) }} options={project.runs.map(r => ({ value: r.id, label: `${new Date(r.created_at).toLocaleString()} · ${r.workflows.length} 套流程` }))} />}
-        {run && <Card title={run.name} className="run-card"><Tag>{run.state}</Tag><p role="timer" aria-live="off">{runTiming(run, clock).text}</p><p><Text type="secondary">從任務建立時計算，包含準備、模型載入、生成及打包。</Text></p><Progress percent={Math.round(run.completed_total / Math.max(1, run.total_runs) * 100)} /><p>{run.message}</p>{run.error && <Alert type="error" message={run.error} />}
+        {run && <Card title={run.name} className="run-card"><Tag>{run.state}</Tag><p role="timer" aria-live="off">{runTiming(run, clock).text}</p><p><Text type="secondary">從任務建立時計算，包含準備、模型載入、生成及打包。</Text></p><Progress percent={Math.round(run.completed_total / Math.max(1, run.total_runs) * 100)} /><p>{friendlyWorkflowText(run.message)}</p><WorkflowProgressSummary workflows={run.workflows} progress={run.workflow_progress} />{run.error && <Alert type="error" message={friendlyWorkflowText(run.error)} />}
           <Space wrap>{run.download_ready && <Button disabled={!!gpuOwner} href={`/api/jobs/${run.id}/download`}>下載候選結果</Button>}
             {run.state === 'failed' && <><Button disabled={!run.completed_total || !!gpuOwner} href={`/api/jobs/${run.id}/download-current`}>下載目前結果</Button><Button disabled={!!gpuOwner} onClick={() => modal.confirm({ title: '續跑未完成圖片？', content: '使用原任務的圖片與 Mask，保留已完成結果。請先確認 ComfyUI 已就緒。', onOk: async () => { setRun(await api<Run>(`/api/jobs/${run.id}/resume`, { method: 'POST' })) } })}>續跑未完成圖片</Button></>}
             {running && <><Button disabled={!run.completed_total} href={`/api/jobs/${run.id}/download-current`}>下載目前結果</Button><Button danger onClick={() => modal.confirm({ title: '放棄修復任務？', content: '已完成圖片會保留。', onOk: async () => { setRun(await api<Run>(`/api/jobs/${run.id}/abandon`, { method: 'POST' })) } })}>放棄任務</Button></>}

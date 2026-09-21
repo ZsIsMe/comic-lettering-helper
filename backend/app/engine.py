@@ -15,10 +15,11 @@ from pathlib import Path
 from PIL import Image
 
 from .config import Settings
-from .repository import JobRepository
-from .schemas import JobRecord, JobState, WorkflowId
+from .repository import JobRepository, now_iso
+from .schemas import JobRecord, JobState, WorkflowId, WorkflowProgress
 from .resources import ResourceGate
 from .storage import validate_pairs
+from .workflow_progress import WORKFLOW_NAMES, TimingReader, update_progress
 
 
 WORKFLOW_META: dict[WorkflowId, dict[str, str]] = {
@@ -297,8 +298,15 @@ class JobManager:
         sources = {path.stem: path for path in source_dir.iterdir() if path.is_file()}
         masks = {path.stem: path for path in mask_dir.iterdir() if path.is_file()}
         stems, black_masks = validate_pairs(sources, masks)
+        record.black_mask_count = len(black_masks)
+        for workflow in record.workflows:
+            record.workflow_progress.setdefault(workflow, WorkflowProgress(total=len(stems)))
+        self.repository.write(record)
         if len(black_masks) == len(stems):
             for workflow in record.workflows:
+                started = time.monotonic()
+                progress = record.workflow_progress[workflow]
+                progress.started_at = now_iso()
                 target = job_dir / "inpaint_workflows" / workflow
                 target.mkdir(parents=True, exist_ok=True)
                 for stem in stems:
@@ -306,6 +314,11 @@ class JobManager:
                     with Image.open(sources[stem]) as source:
                         source.convert("RGB").save(target / f"{stem}.png")
                 record.results[workflow] = [f"{stem}.png" for stem in stems]
+                progress.state = "completed"
+                progress.completed = progress.passthrough = len(stems)
+                progress.elapsed_seconds = round(time.monotonic() - started, 3)
+                progress.remaining_seconds = 0
+                progress.finished_at = now_iso()
             logs = job_dir / "logs"
             logs.mkdir(parents=True, exist_ok=True)
             (logs / "passthrough.json").write_text(json.dumps({"stems": stems, "reason": "all_masks_black"}), encoding="utf-8")
@@ -331,11 +344,24 @@ class JobManager:
             record = self.repository.read(job_id)
             record.current_workflow = workflow
             record.completed_in_current = 0
-            record.message = f"正在運行 {workflow}"
+            progress = record.workflow_progress[workflow]
+            progress.state = "preparing"
+            progress.started_at = progress.started_at or now_iso()
+            progress.finished_at = None
+            progress.active_started_at = None
+            record.message = f"正在準備 {WORKFLOW_NAMES[workflow]}"
             self.repository.write(record)
             prefix = f"web_{record.id.replace('-', '')[:12]}_{WORKFLOW_META[workflow]['prefix']}_"
             command, env = self._command_for(workflow, batch_name, prefix)
-            await self._run_process(record, workflow, command, env, prefix, stems)
+            workflow_black_masks = set(black_masks)
+            if workflow == "qwen2511_lanpaint":
+                # Match the native runner's binary-mask threshold for accurate passthrough/ETA counts.
+                for stem in stems:
+                    if stem not in workflow_black_masks:
+                        with Image.open(masks[stem]) as mask:
+                            if mask.convert("L").point(lambda value: 255 if value >= 128 else 0).getbbox() is None:
+                                workflow_black_masks.add(stem)
+            await self._run_process(record, workflow, command, env, prefix, stems, workflow_black_masks)
             self._normalize_outputs(record, workflow, prefix, stems)
 
         self._raise_if_abandoned(job_id)
@@ -403,7 +429,11 @@ class JobManager:
         env: dict[str, str],
         prefix: str,
         stems: list[str],
+        black_stems: set[str] | None = None,
     ) -> None:
+        black_stems = black_stems or set()
+        record.workflow_progress.setdefault(workflow, WorkflowProgress(total=len(stems), state="preparing", started_at=now_iso()))
+        self.repository.write(record)
         expected = len(stems)
         logs = self.repository.job_dir(record.id) / "logs"
         logs.mkdir(parents=True, exist_ok=True)
@@ -426,6 +456,21 @@ class JobManager:
             "--",
             *command,
         ]
+        log_path.write_text("", encoding="utf-8")
+        reader = TimingReader(log_path)
+        started = time.monotonic()
+        previous_elapsed = record.workflow_progress[workflow].elapsed_seconds
+
+        def refresh(latest):
+            progress = latest.workflow_progress[workflow]
+            names = latest.results.get(workflow, [])
+            update_progress(progress, reader.read(), completed=len(names),
+                            passthrough=sum(Path(name).stem in black_stems for name in names),
+                            black_count=len(black_stems), elapsed=previous_elapsed + time.monotonic() - started,
+                            now=now_iso())
+            if progress.state == "running":
+                latest.message = f"正在運行 {WORKFLOW_NAMES[workflow]}"
+
         process = await asyncio.create_subprocess_exec(
             *monitor_command,
             stdout=asyncio.subprocess.PIPE,
@@ -448,6 +493,7 @@ class JobManager:
                     latest.completed_in_current = min(completed, expected)
                     current_index = latest.workflows.index(workflow)
                     latest.completed_total = current_index * expected + latest.completed_in_current
+                    refresh(latest)
                     self.repository.write(latest)
                     self._raise_if_abandoned(record.id)
                     health_ticks += 1
@@ -465,9 +511,23 @@ class JobManager:
             monitor_output, _ = await process.communicate()
             latest = self.repository.read(record.id)
             self._sync_available_outputs(latest, workflow, prefix, stems)
+            refresh(latest)
+            progress = latest.workflow_progress[workflow]
+            progress.state = "completed" if returncode == 0 and progress.completed == expected else "failed"
+            progress.finished_at = now_iso()
+            progress.remaining_seconds = 0 if progress.state == "completed" else None
+            latest.completed_in_current = progress.completed
+            latest.completed_total = sum(len(items) for items in latest.results.values())
             self.repository.write(latest)
         except BaseException:
             await self._terminate_active_process()
+            latest = self.repository.read(record.id)
+            refresh(latest)
+            progress = latest.workflow_progress[workflow]
+            progress.state = "abandoned" if latest.state == JobState.abandoning else "failed"
+            progress.finished_at = now_iso()
+            progress.remaining_seconds = None
+            self.repository.write(latest)
             raise
         finally:
             if self.active_process is process:
@@ -482,7 +542,7 @@ class JobManager:
                 await asyncio.to_thread(self._fetch_json, f"{self.settings.comfy_url}/system_stats")
             except (OSError, ValueError):
                 raise ComfyUnavailable("ComfyUI 已停止回應；已完成圖片會保留。請重啟 ComfyUI 後續跑未完成圖片。") from None
-            raise RuntimeError(f"{workflow} 未完整完成：returncode={returncode}, expected={expected}, actual={completed}")
+            raise RuntimeError(f"{WORKFLOW_NAMES[workflow]} 未完整完成：returncode={returncode}, expected={expected}, actual={completed}")
 
     def _sync_available_outputs(
         self,

@@ -382,6 +382,7 @@ async def main() -> None:
         seed = args.seed_base + index
         started = time.monotonic()
         record = {"model": args.model, "stem": stem, "seed": seed, "started_at": now_iso()}
+        print(json.dumps({"event": "item_start", "stem": stem, "time": record["started_at"]}), flush=True)
         try:
             if not mask_has_edit_pixels(mask_name):
                 output_name = save_empty_mask_passthrough(image_name, active_prefix, stem)

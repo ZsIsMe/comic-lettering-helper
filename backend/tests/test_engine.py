@@ -289,3 +289,57 @@ def test_disconnected_comfy_terminates_batch_after_three_checks(tmp_path, monkey
     manager._terminate_active_process.assert_awaited_once()
     assert manager.active_process is None
     assert (repository.job_dir(record.id) / "logs/flux2klein_lanpaint_monitor.log").read_bytes() == b"monitor stopped"
+
+
+def test_runner_timings_reach_persisted_progress_without_counting_passthrough(tmp_path, monkeypatch):
+    import json
+    from unittest.mock import Mock
+    manager, repository = make_manager(tmp_path)
+    record = make_record()
+    record.workflows = ['qwen2511_lanpaint', 'firered']
+    record.pair_count = 3
+    record.total_runs = 6
+    repository.write(record)
+    rows = [
+        {'stem': 'black', 'status': 'completed', 'elapsed_seconds': 0.1, 'empty_mask_passthrough': True},
+        {'stem': 'a', 'status': 'completed', 'elapsed_seconds': 90},
+        {'stem': 'b', 'status': 'completed', 'elapsed_seconds': 30},
+    ]
+    process = Mock(returncode=0)
+    process.wait = AsyncMock(return_value=0)
+    process.communicate = AsyncMock(return_value=(b'', None))
+    async def spawn(*args, **kwargs):
+        path = repository.job_dir(record.id) / 'logs/qwen2511_lanpaint.log'
+        path.write_text(''.join(json.dumps(row) + '\n' for row in rows))
+        return process
+    monkeypatch.setattr('app.engine.asyncio.create_subprocess_exec', spawn)
+    def sync(latest, *args):
+        latest.results['qwen2511_lanpaint'] = ['black.png', 'a.png', 'b.png']
+        return 3
+    manager._sync_available_outputs = Mock(side_effect=sync)
+    asyncio.run(manager._run_process(record, 'qwen2511_lanpaint', ['runner'], {}, 'test_', ['black', 'a', 'b'], {'black'}))
+    saved = repository.read(record.id)
+    progress = saved.workflow_progress['qwen2511_lanpaint']
+    assert progress.state == 'completed'
+    assert progress.completed == 3
+    assert progress.first_seconds == 90
+    assert progress.warm_average_seconds == 30
+    assert progress.generated == 2
+    assert progress.passthrough == 1
+    assert progress.remaining_seconds == 0
+    assert progress.finished_at
+    assert saved.message == '正在運行 Qwen Image 2.1 INT8'
+
+
+def test_terminal_job_freezes_active_workflow(tmp_path):
+    from app.schemas import WorkflowProgress
+    _, repository = make_manager(tmp_path)
+    record = make_record()
+    record.workflow_progress['flux2klein_lanpaint'] = WorkflowProgress(state='running', elapsed_seconds=12, remaining_seconds=20)
+    record.state = JobState.failed
+    repository.write(record)
+    progress = repository.read(record.id).workflow_progress['flux2klein_lanpaint']
+    assert progress.state == 'failed'
+    assert progress.elapsed_seconds == 12
+    assert progress.remaining_seconds is None
+    assert progress.finished_at
