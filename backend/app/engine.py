@@ -369,8 +369,17 @@ class JobManager:
                 FIRERED_PRESERVE_WORKFLOW="1",
             )
             command = [self.settings.python_bin, str(self.settings.tools_root / "firered_batch_runner.py")]
+        elif workflow == "qwen2511_lanpaint":
+            # Keep the persisted workflow key for existing project/result references.
+            command = [
+                self.settings.python_bin, str(self.settings.tools_root / "run_qwen21_batch.py"),
+                "--comfy-root", str(self.settings.comfy_root), "--url", self.settings.comfy_url,
+                "--workflow", str(self.settings.app_root / "workflows" / "Qwen-Image-2.1-INT8-Manga.api.json"),
+                "--input-root", batch_name, "--skip", "--output-prefix", prefix,
+                "--poll-interval", "1",
+            ]
         else:
-            model = "qwenlanpaint" if workflow == "qwen2511_lanpaint" else "flux2lanpaint"
+            model = "flux2lanpaint"
             command = [
                 self.settings.python_bin,
                 str(self.settings.tools_root / "run_independent_edit_models_batch.py"),
@@ -399,6 +408,8 @@ class JobManager:
         logs = self.repository.job_dir(record.id) / "logs"
         logs.mkdir(parents=True, exist_ok=True)
         log_path = logs / f"{workflow}.log"
+        if workflow == "qwen2511_lanpaint":
+            command = [*command, "--log-dir", str(logs)]
         monitor_command = [
             self.settings.python_bin,
             str(self.settings.tools_root / "run_with_vram_monitor.py"),

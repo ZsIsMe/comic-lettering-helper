@@ -30,7 +30,7 @@ MARGIN = 44
 GAP = 22
 TITLE_H = 54
 LABEL_H = 42
-LABELS = ("原圖+Mask", "Flux2 Klein+LanPaint", "FireRed FP8", "Qwen+LanPaint")
+LABELS = ("原圖+Mask", "Flux2 Klein+LanPaint", "FireRed FP8", "Qwen Image 2.1 INT8")
 
 
 def paste_centered(canvas: Image.Image, image: Image.Image, box: tuple[int, int, int, int]) -> None:

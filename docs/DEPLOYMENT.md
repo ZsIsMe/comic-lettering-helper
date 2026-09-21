@@ -86,7 +86,7 @@ cd /root/comic-inpaint
 3. 第三步輸入任務名稱。選擇原圖文件夾時會自動帶入文件夾名，提交時再追加 `_月日_時分秒`，例如 `第89話_0911_221530`。
 4. 提交後設定向導會隱藏，頁面只顯示進度、目前結果下載及經警告確認的放棄按鈕。等待完成後下載一個 ZIP。
 
-文件以 stem 配對，例如 `001.jpg` 對 `001.png`。文件夾模式只讀取第一層圖片並忽略子文件夾；文件夾或多選圖片模式再次選擇都會整批取代上一次選擇，不會累加。Mask 必須是 PNG，尺寸與原圖相同。使用者不需要製作 Qwen RGBA；後端會把原圖 RGB 與 Mask 轉成節點 168 所需的透明 Alpha。
+文件以 stem 配對，例如 `001.jpg` 對 `001.png`。文件夾模式只讀取第一層圖片並忽略子文件夾；文件夾或多選圖片模式再次選擇都會整批取代上一次選擇，不會累加。Mask 必須是 PNG，尺寸與原圖相同。使用者提供原圖與獨立 Mask；Qwen 2.1 工作流負責補洞、擴張 8px，再將修復 RGB 區域回貼。
 
 多張圖片和多套模型會串行運行。瀏覽器顯示的「批量」不是同時把多張圖片塞進顯存；關閉或刷新頁面不會取消後端任務，重新打開後會恢復目前進度。任務運行時鎖定其他輸入，只能下載已完成結果或經警告確認後放棄任務。
 
@@ -226,10 +226,11 @@ LanPaint、CropAndStitch 與 Easy-Use 的參考鏡像內容不是以可 checkout
 |---|---|
 | FireRed 主模型 | `diffusion_models/FireRed-Image-Edit-1.1_fp8mixed_comfy.safetensors` |
 | FireRed Lightning LoRA | `loras/FireRed-Image-Edit-1.1-Lightning-8steps-v1.2.safetensors` |
-| Qwen 2511 主模型 | `diffusion_models/qwen_image_edit_2511_fp8mixed.safetensors` |
-| Qwen Lightning LoRA | `loras/Qwen-Image-Edit-2511-Lightning-4steps-V1.0-bf16.safetensors` |
-| Qwen 2.5 VL 文本編碼器 | `text_encoders/qwen_2.5_vl_7b_fp8_scaled.safetensors` |
-| Qwen Image VAE | `vae/qwen_image_vae.safetensors` |
+| Qwen 2.1 INT8 主模型 | `diffusion_models/qwen_image_2.1_int8_convrot.safetensors` |
+| Qwen3VL 8B INT8 編碼器 | `text_encoders/qwen3vl_8b_int8_convrot.safetensors` |
+| Qwen 2.1 BF16 VAE | `vae/qwen_image_2.1_vae_bf16.safetensors` |
+| FireRed 使用的 Qwen 2.5 VL 編碼器 | `text_encoders/qwen_2.5_vl_7b_fp8_scaled.safetensors` |
+| FireRed 使用的 Qwen Image VAE | `vae/qwen_image_vae.safetensors` |
 | Flux2 Klein 9B FP8 | `diffusion_models/flux-2-klein-9b-fp8.safetensors` |
 | Qwen3 文本編碼器 | `text_encoders/qwen_3_8b_fp8mixed.safetensors` |
 | Flux2 VAE | `vae/flux2-vae.safetensors` |
@@ -300,7 +301,7 @@ cd /root/comic-inpaint
 測試必須遵循：
 
 - 先驗證全部 source/Mask 的 stem、尺寸與 Mask 方向；
-- Qwen 走 `qwenlanpaint` 路徑生成 RGBA，不把獨立 Mask 直接送節點 168；
+- Qwen 2.1 走 `run_qwen21_batch.py`：原圖與原始 Mask 分離，補洞後擴張 8px，RGB 單成品；
 - 三套工作流串行運行；
 - 每套工作流一次跑完所有待處理頁，再切換模型；
 - 每秒採樣顯存，保存 CSV、摘要、批次器與 ComfyUI 日誌；
@@ -313,7 +314,7 @@ cd /root/comic-inpaint
 
 - 權重到位後，先一頁 RF＋MangaLens CUDA smoke test，再小批次確認原尺寸文字／氣泡分割、分類與人工 edited 保護。
 - 核對全批模型順序、子進程退出、載入／推理耗時與顯存；確認偵測→ComfyUI 修復，以及修復→偵測切換不並行佔卡。
-- 從項目 Mask 直入及第一部分輸出各建立快照，按受影響流程測試配對與 Qwen Alpha 規則；全黑整批應在 ComfyUI 未啟動時仍完整輸出。
+- 從項目 Mask 直入及第一部分輸出各建立快照，按受影響流程測試配對、Qwen 補洞／擴張及遮罩外像素保持；全黑整批應在 ComfyUI 未啟動時仍完整輸出。
 - 以完成候選驗收第三部分局部來源、尺寸拒絕、羽化伺服器預覽與成品一致；確認未確認／缺頁不被標為完整成品。
 - 封存移到另一資料目錄再匯入，重開編輯及合成；測試活動任務／下載時刪除受阻，以及舊版 jobs 仍可讀取下載。
 
@@ -521,3 +522,17 @@ ComfyUI 輸出先複製到暫存檔，通過 PNG 完整性與解碼檢查後才�
 預排版文字快捷切換與原位分割僅需更新前端正式構建；本機 build 完成後重新整理頁面載入。驗收黑／白與其他顏色切換及對應描邊、描邊 0／4、多選逐框操作、橫豎排切換、分割保留選取、原中心不移動、新框位於右側、樣式繼承與一次撤銷／重做／保存重開。既有文字不會在更新時自動改色或分割。
 
 預排版增加 ⌘＋單擊文字直接原位編輯，更新前端構建後重新整理即可；驗收普通單擊仍選取／拖曳、⌘＋單擊直接編輯、框旁控制不被攔截、跨文字框保存草稿，以及 Esc 保存結束。
+
+## Qwen 2.1 與雙 Release 整合（待 GPU 驗收）
+
+此次使用者授權將 Qwen 2511 批量與手塗兩入口替換為 Qwen Image 2.1 INT8。Flux、FireRed 模型與工作流參數保留。相容鍵／結果目錄 `qwen2511_lanpaint` 保留，介面顯示新模型；舊工作流另存本地備份，不作新工作流載入。舊章節中的 Qwen 2511 效能與 RGBA 規則僅適用歷史版本。
+
+整合環境採已有的 ComfyUI 0.37.0 原生 Qwen2.1 程式與 PyTorch 2.14.0+cu130 隔離環境，仍只開正式 6006 服務。`COMFY_PYTHON` 指向 `/root/comfy-qwen21-venv/bin/python`；啟動指定 BF16 text encoder／VAE 計算，DiT 及文字編碼器權重仍為 INT8。公共庫模型優先復用。不能把修改 JSON 當成舊 0.34 鏡像已具備新模型支援。
+
+雙平台發布及更新規則見 [DUAL_RELEASE.md](DUAL_RELEASE.md)：同一份更新包與 SHA-256 同步 GitHub／Gitee，環境不符時拒絕套用。此次以 0.2.11 同包發布，GPU 回歸由使用者發布後開機測試。無卡檢查不能替代 GPU 驗收；有卡後先一組非空 Mask，再驗證三模型串行切換、黑 Mask 直通、時間／顯存記錄及下載。
+
+## ComfyUI 圖片清理
+
+頁面上方的「清理 ComfyUI 圖片」可查看 input／output／temp 的圖片數量、容量與預覽。已完成且成品完整保存到網頁項目的副本可整批清理；手動／未知圖片按日期篩選及選取後另行確認。清理採使用者掃描時的檔案清單與簽章，刪除前重新核對，不會順帶刪除掃描後新產生的圖片。未完成任務副本、模型、工作流、網頁項目內成品均不屬獨立清理範圍。
+
+刪除網頁項目時先清除該項目確切 job ID 所屬的 ComfyUI 副本；清理失敗保留項目供重試。舊版沒有任務前綴的 Qwen RGBA 不自動推斷歸屬，留在未知圖片清單。應用 GPU gate、修復佇列及 ComfyUI 原生佇列任一忙碌即拒絕清理；直接操作原生 ComfyUI 的維護者也應避免在清理過程提交新工作。

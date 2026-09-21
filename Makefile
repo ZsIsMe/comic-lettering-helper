@@ -7,7 +7,7 @@ backend-test:
 	.venv/bin/pytest -q backend/tests
 
 verify-local:
-	.venv/bin/python deploy/verify.py --app-root "$(CURDIR)" --comfy-root "$${COMFY_ROOT:-/root/ComfyUI}"
+	.venv/bin/python deploy/verify.py --app-root "$(CURDIR)" --bundled-only
 
 start-local:
 	./scripts/start-local.sh --no-open

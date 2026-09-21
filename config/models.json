@@ -20,24 +20,6 @@
       "sha256": "e8089300fd0b76c0bb3441ff64509258e95b483cc7c5a6f955add907d6c8177d"
     },
     {
-      "id": "qwen2511_fp8",
-      "target": "diffusion_models/qwen_image_edit_2511_fp8mixed.safetensors",
-      "required": true,
-      "size_bytes": 20533762817,
-      "source_candidates": [
-        "/.autodl/31/8d/36/318d36574a2cd26aa3efa25cc86c8527"
-      ]
-    },
-    {
-      "id": "qwen2511_lightning_lora",
-      "target": "loras/Qwen-Image-Edit-2511-Lightning-4steps-V1.0-bf16.safetensors",
-      "required": true,
-      "size_bytes": 849608296,
-      "source_candidates": [
-        "/.autodl/lightx2v/Qwen-Image-Edit-2511-Lightning/Qwen-Image-Edit-2511-Lightning-4steps-V1.0-bf16.safetensors"
-      ]
-    },
-    {
       "id": "qwen25_text_encoder",
       "target": "text_encoders/qwen_2.5_vl_7b_fp8_scaled.safetensors",
       "required": true,
@@ -80,6 +62,33 @@
       "size_bytes": 336213556,
       "source_candidates": [
         "/.autodl/1f/01/ec/1f01ec904ab02e44c0b4d04c83dc856d"
+      ]
+    },
+    {
+      "id": "qwen21_int8",
+      "target": "diffusion_models/qwen_image_2.1_int8_convrot.safetensors",
+      "required": true,
+      "size_bytes": 7256783064,
+      "source_candidates": [
+        "/.autodl/7c/40/26/7c4026516e59abf14c6d2eea96f5b64d"
+      ]
+    },
+    {
+      "id": "qwen3vl_int8",
+      "target": "text_encoders/qwen3vl_8b_int8_convrot.safetensors",
+      "required": true,
+      "size_bytes": 9350798360,
+      "source_candidates": [
+        "/.autodl/6f/32/f9/6f32f9794879cea9e29830e9262c019c"
+      ]
+    },
+    {
+      "id": "qwen21_vae",
+      "target": "vae/qwen_image_2.1_vae_bf16.safetensors",
+      "required": true,
+      "size_bytes": 675509688,
+      "source_candidates": [
+        "/.autodl/e9/91/c8/e991c8302f76ed7491244e0a5f0b64db"
       ]
     }
   ]

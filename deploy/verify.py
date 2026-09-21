@@ -37,6 +37,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--app-root", type=Path, default=Path(os.getenv("COMIC_APP_ROOT", "/root/comic-inpaint")))
     parser.add_argument("--comfy-root", type=Path, default=Path(os.getenv("COMFY_ROOT", "/root/ComfyUI")))
+    parser.add_argument("--bundled-only", action="store_true", help="Check repository assets without a GPU installation")
     return parser.parse_args()
 
 
@@ -47,6 +48,19 @@ def main() -> int:
     components = json.loads((app_root / "config" / "components.json").read_text(encoding="utf-8"))
     models = json.loads((app_root / "config" / "models.json").read_text(encoding="utf-8"))["models"]
     failures: list[str] = []
+
+    if args.bundled_only:
+        for name, expected in components["workflow_sha256"].items():
+            path = app_root / "workflows" / name
+            if not path.is_file() or sha256(path) != expected:
+                failures.append(f"HASH bundled workflow/{name}")
+        for name in ("runtime-tools/run_qwen21_batch.py", "frontend/dist/index.html"):
+            if not (app_root / name).is_file():
+                failures.append(f"MISSING {name}")
+        for failure in failures:
+            print(failure, file=sys.stderr)
+        print(json.dumps({"ok": not failures, "scope": "bundled assets only", "failure_count": len(failures)}))
+        return int(bool(failures))
 
     core = [comfy_root / "main.py", app_root / "frontend" / "dist" / "index.html"]
     for path in core:
@@ -78,9 +92,10 @@ def main() -> int:
         print(f"OK      node/{directory['directory']}")
 
     for name, expected in components["workflow_sha256"].items():
-        installed = comfy_root / "user" / "default" / "workflows" / name
+        installed = comfy_root / "user" / "default" / "workflows" / Path(name).name
         bundled = app_root / "workflows" / name
-        for label, path in (("installed", installed), ("bundled", bundled)):
+        paths = (("bundled", bundled),) if name.endswith('.api.json') else (("installed", installed), ("bundled", bundled))
+        for label, path in paths:
             if not path.is_file():
                 failures.append(f"MISSING {label} workflow/{name}")
             elif sha256(path) != expected:

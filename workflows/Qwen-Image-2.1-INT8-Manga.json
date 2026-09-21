@@ -1,7 +1,7 @@
 {
-  "id": "8f333143-1c0f-45fa-b33c-16f10d6baa21",
+  "id": "9185edab-173f-4271-9fa5-b08fe3413d54",
   "revision": 0,
-  "last_node_id": 20,
+  "last_node_id": 19,
   "last_link_id": 25,
   "nodes": [
     {
@@ -32,9 +32,7 @@
         {
           "name": "MASK",
           "type": "MASK",
-          "links": [
-            2
-          ]
+          "links": null
         }
       ],
       "properties": {
@@ -45,7 +43,92 @@
         "",
         "image"
       ],
-      "title": "上傳原圖・右鍵開啟遮罩編輯器"
+      "title": "原圖"
+    },
+    {
+      "id": 2,
+      "type": "LoadImage",
+      "pos": [
+        -1100,
+        500
+      ],
+      "size": [
+        320,
+        320
+      ],
+      "flags": {},
+      "order": 2,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "IMAGE",
+          "type": "IMAGE",
+          "links": [
+            2
+          ]
+        },
+        {
+          "name": "MASK",
+          "type": "MASK",
+          "links": null
+        }
+      ],
+      "properties": {
+        "cnr_id": "comfy-core",
+        "Node name for S&R": "LoadImage"
+      },
+      "widgets_values": [
+        "",
+        "image"
+      ],
+      "title": "獨立黑白 Mask"
+    },
+    {
+      "id": 3,
+      "type": "ImageToMask",
+      "pos": [
+        -700,
+        520
+      ],
+      "size": [
+        240,
+        90
+      ],
+      "flags": {},
+      "order": 3,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "image",
+          "type": "IMAGE",
+          "link": 2
+        },
+        {
+          "name": "channel",
+          "type": "COMBO",
+          "link": null,
+          "widget": {
+            "name": "channel"
+          }
+        }
+      ],
+      "outputs": [
+        {
+          "name": "MASK",
+          "type": "MASK",
+          "links": [
+            3
+          ]
+        }
+      ],
+      "properties": {
+        "cnr_id": "comfy-core",
+        "Node name for S&R": "ImageToMask"
+      },
+      "widgets_values": [
+        "red"
+      ]
     },
     {
       "id": 4,
@@ -65,7 +148,7 @@
         {
           "name": "mask",
           "type": "MASK",
-          "link": 2
+          "link": 3
         },
         {
           "name": "value",
@@ -969,30 +1052,6 @@
         "qwen21_int8_manga"
       ],
       "title": "唯一最終結果"
-    },
-    {
-      "id": 20,
-      "type": "MarkdownNote",
-      "pos": [
-        -1100,
-        880
-      ],
-      "size": [
-        620,
-        310
-      ],
-      "flags": {},
-      "order": 20,
-      "mode": 0,
-      "inputs": [],
-      "outputs": [],
-      "properties": {
-        "cnr_id": "comfy-core",
-        "Node name for S&R": "MarkdownNote"
-      },
-      "widgets_values": [
-        "## Qwen Image 2.1 INT8 手塗去字\n\n1. 上傳原圖，右鍵開啟遮罩編輯器。\n2. 塗白要修復的文字區域並保存到節點。\n3. 工作流會先二值化、補洞並外擴 8px，再用原圖與 Mask 參考圖生成。\n4. 最終只把處理後 Mask 內的 RGB 貼回原圖。未塗抹時不要執行。\n\n固定使用 Qwen Image 2.1 INT8、25 steps、CFG 1、Euler/simple、resolution 0；不使用 LanPaint。"
-      ]
     }
   ],
   "links": [
@@ -1006,8 +1065,16 @@
     ],
     [
       2,
-      1,
-      1,
+      2,
+      0,
+      3,
+      0,
+      "IMAGE"
+    ],
+    [
+      3,
+      3,
+      0,
       4,
       0,
       "MASK"

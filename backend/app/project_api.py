@@ -19,6 +19,7 @@ from .detection_options import DetectionOptions
 from .repository import now_iso
 from .schemas import JobRecord
 from .storage import save_uploads
+from .comfy_cleanup import CleanupConflict
 
 ORDER = ['flux2klein_lanpaint', 'firered', 'qwen2511_lanpaint']
 
@@ -292,7 +293,7 @@ def import_project(store: ProjectStore, repository, archive_path: Path, max_byte
             raise
 
 
-def create_project_router(settings, repository, manager, store: ProjectStore) -> APIRouter:
+def create_project_router(settings, repository, manager, store: ProjectStore, comfy_cleanup=None) -> APIRouter:
     router = APIRouter(prefix='/api/projects', tags=['projects'])
     max_bytes = settings.max_upload_mb * 1024 * 1024
 
@@ -371,12 +372,17 @@ def create_project_router(settings, repository, manager, store: ProjectStore) ->
             with store.lock(pid):
                 project = store.read(pid)
                 store.require_idle(project, repository, allow_deleting=True)
+                owned_jobs = [job for job in repository.list(limit=None) if getattr(job, 'project_id', None) == pid]
+                if comfy_cleanup is not None:
+                    try:
+                        comfy_cleanup.delete_project_jobs(owned_jobs)
+                    except CleanupConflict as exc:
+                        raise ProjectConflict(str(exc)) from exc
                 project['state'] = 'deleting'
                 store.write(project)
                 # Include owned jobs interrupted between job.json and project.json publication.
-                for job in repository.list(limit=None):
-                    if getattr(job, 'project_id', None) == pid:
-                        shutil.rmtree(repository.job_dir(job.id))
+                for job in owned_jobs:
+                    shutil.rmtree(repository.job_dir(job.id))
                 shutil.rmtree(store.project_dir(pid))
                 return {'deleted': pid}
         except Exception as exc:

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import hashlib
+import http.client
 import json
 import os
 from pathlib import Path, PurePosixPath
@@ -13,9 +14,25 @@ import time
 import urllib.request
 import zipfile
 
+try:
+    from .release_sources import github_release, resolve_release
+except ImportError:  # The launcher copies both files into an isolated update folder.
+    from release_sources import github_release, resolve_release
+
 ACTIVE = {'queued', 'downloading', 'validating', 'installing', 'restarting', 'rolling_back'}
-REPO = 'https://github.com/ZsIsMe/comic-lettering-helper'
-PREFIXES = ('backend/app/', 'backend/imaging/', 'backend/prelayout_core/', 'frontend/dist/')
+PREFIXES = ('backend/app/', 'backend/imaging/', 'backend/prelayout_core/',
+            'frontend/dist/', 'runtime-tools/', 'workflows/')
+LEGACY_PREFIXES = ('backend/app/', 'backend/imaging/', 'backend/prelayout_core/', 'frontend/dist/')
+CONFIG_FILES = {'config/runtime.json', 'config/components.json', 'config/models.json'}
+RUNTIME_CAPABILITIES = 'runtime-capabilities.json'
+
+
+class DownloadTransportError(Exception):
+    """A remote read failed before integrity validation; local writes are excluded."""
+
+    def __init__(self, message='更新附件下載失敗', checksum=None):
+        super().__init__(message)
+        self.checksum = checksum
 
 
 def atomic(path, data):
@@ -28,19 +45,80 @@ def atomic(path, data):
 def allowed(name):
     path = PurePosixPath(name)
     return (not path.is_absolute() and '..' not in path.parts and '\\' not in name
-            and name.startswith(PREFIXES) and '__pycache__' not in path.parts
+            and (name.startswith(PREFIXES) or name in CONFIG_FILES)
+            and '__pycache__' not in path.parts
             and not any(part.startswith('.') for part in path.parts))
 
 
 def download(url, target, limit):
     req = urllib.request.Request(url, headers={'User-Agent': 'comic-lettering-helper'})
-    with urllib.request.urlopen(req, timeout=30) as response, target.open('wb') as output:
+    try:
+        response = urllib.request.urlopen(req, timeout=30)
+    except (OSError, TimeoutError, http.client.HTTPException) as error:
+        raise DownloadTransportError() from error
+    with response, target.open('wb') as output:
         count = 0
-        while block := response.read(256 * 1024):
+        while True:
+            try:
+                block = response.read(256 * 1024)
+            except (OSError, TimeoutError, http.client.HTTPException) as error:
+                raise DownloadTransportError() from error
+            if not block:
+                break
             count += len(block)
             if count > limit:
                 raise ValueError('更新檔案超過大小限制')
             output.write(block)
+
+
+def _download_release(release, bundle, checksum, previous_checksum=None):
+    assets = release['assets']
+    download(assets['application.zip.sha256'], checksum, 1024)
+    parts = checksum.read_text().strip().split()
+    if len(parts) != 2 or parts[1] != 'application.zip' or not re.fullmatch('[a-f0-9]{64}', parts[0]):
+        raise ValueError('更新包校驗碼無效')
+    expected = parts[0]
+    if previous_checksum is not None and expected != previous_checksum:
+        raise ValueError('雙平台更新包校驗碼不一致，已拒絕安裝')
+    try:
+        download(assets['application.zip'], bundle, 100_000_000)
+    except DownloadTransportError as error:
+        error.checksum = expected
+        raise
+    if hashlib.sha256(bundle.read_bytes()).hexdigest() != expected:
+        raise ValueError('更新包校驗失敗，未修改應用')
+    return expected
+
+
+def _runtime_contract(app, manifest):
+    contract = manifest.get('runtime_contract')
+    if not isinstance(contract, str) or not re.fullmatch(r'[a-z0-9][a-z0-9-]{1,63}', contract):
+        raise ValueError('更新包執行環境契約無效')
+    path = app / RUNTIME_CAPABILITIES
+    if path.is_symlink():
+        raise ValueError('執行環境能力標記不允許使用連結')
+    try:
+        capabilities = json.loads(path.read_text())
+    except (FileNotFoundError, OSError, ValueError, TypeError):
+        raise ValueError(f'此版本需要相容鏡像（{contract}）；目前鏡像沒有能力標記') from None
+    if (not isinstance(capabilities, dict) or capabilities.get('format') != 1
+            or not isinstance(capabilities.get('capabilities'), list)
+            or contract not in capabilities['capabilities']):
+        raise ValueError(f'此版本需要相容鏡像（{contract}）；請先更換鏡像再更新')
+
+
+def _safe_target(app, name):
+    target = app / name
+    root = app.resolve()
+    if not target.resolve().is_relative_to(root) or target.is_symlink():
+        raise ValueError('應用路徑不允許更新')
+    relative = target.relative_to(app)
+    current = app
+    for part in relative.parts[:-1]:
+        current /= part
+        if current.is_symlink():
+            raise ValueError('應用路徑不允許更新')
+    return target
 
 
 def unpack(bundle, stage, app, target_version):
@@ -54,32 +132,42 @@ def unpack(bundle, stage, app, target_version):
         for entry in entries:
             if entry.filename != 'update-manifest.json' and not allowed(entry.filename):
                 raise ValueError('更新包包含不允許的路徑')
-            if entry.is_dir() or ((entry.external_attr >> 16) & 0o170000) == 0o120000:
+            kind = (entry.external_attr >> 16) & 0o170000
+            if entry.is_dir() or kind == 0o120000 or kind not in (0, 0o100000):
                 raise ValueError('更新包不接受連結或目錄項目')
         manifest = json.loads(archive.read('update-manifest.json'))
-        if manifest['version'] != target_version or manifest['format'] != 1:
+        if not isinstance(manifest, dict) or manifest.get('version') != target_version or manifest.get('format') not in (1, 2):
             raise ValueError('更新包版本不符')
-        hashes = manifest['files']
+        hashes = manifest.get('files')
+        if not isinstance(hashes, dict) or not all(isinstance(name, str) and isinstance(digest, str)
+                                                   and re.fullmatch('[a-f0-9]{64}', digest)
+                                                   for name, digest in hashes.items()):
+            raise ValueError('更新包檔案清單無效')
+        if manifest['format'] == 1 and any(not name.startswith(LEGACY_PREFIXES) for name in hashes):
+            raise ValueError('舊版更新包格式不允許執行工具、工作流或設定檔')
         if set(names) != set(hashes) | {'update-manifest.json'}:
             raise ValueError('更新包檔案不完整')
         for required in ['backend/app/main.py', 'backend/app/updates.py', 'frontend/dist/index.html']:
             if required not in hashes:
                 raise ValueError('更新包缺少必要檔案')
-        for name, digest in manifest['requirements'].items():
+        requirements = manifest.get('requirements')
+        if not isinstance(requirements, dict):
+            raise ValueError('更新包缺少環境要求')
+        for name, digest in requirements.items():
             if name not in {'backend/requirements.txt', 'backend/requirements-prelayout.txt'}:
                 raise ValueError('環境要求格式無效')
-            if hashlib.sha256((app / name).read_bytes()).hexdigest() != digest:
+            if not isinstance(digest, str) or not re.fullmatch('[a-f0-9]{64}', digest) or hashlib.sha256((app / name).read_bytes()).hexdigest() != digest:
                 raise ValueError('此版本需要新版執行環境，請使用相容鏡像')
-        if set(manifest['requirements']) != {'backend/requirements.txt', 'backend/requirements-prelayout.txt'}:
+        if set(requirements) != {'backend/requirements.txt', 'backend/requirements-prelayout.txt'}:
             raise ValueError('更新包缺少環境要求')
+        if manifest['format'] == 2:
+            _runtime_contract(app, manifest)
         for name, digest in hashes.items():
             data = archive.read(name)
             if hashlib.sha256(data).hexdigest() != digest:
                 raise ValueError('更新檔案校驗失敗')
             # Do not follow local links out of the application tree.
-            target = app / name
-            if not target.resolve().is_relative_to(app.resolve()) or target.is_symlink():
-                raise ValueError('應用路徑不允許更新')
+            _safe_target(app, name)
             out = stage / name
             out.parent.mkdir(parents=True, exist_ok=True)
             out.write_bytes(data)
@@ -138,14 +226,16 @@ def perform(app, folder, state_file, version, previous, base_url):
         state('downloading', '正在下載正式更新包')
         bundle = folder / 'application.zip'
         checksum = folder / 'application.zip.sha256'
-        base = f'{REPO}/releases/download/{version}'
-        download(base + '/application.zip.sha256', checksum, 1024)
-        expected = checksum.read_text().split()[0]
-        if not re.fullmatch('[a-f0-9]{64}', expected):
-            raise ValueError('更新包校驗碼無效')
-        download(base + '/application.zip', bundle, 100_000_000)
-        if hashlib.sha256(bundle.read_bytes()).hexdigest() != expected:
-            raise ValueError('更新包校驗失敗，未修改應用')
+        release = resolve_release(version)
+        try:
+            _download_release(release, bundle, checksum)
+        except DownloadTransportError as error:
+            if release['source'] != 'gitee':
+                raise
+            # Retry the complete pair. Never combine a Gitee checksum with a GitHub ZIP.
+            fallback = github_release(version)
+            _download_release(fallback, bundle, checksum, error.checksum)
+            release = fallback
         state('validating', '正在校驗檔案與執行環境')
         stage = folder / 'stage'
         manifest = unpack(bundle, stage, app, version)
@@ -158,6 +248,7 @@ def perform(app, folder, state_file, version, previous, base_url):
         restart(app, base_url, version)
         atomic(app / 'deployed-release.json', {'tag': version, 'version': version,
                'commit': manifest['commit'], 'backup': str(backup), 'updated_files': manifest['files'],
+               'source': release['source'], 'runtime_contract': manifest.get('runtime_contract'),
                'method': '6008 web updater'})
         state('completed', '更新完成，網頁已恢復')
     except Exception as error:
@@ -172,7 +263,9 @@ def perform(app, folder, state_file, version, previous, base_url):
                 print('Rollback:', type(rollback_error).__name__, str(rollback_error), flush=True)
                 state('failed', '更新與回復未完成，請聯絡管理員；備份已保留')
         else:
-            state('failed', '更新包下載或驗證失敗，應用未變更；請稍後重試')
+            safe_detail = isinstance(error, ValueError) and any(value in str(error) for value in ('相容鏡像', '雙平台'))
+            message = str(error) if safe_detail else '更新包下載或驗證失敗，應用未變更；請稍後重試'
+            state('failed', message)
 
 
 if __name__ == '__main__':

@@ -12,7 +12,7 @@ class Settings:
     comfy_url: str = os.getenv("COMFY_URL", "http://127.0.0.1:6006")
     data_root: Path = Path(os.getenv("COMIC_DATA_ROOT", "/root/autodl-tmp/comic-inpaint"))
     max_upload_mb: int = int(os.getenv("COMIC_MAX_UPLOAD_MB", "2048"))
-    python_bin: str = os.getenv("COMFY_PYTHON", "/root/miniconda3/bin/python")
+    python_bin: str = os.getenv("COMFY_PYTHON", "/root/comfy-qwen21-venv/bin/python")
 
     @property
     def tools_root(self) -> Path:

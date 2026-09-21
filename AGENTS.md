@@ -1,5 +1,9 @@
 # AGENTS.md
 
+## 2026-09-21 使用者授權變更
+
+Qwen 批量與手塗入口替換為 Qwen Image 2.1 INT8：先補洞再擴張 8px、原提示詞、官方模型／採樣、RGB 還原原尺寸後同 Mask 回貼，單成品。新 Qwen 不使用 LanPaint。保留 `qwen2511_lanpaint` API／資料鍵兼容舊項目；後文舊 Qwen RGBA168／4steps 規則只適用已備份的 2511 工作流。Flux／FireRed 參數不變。舊工作流必須本地備份。變更先無卡驗證，由使用者有卡開機後安排真實 GPU 回歸。雙 Release 同包發布，不自動發布或打 Tag。
+
 ## 项目目标
 
 本仓库用于把三套已经验证的 ComfyUI 漫画去字工作流封装成可发布到 AutoDL 的“开机即用”镜像。最终用户不需要理解 ComfyUI、工作流 JSON、提示词或模型目录，只通过 6008 网页上传原图和黑白 Mask、选择流程、查看进度并下载结果。

@@ -11,10 +11,7 @@ test -f "$APP_ROOT/backend/requirements.txt"
 test -f "$COMFY_ROOT/main.py"
 command -v "$APP_PYTHON" >/dev/null
 
-mkdir -p "$COMFY_ROOT/user/default/workflows"
-for workflow in "$APP_ROOT"/workflows/*.json; do
-  install -m 0644 "$workflow" "$COMFY_ROOT/user/default/workflows/$(basename "$workflow")"
-done
+"$APP_PYTHON" "$APP_ROOT/deploy/install-workflows.py" --app-root "$APP_ROOT" --comfy-root "$COMFY_ROOT"
 
 "$APP_PYTHON" -m venv "$APP_ROOT/.venv"
 "$APP_ROOT/.venv/bin/pip" install --index-url "$PIP_MIRROR" -r "$APP_ROOT/backend/requirements.txt"

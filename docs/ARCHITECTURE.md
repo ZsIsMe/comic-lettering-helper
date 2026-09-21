@@ -204,16 +204,13 @@ Web 應用接收兩組文件：
 
 FireRed 使用獨立原圖與獨立 Mask。批次器啟用平鋪輸入時，放入 `ComfyUI/input` 的必須是實際圖片文件，不能使用符號連結；ComfyUI 0.34 已觀察到會把這類符號連結判為無效圖片。
 
-### Qwen + LanPaint 輸入
+### Qwen Image 2.1 INT8 輸入
 
-Qwen 工作流的節點 168 不直接接收獨立黑白 Mask，而是接收帶 Alpha 的 RGBA 原圖。這個差異由 `runtime-tools/run_independent_edit_models_batch.py` 內部處理：
+`run_qwen21_batch.py` 先驗證全批原圖與獨立 Mask 的 stem、格式及尺寸。全黑 Mask 直接輸出原圖。非空 Mask 依序二值化（>=128）、補洞、菱形擴張 8px；處理後 Mask 轉 RGB 作為官方 `TextEncodeQwenImage21` 的第二張參考圖，第一張為原圖。補洞沿用已安裝的 KJ 節點，其餘模型、編碼、採樣均採官方原生節點。
 
-- RGB 保持原圖內容；
-- Mask 二值化後的白色修復區（灰階值大於等於 128）轉為 Alpha 0；
-- 其餘區域轉為 Alpha 255；
-- 保存後再次確認模式為 RGBA，且 Alpha 方向正確。
+模型使用 Qwen Image 2.1 INT8、Qwen3VL 8B INT8 及 2.1 BF16 VAE。沿用已確認中文提示詞，25 steps、CFG 1、Euler/simple、denoise 1、resolution 0，無 Qwen LanPaint、Lightning LoRA 或透明圖層提示詞。解碼後忽略 Alpha、Lanczos 還原原尺寸，以同一處理後 Mask 回貼；只保存一張 RGB 成品。Mask 是參考條件，遮罩外不變由最後回貼保證。
 
-因此前端和公開 API 不接受使用者自行製作的 RGBA，也不得把 `pair_mask/*.png` 直接映射到節點 168。
+手塗流程從原生 LoadImage 的 MASK 輸出讀取筆刷遮罩，後續處理一致；未塗抹時不要手動排入推理。網頁及持久資料仍保留 `qwen2511_lanpaint` 相容鍵與目錄，**新任務此鍵代表 Qwen 2.1**，不能據此推斷歷史任務的模型版本；舊成品不遷移、不重新推理。每次新任務記錄 runner 工作流 hash 與模型版本。
 
 ### Flux2 Klein + LanPaint 輸入
 
@@ -464,3 +461,17 @@ Morphology 會先統計來源列區段密度；runs > pixels/3 時使用等價 p
 預排版新增框旁文字顏色／描邊／方向切換，依各選取條目的原值切換並以單次 EditorState.edit 記錄。黑字白描邊，其餘文字黑描邊；描邊粗細從非零切換至 0、從 0 切換至 4。原位分割使用 editable-text 的 DOM／文字映射取得選取範圍，點擊控制項保留文字選取，不直接改寫 contenteditable。將未選取文字與新框以同一次編輯保存，以分割前完整草稿作為撤銷快照，原框中心保持不變，新框位於頁面水平方向右側並繼承樣式、使用獨立 ID，不沿用原偵測匹配關聯。組字期間、空選取與全選不執行分割。
 
 ⌘＋單擊只在文字本體進入編輯，不啟動拖曳；框旁按鈕、旋轉及參考框控制點維持各自功能。普通單擊選取與拖曳、多選及雙擊入口保持不變。
+
+## Qwen 2.1 與雙 Release 整合（待 GPU 驗收）
+
+此次使用者授權將 Qwen 2511 批量與手塗兩入口替換為 Qwen Image 2.1 INT8。Flux、FireRed 模型與工作流參數保留。相容鍵／結果目錄 `qwen2511_lanpaint` 保留，介面顯示新模型；舊工作流另存本地備份，不作新工作流載入。舊章節中的 Qwen 2511 效能與 RGBA 規則僅適用歷史版本。
+
+整合環境採已有的 ComfyUI 0.37.0 原生 Qwen2.1 程式與 PyTorch 2.14.0+cu130 隔離環境，仍只開正式 6006 服務。`COMFY_PYTHON` 指向 `/root/comfy-qwen21-venv/bin/python`；啟動指定 BF16 text encoder／VAE 計算，DiT 及文字編碼器權重仍為 INT8。公共庫模型優先復用。不能把修改 JSON 當成舊 0.34 鏡像已具備新模型支援。
+
+雙平台發布及更新規則見 [DUAL_RELEASE.md](DUAL_RELEASE.md)：同一份更新包與 SHA-256 同步 GitHub／Gitee，環境不符時拒絕套用。此次以 0.2.11 同包發布，GPU 回歸由使用者發布後開機測試。無卡檢查不能替代 GPU 驗收；有卡後先一組非空 Mask，再驗證三模型串行切換、黑 Mask 直通、時間／顯存記錄及下載。
+
+## ComfyUI 圖片清理
+
+頁面上方的「清理 ComfyUI 圖片」可查看 input／output／temp 的圖片數量、容量與預覽。已完成且成品完整保存到網頁項目的副本可整批清理；手動／未知圖片按日期篩選及選取後另行確認。清理採使用者掃描時的檔案清單與簽章，刪除前重新核對，不會順帶刪除掃描後新產生的圖片。未完成任務副本、模型、工作流、網頁項目內成品均不屬獨立清理範圍。
+
+刪除網頁項目時先清除該項目確切 job ID 所屬的 ComfyUI 副本；清理失敗保留項目供重試。舊版沒有任務前綴的 Qwen RGBA 不自動推斷歸屬，留在未知圖片清單。應用 GPU gate、修復佇列及 ComfyUI 原生佇列任一忙碌即拒絕清理；直接操作原生 ComfyUI 的維護者也應避免在清理過程提交新工作。

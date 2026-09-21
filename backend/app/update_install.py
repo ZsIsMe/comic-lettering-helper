@@ -59,6 +59,7 @@ class Installer:
                 folder.mkdir(parents=True)
                 worker = folder / 'worker.py'
                 shutil.copyfile(Path(__file__).with_name('update_worker.py'), worker)
+                shutil.copyfile(Path(__file__).with_name('release_sources.py'), folder / 'release_sources.py')
                 atomic(self.state_file, {'state': 'queued', 'message': '準備更新',
                                         'version': version, 'started_at': time.time()})
                 env = dict(os.environ, COMIC_APP_ROOT=str(self.settings.app_root), COMIC_DATA_ROOT=str(self.settings.data_root))
@@ -126,10 +127,8 @@ def router(installer):
         # Fresh fixed-repository lookup: do not trust a client URL or a stale check.
         from starlette.concurrency import run_in_threadpool
         try:
-            available = await run_in_threadpool(updates.fetch_versions)
+            await run_in_threadpool(updates.release_sources.resolve_release, version)
         except Exception:
             raise HTTPException(502, '無法確認正式版本，請稍後重試')
-        if version not in available:
-            raise HTTPException(400, '找不到此正式版本')
         return installer.launch(version)
     return api

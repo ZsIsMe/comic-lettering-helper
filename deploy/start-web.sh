@@ -9,7 +9,7 @@ if [ -f "$APP_ROOT/.env" ]; then
 fi
 
 COMFY_ROOT=${COMFY_ROOT:-/root/ComfyUI}
-COMFY_PYTHON=${COMFY_PYTHON:-/root/miniconda3/bin/python}
+COMFY_PYTHON=${COMFY_PYTHON:-/root/comfy-qwen21-venv/bin/python}
 COMFY_PORT=${COMFY_PORT:-6006}
 WEB_HOST=${COMIC_WEB_HOST:-0.0.0.0}
 WEB_PORT=${COMIC_WEB_PORT:-6008}

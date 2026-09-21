@@ -3,6 +3,7 @@ import { Alert, Spin } from 'antd'
 import ProjectWorkbench from './ProjectWorkbench'
 import { UpdateChecker } from './UpdateChecker'
 import { ComfyService } from './ComfyService'
+import { ComfyCleanup } from './ComfyCleanup'
 
 const EdgeWhitePage = lazy(() => import('./EdgeWhitePage'))
 const PrelayoutWorkbench = lazy(() => import('./prelayout/PrelayoutWorkbench'))
@@ -50,6 +51,7 @@ export default function WorkspaceRouter() {
       return true
     }} />
     <ComfyService />
+    <ComfyCleanup />
     {error && <Alert type="error" showIcon message={error} closable onClose={() => setError('')} />}
     {/* Preserve repair page, step and edits across optional module visits. Inert blocks hidden-editor input. */}
     <div hidden={module !== 'repair'} inert={module !== 'repair'}><ProjectWorkbench onReadyToLeave={registerRepair} /></div>

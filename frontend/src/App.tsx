@@ -80,7 +80,7 @@ const workflows: Array<{
 }> = [
   { value: 'flux2klein_lanpaint', title: 'Flux2 Klein + LanPaint', note: '4-step 局部修復', tone: 'charcoal', firstSeconds: 48.11, warmSeconds: 17.892 },
   { value: 'firered', title: 'FireRed FP8', note: '線稿與網點修復', tone: 'vermilion', firstSeconds: 105.092, warmSeconds: 24.218 },
-  { value: 'qwen2511_lanpaint', title: 'Qwen 2511 + LanPaint', note: '自動合成 RGBA', tone: 'teal', firstSeconds: 83.916, warmSeconds: 23.347 },
+  { value: 'qwen2511_lanpaint', title: 'Qwen Image 2.1 INT8', note: 'Mask 補洞及擴張 8px', tone: 'teal', firstSeconds: 66.88, warmSeconds: 38.75 },
 ]
 
 const ACTIVE_STATES = new Set<JobState>(['queued', 'validating', 'running', 'packaging', 'abandoning'])

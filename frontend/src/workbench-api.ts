@@ -2,7 +2,7 @@ export type Workflow = 'flux2klein_lanpaint' | 'firered' | 'qwen2511_lanpaint'
 export const workflowOptions: { value: Workflow; label: string }[] = [
   { value: 'flux2klein_lanpaint', label: 'Flux2 Klein + LanPaint' },
   { value: 'firered', label: 'FireRed FP8' },
-  { value: 'qwen2511_lanpaint', label: 'Qwen 2511 + LanPaint' },
+  { value: 'qwen2511_lanpaint', label: 'Qwen Image 2.1 INT8' },
 ]
 export interface Page {
   id: string; stem: string; filename: string; width: number; height: number

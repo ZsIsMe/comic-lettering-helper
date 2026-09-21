@@ -31,10 +31,12 @@ import os
 from .edgewhite_api import create_edgewhite_router
 from .updates import APP_VERSION, router as updates_router
 from .update_install import Installer, MaintenanceMiddleware, router as install_router
+from .comfy_cleanup import ComfyCleanup, create_comfy_cleanup_router
 
 
 repository = JobRepository(settings.jobs_root)
 manager = JobManager(settings, repository)
+comfy_cleanup = ComfyCleanup(settings, repository, manager)
 project_store = ProjectStore(settings.data_root / "projects")
 detection_manager = DetectionManager(settings, project_store, manager.gpu_gate)
 prelayout_store = PrelayoutStore(Path(os.getenv('COMIC_PRELAYOUT_DATA_ROOT', str(settings.data_root / 'prelayout'))),
@@ -314,7 +316,8 @@ def download_job(job_id: str) -> FileResponse:
     return FileResponse(archive, media_type="application/zip", filename=f"{record.name}.zip")
 
 
-app.include_router(create_project_router(settings, repository, manager, project_store))
+app.include_router(create_comfy_cleanup_router(comfy_cleanup))
+app.include_router(create_project_router(settings, repository, manager, project_store, comfy_cleanup))
 app.include_router(build_composition_router(project_store, repository))
 app.include_router(create_detection_router(detection_manager))
 app.include_router(prelayout_router(prelayout_store, prelayout_detection, settings.max_upload_mb * 1024 * 1024))

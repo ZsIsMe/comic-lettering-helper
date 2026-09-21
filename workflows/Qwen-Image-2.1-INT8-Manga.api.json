@@ -1,0 +1,71 @@
+{
+  "1": {"class_type": "LoadImage", "inputs": {"image": "qwen21_batch/pair/example.png"}},
+  "2": {"class_type": "LoadImage", "inputs": {"image": "qwen21_batch/pair_mask/example.png"}},
+  "3": {"class_type": "ImageToMask", "inputs": {"image": ["2", 0], "channel": "red"}},
+  "4": {"class_type": "ThresholdMask", "inputs": {"mask": ["3", 0], "value": 0.5}},
+  "5": {
+    "class_type": "GrowMaskWithBlur",
+    "inputs": {
+      "mask": ["4", 0],
+      "expand": 0,
+      "incremental_expandrate": 0,
+      "tapered_corners": true,
+      "flip_input": false,
+      "blur_radius": 0,
+      "lerp_alpha": 1,
+      "decay_factor": 1,
+      "fill_holes": true
+    }
+  },
+  "6": {"class_type": "GrowMask", "inputs": {"mask": ["5", 0], "expand": 8, "tapered_corners": true}},
+  "7": {"class_type": "MaskToImage", "inputs": {"mask": ["6", 0]}},
+  "8": {
+    "class_type": "UNETLoader",
+    "inputs": {"unet_name": "qwen_image_2.1_int8_convrot.safetensors", "weight_dtype": "default"}
+  },
+  "9": {
+    "class_type": "CLIPLoader",
+    "inputs": {"clip_name": "qwen3vl_8b_int8_convrot.safetensors", "type": "qwen_image", "device": "default"}
+  },
+  "10": {"class_type": "VAELoader", "inputs": {"vae_name": "qwen_image_2.1_vae_bf16.safetensors"}},
+  "11": {"class_type": "QwenImage21Cache", "inputs": {"model": ["8", 0], "device": "auto", "dtype": "default"}},
+  "12": {
+    "class_type": "TextEncodeQwenImage21",
+    "inputs": {
+      "clip": ["9", 0],
+      "vae": ["10", 0],
+      "prompt": "移除遮罩区域内的漫画拟声词、效果字和残留笔画。根据遮罩边缘实际可见的线稿、网点、黑白块、灰度与阴影，自然补全被遮挡的黑白漫画内容，保持原有画风、人物、物体和构图一致；遮罩外区域保持不变，不添加文字或新的画面元素。",
+      "negative_prompt": "",
+      "resolution": 0,
+      "images.image_1": ["1", 0],
+      "images.image_2": ["7", 0]
+    }
+  },
+  "13": {
+    "class_type": "KSampler",
+    "inputs": {
+      "model": ["11", 0],
+      "positive": ["12", 0],
+      "negative": ["12", 1],
+      "latent_image": ["12", 2],
+      "seed": 0,
+      "steps": 25,
+      "cfg": 1,
+      "sampler_name": "euler",
+      "scheduler": "simple",
+      "denoise": 1
+    }
+  },
+  "14": {"class_type": "VAEDecode", "inputs": {"samples": ["13", 0], "vae": ["10", 0]}},
+  "15": {"class_type": "SplitImageWithAlpha", "inputs": {"image": ["14", 0]}},
+  "16": {"class_type": "GetImageSize", "inputs": {"image": ["1", 0]}},
+  "17": {
+    "class_type": "ImageScale",
+    "inputs": {"image": ["15", 0], "upscale_method": "lanczos", "width": ["16", 0], "height": ["16", 1], "crop": "disabled"}
+  },
+  "18": {
+    "class_type": "ImageCompositeMasked",
+    "inputs": {"destination": ["1", 0], "source": ["17", 0], "x": 0, "y": 0, "resize_source": false, "mask": ["6", 0]}
+  },
+  "19": {"class_type": "SaveImage", "inputs": {"images": ["18", 0], "filename_prefix": "qwen21_int8_example"}}
+}

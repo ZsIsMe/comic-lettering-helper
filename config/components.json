@@ -1,11 +1,12 @@
 {
-  "captured_from": "pro-788873e1ad26",
-  "captured_at": "2026-09-11",
+  "captured_from": "Qwen 2.1 native runtime with retained production custom nodes",
+  "captured_at": "2026-09-21",
   "runtime": {
-    "comfyui": "0.34.0",
+    "comfyui": "0.37.0",
     "python": "3.12.3",
-    "torch": "2.8.0+cu128",
-    "comfy_cli": "1.20.0"
+    "torch": "2.14.0+cu130",
+    "comfy_cli": "1.20.0",
+    "comfyui_frontend": "1.53.6"
   },
   "custom_nodes": [
     {
@@ -50,7 +51,13 @@
   ],
   "workflow_sha256": {
     "FireRed-v12-newprompt-latent-mask-FP8Mixed-FP8Text.json": "d3fdd65f2b777489c897e81363f53747d70e3f8046b217ba4b63184e7f28bcc2",
-    "Qwen-Image-Edit-2511-LanPaint-V2-4Steps-manga.json": "e44e30ea6fadad4c8231d34f8c675977922369367882ba2aaec67b61c8f2b8bf",
-    "Flux2-Klein-9B-FP8-Manga-Mask-LanPaint-4step.json": "1e283b898ca77071ee8fdd9f45973fbcf9ab8837d2e034f00b90acfbf8d182dd"
-  }
+    "Flux2-Klein-9B-FP8-Manga-Mask-LanPaint-4step.json": "1e283b898ca77071ee8fdd9f45973fbcf9ab8837d2e034f00b90acfbf8d182dd",
+    "Qwen-Image-2.1-INT8-Manga.api.json": "24b7843f3bc27357d641526def420de4b915a953d36ba7e9980ca2d64b7ded0d",
+    "Qwen-Image-2.1-INT8-Manga.json": "7fae36f83535113d4e803a9b24d2476cd2901e330f9fb3d2ec1610768c8edea6",
+    "handpaint/FireRed手塗去字.json": "e67074322dfc535a388e76a5429a6234e7d9b1764a8b8386024e9d91ee1e8a81",
+    "handpaint/Flux手塗去字.json": "f0cb5b6aa617484417f738d9c599ab5c000fc924a7c226da07b1a740cbe46e5a",
+    "handpaint/Qwen手塗去字.json": "21a1b17b3093ff2bc44c09a456747e45806a13f9f7b0f4610921d92f963363c0"
+  },
+  "runtime_contract": "qwen21-native-int8-v1",
+  "gpu_validation": "pending: user will boot GPU for integrated smoke test"
 }

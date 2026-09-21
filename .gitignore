@@ -22,3 +22,7 @@ models/
 *.ckpt
 *.safetensors
 *.onnx
+
+# Host-local capability and deployment provenance; never part of a release.
+runtime-capabilities.json
+deployed-draft.json
