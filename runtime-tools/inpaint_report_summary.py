@@ -1,4 +1,4 @@
-"""Read saved execution evidence for the Chinese comparison-PDF cover.
+"""Read saved execution evidence for the English comparison-PDF cover.
 
 Never query the PDF generator's host: it may not be the inference machine.
 """
@@ -11,7 +11,7 @@ from datetime import datetime, timezone, timedelta
 from pathlib import Path
 
 WORKFLOWS = (
-    ('flux2klein_lanpaint', 'Flux2 Klein＋LanPaint'),
+    ('flux2klein_lanpaint', 'Flux2 Klein+LanPaint'),
     ('firered', 'FireRed FP8'),
     ('qwen2511_lanpaint', 'Qwen Image 2.1 INT8'),
 )
@@ -52,27 +52,27 @@ def read_rows(path):
 def seconds(value):
     value = number(value)
     if value is None:
-        return '未記錄'
+        return 'Not recorded'
     if value < 60:
-        return f'{value:.2f} 秒'
+        return f'{value:.2f} s'
     minutes, remainder = divmod(round(value), 60)
     hours, minutes = divmod(minutes, 60)
-    return (f'{hours} 小時 ' if hours else '') + f'{minutes} 分 {remainder} 秒'
+    return (f'{hours} h ' if hours else '') + f'{minutes} min {remainder} s'
 
 
 def memory(value):
     value = number(value)
-    return f'{value / 1024:.2f} GiB' if value is not None else '未記錄'
+    return f'{value / 1024:.2f} GiB' if value is not None else 'Not recorded'
 
 
 def date_text(value):
     try:
         stamp = datetime.fromisoformat(str(value).replace('Z', '+00:00'))
         if stamp.tzinfo is None:
-            return str(value) + '（時區未記錄）'
-        return stamp.astimezone(timezone(timedelta(hours=8))).strftime('%Y年%m月%d日 %H:%M:%S（北京時間）')
+            return str(value) + ' (timezone not recorded)'
+        return stamp.astimezone(timezone(timedelta(hours=8))).strftime('%Y-%m-%d %H:%M:%S (UTC+08:00)')
     except ValueError:
-        return '未記錄'
+        return 'Not recorded'
 
 
 def collect_report(root, logs_dir=None, job_file=None, environment_file=None, counts=None, model_files=None, prompts=None):
@@ -111,7 +111,7 @@ def collect_report(root, logs_dir=None, job_file=None, environment_file=None, co
                 samples[row['stem']] = value
         durations = list(samples.values())
         if any(row.get('model') == 'qwenlanpaint' for row in rows):
-            label = 'Qwen Image Edit 2511＋LanPaint'
+            label = 'Qwen Image Edit 2511+LanPaint'
         first = durations[0] if durations else number(progress.get('first_seconds'))
         warm = sum(durations[1:]) / len(durations[1:]) if len(durations) > 1 else number(progress.get('warm_average_seconds'))
         average = sum(durations) / len(durations) if durations else None
@@ -143,13 +143,13 @@ def collect_report(root, logs_dir=None, job_file=None, environment_file=None, co
         completed = counts_for_model if counts_for_model is not None else recorded_count
         passthrough = max(sum(bool(row.get('empty_mask_passthrough')) for row in successful.values()), progress.get('passthrough', 0)) if successful or progress else None
         if previous or len(samples) > len(generated):
-            report['notes'].append(f'{label} 曾續跑；耗時平均合併現存成功紀錄，總耗時及顯存僅列最近一次執行。')
-        report['models'].append(dict(name=label, prompts=(prompts or {}).get(workflow, {}), model_file=(model_files or {}).get(workflow) or '未記錄', completed=completed, passthrough=passthrough,
+            report['notes'].append(f'{label} resumed; averages combine saved successful runs; total time and VRAM cover only the latest run.')
+        report['models'].append(dict(name=label, prompts=(prompts or {}).get(workflow, {}), model_file=(model_files or {}).get(workflow) or 'Not recorded', completed=completed, passthrough=passthrough,
             first=first, warm=warm, average=average, elapsed=elapsed,
             peak=peak if peak is not None else max(used) if used else None,
             mean=mean if mean is not None else sum(used) / len(used) if used else None,
             samples=len(durations), failures=failures if rows else None))
-    report['gpu_names'] = '、'.join(sorted(gpu_names)) or environment.get('gpu_name') or '未記錄'
+    report['gpu_names'] = ', '.join(sorted(gpu_names)) or environment.get('gpu_name') or 'Not recorded'
     report['gpu_total'] = memory(max(totals) if totals else environment.get('gpu_memory_total_mib'))
     return report
 
@@ -176,7 +176,7 @@ def diffusion_model_files(paths):
                         names.add(value.replace('\\', '/').rsplit('/', 1)[-1])
         except (OSError, ValueError, TypeError):
             continue
-    return '、'.join(sorted(names)) or '未記錄'
+    return ', '.join(sorted(names)) or 'Not recorded'
 
 
 def saved_prompts(paths):
@@ -223,33 +223,45 @@ def saved_prompts(paths):
                     visit(link, 'negative' if name == 'negative' else 'positive', set())
     return {role: '\n'.join(values) for role, values in texts.items()} if found else {}
 
+PRODUCTION_PROMPT = '移除遮罩区域内的普通文字、漫画拟声词、效果字及残留笔画，根据周围内容自然补全被文字遮挡的部分，保持原有色彩、明暗、线条、纹理与画风一致。文字位于气泡或文字框内时，保留其原有底色、透明效果、边框、形状和尾巴，不用背后的景物替代。保持人物、物体、构图及遮罩外区域不变，不新增画面元素，不生成任何文字、字母、数字或符号。'
+ENGLISH_PROMPT = 'Remove ordinary text, manga sound effects, effect lettering and residual strokes inside the mask. Naturally reconstruct the obscured areas from surrounding content, preserving the original colors, shading, lines, textures and art style. For text inside speech bubbles or text boxes, preserve their background color, transparency, borders, shape and tails; do not replace them with scenery behind them. Preserve characters, objects, composition and areas outside the mask. Add no new visual elements, text, letters, numbers or symbols.'
+
+def display_text(text):
+    text = str(text)
+    if text == PRODUCTION_PROMPT:
+        return '[English translation] ' + ENGLISH_PROMPT
+    if text.isascii():
+        return text
+    return '[Unicode escapes] ' + text.encode('ascii', 'backslashreplace').decode('ascii')
+
+
 def cover_lines(report):
     def value(item):
-        return '未記錄' if item is None else str(item)
+        return 'Not recorded' if item is None else str(item)
     lines = [
-        '漫畫去字修復報告',
-        '任務：' + report['name'],
-        '日期：' + report['created_at'],
-        f"圖片：{value(report['pair_count'])} 張；全黑 Mask：{value(report['black_count'])} 張",
-        'GPU：' + report['gpu_names'],
-        '顯存：' + report['gpu_total'] + '；系統記憶體：' + memory(report['environment'].get('ram_total_mib')),
+        'Comic Inpainting Report',
+        'Task: ' + display_text(report['name']),
+        'Date: ' + report['created_at'],
+        f"Images: {value(report['pair_count'])}; all-black masks: {value(report['black_count'])}",
+        'GPU: ' + report['gpu_names'],
+        'VRAM: ' + report['gpu_total'] + '; system RAM: ' + memory(report['environment'].get('ram_total_mib')),
         '',
     ]
     for model in report['models']:
         lines += [
             model['name'],
-            '繪圖模型：' + model['model_file'],
-            '首圖：' + seconds(model['first']) + '；非首圖平均：' + seconds(model['warm']) + '／張',
-            '總耗時：' + seconds(model['elapsed']) + '；峰值顯存：' + memory(model['peak']),
+            'Diffusion model: ' + model['model_file'],
+            'First image: ' + seconds(model['first']) + '; subsequent average: ' + seconds(model['warm']) + ' / image',
+            'Total time: ' + seconds(model['elapsed']) + '; peak VRAM: ' + memory(model['peak']),
         ]
         prompts = model.get('prompts', {})
-        lines.append('提示詞：' + (prompts.get('positive', '未記錄') or '空白'))
+        lines.append('Prompt: ' + display_text(prompts.get('positive', 'Not recorded') or 'Empty'))
         if prompts.get('negative'):
-            lines.append('負向提示詞：' + prompts['negative'])
+            lines.append('Negative prompt: ' + display_text(prompts['negative']))
         lines.append('')
-    lines += ['直通、跳過與失敗不計入生成平均；顯存為整卡採樣占用。',
-              '缺少歷史資料顯示「未記錄」。'] + report['notes']
-    return lines
+    lines += ['Averages exclude passthrough, skipped and failed images; VRAM is sampled whole-GPU usage.',
+              'Missing historical data is shown as Not recorded.'] + report['notes']
+    return [display_text(line) for line in lines]
 
 
 def draw_cover(report, width, height, load_font):
@@ -259,7 +271,7 @@ def draw_cover(report, width, height, load_font):
     draw = ImageDraw.Draw(page)
     margin = 110
     lines = cover_lines(report)
-    # Fit all text on one cover; start generously and retain readable CJK text.
+    # Fit all text on one cover; start generously and retain readable text.
     for size in (44, 42, 40, 38, 36, 34, 32):
         font = load_font(size)
         wrapped = []
@@ -274,7 +286,7 @@ def draw_cover(report, width, height, load_font):
         if len(wrapped) * spacing <= height - margin * 2:
             break
     else:
-        raise ValueError('報告文字超出單頁，請精簡任務名稱或備註。')
+        raise ValueError('Report exceeds one cover page; shorten the task name or notes.')
     for index, line in enumerate(wrapped):
         draw.text((margin, margin + index * spacing), line, font=font, fill='black')
     return page
@@ -316,7 +328,7 @@ def capture_environment(comfy_url=None):
     try:
         result = subprocess.run(['nvidia-smi', '--query-gpu=driver_version', '--format=csv,noheader'],
                                 capture_output=True, text=True, timeout=3, check=True)
-        data['driver_version'] = '、'.join(sorted(set(result.stdout.strip().splitlines())))
+        data['driver_version'] = ', '.join(sorted(set(result.stdout.strip().splitlines())))
     except (OSError, subprocess.SubprocessError):
         pass
     if comfy_url:

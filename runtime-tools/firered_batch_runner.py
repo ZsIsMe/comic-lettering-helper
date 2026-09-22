@@ -36,12 +36,7 @@ PRESERVE_WORKFLOW = os.environ.get("FIRERED_PRESERVE_WORKFLOW", "0") == "1"
 WORKFLOW_DIR = Path("/tmp/firered_batch_workflows") / BATCH_NAME
 LOG_PATH = COMFY_OUTPUT / f"{BATCH_NAME}_timings.jsonl"
 SUMMARY_PATH = COMFY_OUTPUT / f"{BATCH_NAME}_summary.json"
-PROMPT = (
-    "移除图中的拟声词、效果字及残留笔画，"
-    "依照文字周围的漫画线稿、黑白块、网点、阴影和背景纹理，"
-    "自然补全被文字覆盖的背景。保持人物、构图及其他内容不变，不新增物体，"
-    "不生成任何文字、字母、汉字、数字或符号。"
-)
+PROMPT = '移除遮罩区域内的普通文字、漫画拟声词、效果字及残留笔画，根据周围内容自然补全被文字遮挡的部分，保持原有色彩、明暗、线条、纹理与画风一致。文字位于气泡或文字框内时，保留其原有底色、透明效果、边框、形状和尾巴，不用背后的景物替代。保持人物、物体、构图及遮罩外区域不变，不新增画面元素，不生成任何文字、字母、数字或符号。'
 
 
 def now_iso() -> str:

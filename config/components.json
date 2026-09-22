@@ -50,14 +50,14 @@
     }
   ],
   "workflow_sha256": {
-    "FireRed-v12-newprompt-latent-mask-FP8Mixed-FP8Text.json": "d3fdd65f2b777489c897e81363f53747d70e3f8046b217ba4b63184e7f28bcc2",
-    "Flux2-Klein-9B-FP8-Manga-Mask-LanPaint-4step.json": "1e283b898ca77071ee8fdd9f45973fbcf9ab8837d2e034f00b90acfbf8d182dd",
-    "Qwen-Image-2.1-INT8-Manga.api.json": "24b7843f3bc27357d641526def420de4b915a953d36ba7e9980ca2d64b7ded0d",
-    "Qwen-Image-2.1-INT8-Manga.json": "7fae36f83535113d4e803a9b24d2476cd2901e330f9fb3d2ec1610768c8edea6",
-    "handpaint/FireRed手塗去字.json": "e67074322dfc535a388e76a5429a6234e7d9b1764a8b8386024e9d91ee1e8a81",
-    "handpaint/Flux手塗去字.json": "f0cb5b6aa617484417f738d9c599ab5c000fc924a7c226da07b1a740cbe46e5a",
-    "handpaint/Qwen手塗去字.json": "21a1b17b3093ff2bc44c09a456747e45806a13f9f7b0f4610921d92f963363c0"
+    "FireRed-v12-newprompt-latent-mask-FP8Mixed-FP8Text.json": "ce1753d8c78556944815c9edaa747dd62b9b28299702246b17dc3f3cfe9f6b08",
+    "Flux2-Klein-9B-FP8-Manga-Mask-LanPaint-4step.json": "5718d9dfc12b084adcab97d2f017b4014633046825054fe8893d2edf1755609d",
+    "Qwen-Image-2.1-INT8-Manga.api.json": "48427779311cc51834576b0421a0b98306654004c3ee997dbad84a05dceffeb1",
+    "Qwen-Image-2.1-INT8-Manga.json": "803b2ceace5614f3c89d81df0cbbb4a35473d9f490ebc89707424e06b3a21bdd",
+    "handpaint/FireRed手塗去字.json": "e1126679325fa2185104d6a4a9abccec7f40f40642d4dbb3aa87febb6e191feb",
+    "handpaint/Flux手塗去字.json": "99c2bdfe4ac6b6f03aee7a9de206cef99ae4afc94a76294c2012dc806d4b5e2d",
+    "handpaint/Qwen手塗去字.json": "f353e51b1f881dc9d10db2d6095e8214f6704917aa8bde2058982aec3e368666"
   },
   "runtime_contract": "qwen21-native-int8-v1",
-  "gpu_validation": "pending: user will boot GPU for integrated smoke test"
+  "gpu_validation": "2026-09-22: RTX 5090 32GB, two color pairs across all three bundled batch workflows, six successful generations with Kitchen Attention; visual quality not reviewed"
 }

@@ -20,7 +20,7 @@ class Settings:
 
     @property
     def workflow_root(self) -> Path:
-        return self.comfy_root / "user" / "default" / "workflows"
+        return self.app_root / "workflows"
 
     @property
     def comfy_input(self) -> Path:

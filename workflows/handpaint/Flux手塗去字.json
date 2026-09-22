@@ -1,8 +1,8 @@
 {
   "id": "834ee7ac-cee9-5059-a5dd-f7bc8d9dabb4",
   "revision": 0,
-  "last_node_id": 403,
-  "last_link_id": 727,
+  "last_node_id": 404,
+  "last_link_id": 728,
   "nodes": [
     {
       "id": 297,
@@ -664,7 +664,7 @@
           "name": "MODEL",
           "type": "MODEL",
           "links": [
-            690
+            728
           ]
         }
       ],
@@ -744,7 +744,7 @@
         "tabXOffset": 10
       },
       "widgets_values": [
-        "移除图中灰绿色标记区域内的拟声词、效果字及残留笔画，依照周围漫画线稿、黑白块、网点、阴影和背景纹理，自然补全被遮挡的背景。保持人物、构图及其他内容不变，不新增物体，不生成任何文字、字母、汉字、数字或符号。"
+        "移除遮罩区域内的普通文字、漫画拟声词、效果字及残留笔画，根据周围内容自然补全被文字遮挡的部分，保持原有色彩、明暗、线条、纹理与画风一致。文字位于气泡或文字框内时，保留其原有底色、透明效果、边框、形状和尾巴，不用背后的景物替代。保持人物、物体、构图及遮罩外区域不变，不新增画面元素，不生成任何文字、字母、数字或符号。"
       ],
       "color": "#232",
       "bgcolor": "#353",
@@ -1660,6 +1660,52 @@
         "Node name for S&R": "LanPaint_ImageEncode"
       },
       "widgets_values": []
+    },
+    {
+      "id": 404,
+      "type": "ModelAttentionBackend",
+      "pos": [
+        2455.8786819738243,
+        1395.3799828912001
+      ],
+      "size": [
+        310,
+        100
+      ],
+      "flags": {},
+      "order": 52,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "model",
+          "type": "MODEL",
+          "link": 728
+        },
+        {
+          "name": "attention",
+          "type": "COMBO",
+          "link": null,
+          "widget": {
+            "name": "attention"
+          }
+        }
+      ],
+      "outputs": [
+        {
+          "name": "MODEL",
+          "type": "MODEL",
+          "links": [
+            690
+          ]
+        }
+      ],
+      "properties": {
+        "cnr_id": "comfy-core",
+        "Node name for S&R": "ModelAttentionBackend"
+      },
+      "widgets_values": [
+        "comfy kitchen attention"
+      ]
     }
   ],
   "links": [
@@ -1745,7 +1791,7 @@
     ],
     [
       690,
-      269,
+      404,
       0,
       271,
       0,
@@ -1950,6 +1996,14 @@
       401,
       0,
       "MASK"
+    ],
+    [
+      728,
+      269,
+      0,
+      404,
+      0,
+      "MODEL"
     ]
   ],
   "groups": [

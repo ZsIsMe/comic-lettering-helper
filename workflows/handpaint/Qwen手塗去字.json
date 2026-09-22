@@ -1,8 +1,8 @@
 {
   "id": "8f333143-1c0f-45fa-b33c-16f10d6baa21",
   "revision": 0,
-  "last_node_id": 20,
-  "last_link_id": 25,
+  "last_node_id": 21,
+  "last_link_id": 26,
   "nodes": [
     {
       "id": 1,
@@ -381,7 +381,7 @@
           "name": "MODEL",
           "type": "MODEL",
           "links": [
-            11
+            26
           ]
         }
       ],
@@ -545,7 +545,7 @@
         "Node name for S&R": "TextEncodeQwenImage21"
       },
       "widgets_values": [
-        "移除遮罩区域内的漫画拟声词、效果字和残留笔画。根据遮罩边缘实际可见的线稿、网点、黑白块、灰度与阴影，自然补全被遮挡的黑白漫画内容，保持原有画风、人物、物体和构图一致；遮罩外区域保持不变，不添加文字或新的画面元素。",
+        "移除遮罩区域内的普通文字、漫画拟声词、效果字及残留笔画，根据周围内容自然补全被文字遮挡的部分，保持原有色彩、明暗、线条、纹理与画风一致。文字位于气泡或文字框内时，保留其原有底色、透明效果、边框、形状和尾巴，不用背后的景物替代。保持人物、物体、构图及遮罩外区域不变，不新增画面元素，不生成任何文字、字母、数字或符号。",
         "",
         0
       ],
@@ -993,6 +993,52 @@
       "widgets_values": [
         "## Qwen Image 2.1 INT8 手塗去字\n\n1. 上傳原圖，右鍵開啟遮罩編輯器。\n2. 塗白要修復的文字區域並保存到節點。\n3. 工作流會先二值化、補洞並外擴 8px，再用原圖與 Mask 參考圖生成。\n4. 最終只把處理後 Mask 內的 RGB 貼回原圖。未塗抹時不要執行。\n\n固定使用 Qwen Image 2.1 INT8、25 steps、CFG 1、Euler/simple、resolution 0；不使用 LanPaint。"
       ]
+    },
+    {
+      "id": 21,
+      "type": "ModelAttentionBackend",
+      "pos": [
+        450,
+        -400
+      ],
+      "size": [
+        310,
+        100
+      ],
+      "flags": {},
+      "order": 21,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "model",
+          "type": "MODEL",
+          "link": 26
+        },
+        {
+          "name": "attention",
+          "type": "COMBO",
+          "link": null,
+          "widget": {
+            "name": "attention"
+          }
+        }
+      ],
+      "outputs": [
+        {
+          "name": "MODEL",
+          "type": "MODEL",
+          "links": [
+            11
+          ]
+        }
+      ],
+      "properties": {
+        "cnr_id": "comfy-core",
+        "Node name for S&R": "ModelAttentionBackend"
+      },
+      "widgets_values": [
+        "comfy kitchen attention"
+      ]
     }
   ],
   "links": [
@@ -1070,7 +1116,7 @@
     ],
     [
       11,
-      11,
+      21,
       0,
       13,
       0,
@@ -1187,6 +1233,14 @@
       19,
       0,
       "IMAGE"
+    ],
+    [
+      26,
+      11,
+      0,
+      21,
+      0,
+      "MODEL"
     ]
   ],
   "groups": [],

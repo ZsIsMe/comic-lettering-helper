@@ -36,12 +36,12 @@ def test_saved_logs_recover_overwritten_statistics_and_exclude_passthrough(tmp_p
 
 def test_missing_data_is_not_zero_or_pdf_hosts_environment(tmp_path):
     data = report.collect_report(tmp_path)
-    assert data['gpu_names'] == '未記錄'
+    assert data['gpu_names'] == 'Not recorded'
     assert data['models'][0]['first'] is None
     assert data['models'][0]['elapsed'] is None
-    assert report.seconds(None) == '未記錄'
-    assert report.memory(None) == '未記錄'
-    assert report.seconds(0) == '0.00 秒'
+    assert report.seconds(None) == 'Not recorded'
+    assert report.memory(None) == 'Not recorded'
+    assert report.seconds(0) == '0.00 s'
 
 
 def test_explicit_saved_environment_csv_and_legacy_model(tmp_path):
@@ -51,7 +51,7 @@ def test_explicit_saved_environment_csv_and_legacy_model(tmp_path):
     (logs / 'qwen2511_lanpaint_vram.csv').write_text('gpu_name,memory.total,memory_total_mib,memory_used_mib\nSaved GPU,,32768,1024\nSaved GPU,,32768,3072\n')
     data = report.collect_report(tmp_path)
     assert data['environment']['cpu_model'] == 'Saved CPU'
-    assert data['models'][2]['name'] == 'Qwen Image Edit 2511＋LanPaint'
+    assert data['models'][2]['name'] == 'Qwen Image Edit 2511+LanPaint'
     assert data['models'][2]['peak'] == 3072
     assert data['models'][2]['mean'] == 2048
 
@@ -119,7 +119,7 @@ def test_resumed_job_preserves_original_first_image_and_marks_recent_vram_scope(
     assert data['models'][1]['completed'] == 3
     assert data['models'][1]['first'] == 90
     assert data['models'][1]['warm'] == 40
-    assert any('最近一次執行' in note for note in data['notes'])
+    assert any('latest run' in note for note in data['notes'])
 
 
 def test_cover_drawing_accepts_missing_metadata_without_producing_pdf(tmp_path, monkeypatch):
@@ -141,25 +141,31 @@ def test_model_filename_comes_from_saved_prompt_not_current_config(tmp_path):
     path = tmp_path / 'result.png'
     Image.new('RGB', (8, 8)).save(path, pnginfo=metadata)
     assert report.diffusion_model_files([path]) == 'actual-model.safetensors'
-    assert report.diffusion_model_files([]) == '未記錄'
+    assert report.diffusion_model_files([]) == 'Not recorded'
 
 
-def test_missing_chinese_font_fails_instead_of_silent_garbled_output(monkeypatch):
-    import pytest
+def test_report_font_needs_no_installed_fonts(monkeypatch):
     monkeypatch.syspath_prepend(str(TOOLS))
-    from make_inpaint_compare_pdf import _load_cjk_font
+    from make_inpaint_compare_pdf import _load_report_font
     monkeypatch.setattr(Path, 'is_file', lambda self: False)
-    with pytest.raises(RuntimeError, match='找不到中文字型'):
-        _load_cjk_font(32)
+    assert _load_report_font(32).getbbox('English report') is not None
+
+
+def test_english_prompt_translation_retains_original_metadata(tmp_path):
+    data = report.collect_report(tmp_path, prompts={'firered': {'positive': report.PRODUCTION_PROMPT}})
+    text = '\n'.join(report.cover_lines(data))
+    assert text.isascii()
+    assert '[English translation] ' + report.ENGLISH_PROMPT in text
+    assert data['models'][1]['prompts']['positive'] == report.PRODUCTION_PROMPT
 
 
 def test_plain_cover_keeps_only_requested_fields(tmp_path):
     data = report.collect_report(tmp_path)
     lines = report.cover_lines(data)
     text = '\n'.join(lines)
-    assert '繪圖模型：未記錄' in text
-    assert '非首圖平均' in text
-    assert '峰值顯存' in text
+    assert 'Diffusion model: Not recorded' in text
+    assert 'subsequent average' in text
+    assert 'peak VRAM' in text
     assert 'PyTorch' not in text and '採樣器' not in text
 
 
@@ -176,5 +182,5 @@ def test_saved_prompt_polarity_and_blank_negative(tmp_path):
     assert prompts == {'positive': '修復文字區域', 'negative': ''}
     data = report.collect_report(tmp_path, prompts={'qwen2511_lanpaint': prompts})
     text = '\n'.join(report.cover_lines(data))
-    assert '提示詞：修復文字區域' in text
-    assert '負向提示詞' not in text
+    assert 'Prompt: [Unicode escapes] \\u4fee\\u5fa9\\u6587\\u5b57\\u5340\\u57df' in text
+    assert 'Negative prompt' not in text

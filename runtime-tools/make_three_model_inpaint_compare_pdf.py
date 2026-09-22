@@ -18,7 +18,7 @@ from make_inpaint_compare_pdf import (
     _as_jpeg_image,
     _center_text,
     _fit_in_box,
-    _load_cjk_font,
+    _load_report_font,
     index_images,
     mask_has_edit_pixels,
     overlay_pink,
@@ -31,7 +31,7 @@ MARGIN = 44
 GAP = 22
 TITLE_H = 54
 LABEL_H = 42
-LABELS = ("原圖+Mask", "Flux2 Klein+LanPaint", "FireRed FP8", "Qwen Image 2.1 INT8")
+LABELS = ("Source + Mask", "Flux2 Klein+LanPaint", "FireRed FP8", "Qwen Image 2.1 INT8")
 
 
 def paste_centered(canvas: Image.Image, image: Image.Image, box: tuple[int, int, int, int]) -> None:
@@ -57,8 +57,8 @@ def build_pdf(root: Path, output: Path, alpha: float, *, logs_dir: Path | None =
         stems.append(stem)
     if not stems:
         raise SystemExit("所有 Mask 都是全黑，沒有需要加入 PDF 的圖片")
-    title_font = _load_cjk_font(38)
-    label_font = _load_cjk_font(25)
+    title_font = _load_report_font(38)
+    label_font = _load_report_font(25)
     keys = ("flux2klein_lanpaint", "firered", "qwen2511_lanpaint")
     report = collect_report(root, logs_dir, job_file, environment_file,
         prompts={key: saved_prompts(mapping[stem] for stem in originals if stem in mapping)
@@ -69,7 +69,7 @@ def build_pdf(root: Path, output: Path, alpha: float, *, logs_dir: Path | None =
         "results": {key: sum(stem in mapping for stem in originals)
                     for key, mapping in zip(("flux2klein_lanpaint", "firered", "qwen2511_lanpaint"), result_maps)},
     })
-    cover = draw_cover(report, PAGE_W, PAGE_H, _load_cjk_font)
+    cover = draw_cover(report, PAGE_W, PAGE_H, _load_report_font)
     pages = [_as_jpeg_image(cover)]
     cover.close()
     col_w = (PAGE_W - 2 * MARGIN - 3 * GAP) // 4
@@ -79,7 +79,7 @@ def build_pdf(root: Path, output: Path, alpha: float, *, logs_dir: Path | None =
     for index, stem in enumerate(stems, 1):
         page = Image.new("RGB", (PAGE_W, PAGE_H), "white")
         draw = ImageDraw.Draw(page)
-        _center_text(draw, stem, PAGE_W // 2, MARGIN + TITLE_H // 2, title_font)
+        _center_text(draw, stem.encode("ascii", "backslashreplace").decode("ascii"), PAGE_W // 2, MARGIN + TITLE_H // 2, title_font)
         with Image.open(originals[stem]) as orig, Image.open(masks[stem]) as mask:
             images = [overlay_pink(orig, mask, alpha)]
         for mapping in result_maps:
@@ -100,6 +100,8 @@ def build_pdf(root: Path, output: Path, alpha: float, *, logs_dir: Path | None =
         print(f"[{index}/{len(stems)}] {stem}")
 
     output.parent.mkdir(parents=True, exist_ok=True)
+    import json
+    output.with_suffix(".report.json").write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
     pages[0].save(output, format="PDF", save_all=True, append_images=pages[1:], resolution=200.0)
     for page in pages:
         page.close()

@@ -8,11 +8,7 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-PROMPT = (
-    "移除遮罩区域内的漫画拟声词、效果字和残留笔画。根据遮罩边缘实际可见的线稿、网点、"
-    "黑白块、灰度与阴影，自然补全被遮挡的黑白漫画内容，保持原有画风、人物、物体和构图一致；"
-    "遮罩外区域保持不变，不添加文字或新的画面元素。"
-)
+PROMPT = '移除遮罩区域内的普通文字、漫画拟声词、效果字及残留笔画，根据周围内容自然补全被文字遮挡的部分，保持原有色彩、明暗、线条、纹理与画风一致。文字位于气泡或文字框内时，保留其原有底色、透明效果、边框、形状和尾巴，不用背后的景物替代。保持人物、物体、构图及遮罩外区域不变，不新增画面元素，不生成任何文字、字母、数字或符号。'
 
 
 def port(name, kind, link=None, widget=False, shape=None):
@@ -71,7 +67,7 @@ def workflow(handpaint: bool) -> dict:
         node(8, "UNETLoader", (-700, -400), [], [output("MODEL", "MODEL", [8])], ["qwen_image_2.1_int8_convrot.safetensors", "default"], (480, 90)),
         node(9, "CLIPLoader", (-700, -250), [], [output("CLIP", "CLIP", [9])], ["qwen3vl_8b_int8_convrot.safetensors", "qwen_image", "default"], (480, 120)),
         node(10, "VAELoader", (-700, -60), [], [output("VAE", "VAE", [10, 17])], ["qwen_image_2.1_vae_bf16.safetensors"], (480, 70)),
-        node(11, "QwenImage21Cache", (-100, -400), [port("model", "MODEL", 8), port("device", "COMBO", None, True), port("dtype", "COMBO", None, True)], [output("MODEL", "MODEL", [11])], ["auto", "default"], (280, 100)),
+        node(11, "QwenImage21Cache", (-100, -400), [port("model", "MODEL", 8), port("device", "COMBO", None, True), port("dtype", "COMBO", None, True)], [output("MODEL", "MODEL", [26])], ["auto", "default"], (280, 100)),
     ])
     text_inputs = [
         port("clip", "CLIP", 9),
@@ -94,6 +90,7 @@ def workflow(handpaint: bool) -> dict:
     ]
     nodes.extend([
         node(12, "TextEncodeQwenImage21", (880, 80), text_inputs, [output("positive", "CONDITIONING", [12]), output("negative", "CONDITIONING", [14]), output("latent", "LATENT", [15])], [PROMPT, "", 0], (520, 560), "固定漫畫補洞提示詞・resolution 0"),
+        node(21, "ModelAttentionBackend", (450, -400), [port("model", "MODEL", 26), port("attention", "COMBO", None, True)], [output("MODEL", "MODEL", [11])], ["comfy kitchen attention"], (310, 100)),
         node(13, "KSampler", (1500, 30), [port("model", "MODEL", 11), port("positive", "CONDITIONING", 12), port("negative", "CONDITIONING", 14), port("latent_image", "LATENT", 15), port("seed", "INT", None, True), port("steps", "INT", None, True), port("cfg", "FLOAT", None, True), port("sampler_name", "COMBO", None, True), port("scheduler", "COMBO", None, True), port("denoise", "FLOAT", None, True)], [output("LATENT", "LATENT", [16])], [0, "randomize", 25, 1, "euler", "simple", 1], (300, 270)),
         node(14, "VAEDecode", (1880, 40), [port("samples", "LATENT", 16), port("vae", "VAE", 17)], [output("IMAGE", "IMAGE", [18])], [], (230, 70)),
         node(15, "SplitImageWithAlpha", (2180, 40), [port("image", "IMAGE", 18)], [output("IMAGE", "IMAGE", [19]), output("MASK", "MASK", [])], [], (250, 70), "只取生成 RGB"),
@@ -107,7 +104,7 @@ def workflow(handpaint: bool) -> dict:
         (5, 5, 0, 6, 0, "MASK"), (6, 6, 0, 7, 0, "MASK"),
         (7, 7, 0, 12, 9, "IMAGE"), (8, 8, 0, 11, 0, "MODEL"),
         (9, 9, 0, 12, 0, "CLIP"), (10, 10, 0, 12, 2, "VAE"),
-        (11, 11, 0, 13, 0, "MODEL"), (12, 12, 0, 13, 1, "CONDITIONING"),
+        (26, 11, 0, 21, 0, "MODEL"), (11, 21, 0, 13, 0, "MODEL"), (12, 12, 0, 13, 1, "CONDITIONING"),
         (14, 12, 1, 13, 2, "CONDITIONING"), (15, 12, 2, 13, 3, "LATENT"),
         (16, 13, 0, 14, 0, "LATENT"), (17, 10, 0, 14, 1, "VAE"),
         (18, 14, 0, 15, 0, "IMAGE"), (13, 1, 0, 16, 0, "IMAGE"),
@@ -130,8 +127,8 @@ def workflow(handpaint: bool) -> dict:
     return {
         "id": "8f333143-1c0f-45fa-b33c-16f10d6baa21" if handpaint else "9185edab-173f-4271-9fa5-b08fe3413d54",
         "revision": 0,
-        "last_node_id": 20 if handpaint else 19,
-        "last_link_id": 25,
+        "last_node_id": 21,
+        "last_link_id": 26,
         "nodes": sorted(nodes, key=lambda item: item["id"]),
         "links": sorted(links, key=lambda item: item[0]),
         "groups": [],

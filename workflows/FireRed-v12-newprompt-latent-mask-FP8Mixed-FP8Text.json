@@ -388,7 +388,7 @@
           },
           {
             "id": 295,
-            "origin_id": 123,
+            "origin_id": 173,
             "origin_slot": 0,
             "target_id": 130,
             "target_slot": 0,
@@ -561,6 +561,14 @@
             "target_id": 130,
             "target_slot": 3,
             "type": "LATENT"
+          },
+          {
+            "id": 371,
+            "origin_id": 123,
+            "origin_slot": 0,
+            "target_id": 173,
+            "target_slot": 0,
+            "type": "MODEL"
           }
         ],
         "name": "Image Edit (FireRed Image Edit 1.1)",
@@ -735,7 +743,7 @@
             "outputs": [
               {
                 "links": [
-                  295
+                  371
                 ],
                 "localized_name": "patched_model",
                 "name": "patched_model",
@@ -1460,7 +1468,7 @@
             "title": "TextEncodeQwenImageEditPlus (Positive)",
             "type": "TextEncodeQwenImageEditPlus",
             "widgets_values": [
-              "\u79fb\u9664\u56fe\u4e2d\u7684\u62df\u58f0\u8bcd\u3001\u6548\u679c\u5b57\u53ca\u6b8b\u7559\u7b14\u753b\uff0c\u4f9d\u7167\u6587\u5b57\u5468\u56f4\u7684\u6f2b\u753b\u7ebf\u7a3f\u3001\u9ed1\u767d\u5757\u3001\u7f51\u70b9\u3001\u9634\u5f71\u548c\u80cc\u666f\u7eb9\u7406\uff0c\u81ea\u7136\u8865\u5168\u88ab\u6587\u5b57\u8986\u76d6\u7684\u80cc\u666f\u3002\u4fdd\u6301\u4eba\u7269\u3001\u6784\u56fe\u53ca\u5176\u4ed6\u5185\u5bb9\u4e0d\u53d8\uff0c\u4e0d\u65b0\u589e\u7269\u4f53\uff0c\u4e0d\u751f\u6210\u4efb\u4f55\u6587\u5b57\u3001\u5b57\u6bcd\u3001\u6c49\u5b57\u3001\u6570\u5b57\u6216\u7b26\u53f7\u3002"
+              "移除遮罩区域内的普通文字、漫画拟声词、效果字及残留笔画，根据周围内容自然补全被文字遮挡的部分，保持原有色彩、明暗、线条、纹理与画风一致。文字位于气泡或文字框内时，保留其原有底色、透明效果、边框、形状和尾巴，不用背后的景物替代。保持人物、物体、构图及遮罩外区域不变，不新增画面元素，不生成任何文字、字母、数字或符号。"
             ]
           },
           {
@@ -1775,6 +1783,52 @@
             },
             "widgets_values": [],
             "title": "Restrict FireRed sampling to cropped mask"
+          },
+          {
+            "id": 173,
+            "type": "ModelAttentionBackend",
+            "pos": [
+              220,
+              -1660
+            ],
+            "size": [
+              310,
+              100
+            ],
+            "flags": {},
+            "order": 13,
+            "mode": 0,
+            "inputs": [
+              {
+                "name": "model",
+                "type": "MODEL",
+                "link": 371
+              },
+              {
+                "name": "attention",
+                "type": "COMBO",
+                "link": null,
+                "widget": {
+                  "name": "attention"
+                }
+              }
+            ],
+            "outputs": [
+              {
+                "name": "MODEL",
+                "type": "MODEL",
+                "links": [
+                  295
+                ]
+              }
+            ],
+            "properties": {
+              "cnr_id": "comfy-core",
+              "Node name for S&R": "ModelAttentionBackend"
+            },
+            "widgets_values": [
+              "comfy kitchen attention"
+            ]
           }
         ],
         "outputNode": {
@@ -1804,8 +1858,8 @@
         "revision": 0,
         "state": {
           "lastGroupId": 8,
-          "lastLinkId": 370,
-          "lastNodeId": 172,
+          "lastLinkId": 371,
+          "lastNodeId": 173,
           "lastRerouteId": 0
         },
         "version": 1,
@@ -1957,7 +2011,7 @@
     {
       "id": 171,
       "type": "LoadImage",
-      "title": "\u52a0\u8f7d Mask \u56fe\uff08\u767d\u8272\u533a\u57df\u4f1a\u88ab\u4fee\u590d\uff09",
+      "title": "加载 Mask 图（白色区域会被修复）",
       "pos": [
         -1450,
         -300
@@ -1999,7 +2053,7 @@
     {
       "id": 172,
       "type": "ImageToMask",
-      "title": "\u9ed1\u767d\u56fe\u8f6c Mask",
+      "title": "黑白图转 Mask",
       "pos": [
         -950,
         -250
@@ -2041,7 +2095,7 @@
     {
       "id": 173,
       "type": "GrowMask",
-      "title": "Mask \u5916\u6269 8 \u50cf\u7d20",
+      "title": "Mask 外扩 8 像素",
       "pos": [
         -650,
         -250
@@ -2283,7 +2337,7 @@
         "32",
         "gpu (much faster)"
       ],
-      "title": "\u6309 Mask \u88c1\u526a\u5230 1024\u00d71024"
+      "title": "按 Mask 裁剪到 1024×1024"
     },
     {
       "flags": {},
@@ -2387,14 +2441,14 @@
       ],
       "type": "4e4e025b-dcef-4cf9-a96b-cc11a46c1ab2",
       "widgets_values": [
-        "\u79fb\u9664\u56fe\u4e2d\u7684\u62df\u58f0\u8bcd\u3001\u6548\u679c\u5b57\u53ca\u6b8b\u7559\u7b14\u753b\uff0c\u4f9d\u7167\u6587\u5b57\u5468\u56f4\u7684\u6f2b\u753b\u7ebf\u7a3f\u3001\u9ed1\u767d\u5757\u3001\u7f51\u70b9\u3001\u9634\u5f71\u548c\u80cc\u666f\u7eb9\u7406\uff0c\u81ea\u7136\u8865\u5168\u88ab\u6587\u5b57\u8986\u76d6\u7684\u80cc\u666f\u3002\u4fdd\u6301\u4eba\u7269\u3001\u6784\u56fe\u53ca\u5176\u4ed6\u5185\u5bb9\u4e0d\u53d8\uff0c\u4e0d\u65b0\u589e\u7269\u4f53\uff0c\u4e0d\u751f\u6210\u4efb\u4f55\u6587\u5b57\u3001\u5b57\u6bcd\u3001\u6c49\u5b57\u3001\u6570\u5b57\u6216\u7b26\u53f7\u3002",
+        "移除遮罩区域内的普通文字、漫画拟声词、效果字及残留笔画，根据周围内容自然补全被文字遮挡的部分，保持原有色彩、明暗、线条、纹理与画风一致。文字位于气泡或文字框内时，保留其原有底色、透明效果、边框、形状和尾巴，不用背后的景物替代。保持人物、物体、构图及遮罩外区域不变，不新增画面元素，不生成任何文字、字母、数字或符号。",
         "FireRed-Image-Edit-1.1_fp8mixed_comfy.safetensors",
         "FireRed-Image-Edit-1.1-Lightning-8steps-v1.2.safetensors",
         "qwen_2.5_vl_7b_fp8_scaled.safetensors",
         "qwen_image_vae.safetensors",
         true
       ],
-      "title": "FireRed 1.1 FP8 Mixed + FP8 Text \u2014 Lightning 1.1 v1.2"
+      "title": "FireRed 1.1 FP8 Mixed + FP8 Text — Lightning 1.1 v1.2"
     },
     {
       "id": 175,
@@ -2437,7 +2491,7 @@
         "Node name for S&R": "InpaintStitchImproved"
       },
       "widgets_values": [],
-      "title": "\u56de\u8d34\u5230\u539f\u59cb\u6f2b\u753b\u9875"
+      "title": "回贴到原始漫画页"
     },
     {
       "flags": {},
@@ -2496,7 +2550,7 @@
         560
       ],
       "type": "MarkdownNote",
-      "widgets_values": "## FireRed-Image-Edit 1.1 \u2014 FP8 Mixed + FP8 Text \u6f2b\u756b Mask \u4fee\u5fa9\uff08Lightning 1.1 v1.2\uff09\n\n\u8f38\u5165\uff1a`original.png` \u539f\u5716\uff0c\u4ee5\u53ca\u540c\u5c3a\u5bf8\u7684 `mask.png`\uff1bMask \u4e2d\u767d\u8272\u5340\u57df\u6703\u88ab\u4fee\u5fa9\uff0c\u9ed1\u8272\u5340\u57df\u4fdd\u6301\u539f\u5716\u3002\n\n\u6a21\u578b\u76ee\u9304\uff1a\n\n```\nComfyUI/models/diffusion_models/FireRed-Image-Edit-1.1_fp8mixed_comfy.safetensors\nComfyUI/models/text_encoders/qwen_2.5_vl_7b_fp8_scaled.safetensors\nComfyUI/models/loras/FireRed-Image-Edit-1.1-Lightning-8steps-v1.2.safetensors\nComfyUI/models/vae/qwen_image_vae.safetensors\n```\n\n\u6b64\u7248\u672c\u4f7f\u7528\u8207 FireRed 1.1 \u4e3b\u6a21\u578b\u5339\u914d\u7684\u5b98\u65b9 Lightning 8-step v1.2 LoRA\uff1a8 steps\u3001CFG 1\u3001Euler/Simple\u3001LoRA strength 1\u3002\n\n\u984d\u5916\u7bc0\u9ede\uff1aComfyUI-Inpaint-CropAndStitch\u3002"
+      "widgets_values": "## FireRed-Image-Edit 1.1 — FP8 Mixed + FP8 Text 漫畫 Mask 修復（Lightning 1.1 v1.2）\n\n輸入：`original.png` 原圖，以及同尺寸的 `mask.png`；Mask 中白色區域會被修復，黑色區域保持原圖。\n\n模型目錄：\n\n```\nComfyUI/models/diffusion_models/FireRed-Image-Edit-1.1_fp8mixed_comfy.safetensors\nComfyUI/models/text_encoders/qwen_2.5_vl_7b_fp8_scaled.safetensors\nComfyUI/models/loras/FireRed-Image-Edit-1.1-Lightning-8steps-v1.2.safetensors\nComfyUI/models/vae/qwen_image_vae.safetensors\n```\n\n此版本使用與 FireRed 1.1 主模型匹配的官方 Lightning 8-step v1.2 LoRA：8 steps、CFG 1、Euler/Simple、LoRA strength 1。\n\n額外節點：ComfyUI-Inpaint-CropAndStitch。"
     }
   ],
   "revision": 2,

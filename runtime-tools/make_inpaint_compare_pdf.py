@@ -99,22 +99,14 @@ def overlay_pink(orig: Image.Image, mask: Image.Image, alpha: float = DEFAULT_AL
     return Image.fromarray(np.clip(np.rint(blended), 0, 255).astype(np.uint8), mode="RGB")
 
 
+def _load_report_font(size: int) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
+    # Pillow's bundled default font needs no system or CJK font installation.
+    return ImageFont.load_default(size=size)
+
+
 def _load_cjk_font(size: int) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
-    configured = os.environ.get("CJK_FONT_PATH")
-    candidates = ([configured] if configured else []) + [
-        str(Path(__file__).resolve().parent / "fonts" / "SourceHanSansTC-Regular.otf"),
-        "/usr/share/fonts/truetype/wqy/wqy-zenhei.ttc",
-        "/usr/share/fonts/truetype/wqy/wqy-microhei.ttc",
-    ] + list(CJK_FONT_CANDIDATES)
-    for candidate in candidates:
-        path = Path(candidate)
-        if not path.is_file():
-            continue
-        try:
-            return ImageFont.truetype(str(path), size=size)
-        except OSError:
-            continue
-    raise RuntimeError("找不到中文字型，請設定 CJK_FONT_PATH；停止輸出以避免中文亂碼。")
+    """Compatibility alias for callers of older report helpers."""
+    return _load_report_font(size)
 
 
 def _fit_in_box(image: Image.Image, box_w: int, box_h: int) -> Image.Image:
@@ -157,7 +149,7 @@ def compose_page(
     page = Image.new("RGB", (PAGE_W, PAGE_H), (255, 255, 255))
     draw = ImageDraw.Draw(page)
 
-    _center_text(draw, stem, PAGE_W // 2, MARGIN + TITLE_H // 2, title_font)
+    _center_text(draw, stem.encode("ascii", "backslashreplace").decode("ascii"), PAGE_W // 2, MARGIN + TITLE_H // 2, title_font)
 
     col_w = (PAGE_W - 2 * MARGIN - GAP) // 2
     img_top = MARGIN + TITLE_H + LABEL_H
@@ -168,7 +160,7 @@ def compose_page(
     left_cx = MARGIN + col_w // 2
     right_cx = MARGIN + col_w + GAP + col_w // 2
     label_cy = MARGIN + TITLE_H + LABEL_H // 2
-    _center_text(draw, "原圖+Mask", left_cx, label_cy, label_font)
+    _center_text(draw, "Source + Mask", left_cx, label_cy, label_font)
     _center_text(draw, "Inpainted", right_cx, label_cy, label_font)
 
     if orig is not None:

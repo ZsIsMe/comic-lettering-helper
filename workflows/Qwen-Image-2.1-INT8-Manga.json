@@ -1,8 +1,8 @@
 {
   "id": "9185edab-173f-4271-9fa5-b08fe3413d54",
   "revision": 0,
-  "last_node_id": 19,
-  "last_link_id": 25,
+  "last_node_id": 21,
+  "last_link_id": 26,
   "nodes": [
     {
       "id": 1,
@@ -464,7 +464,7 @@
           "name": "MODEL",
           "type": "MODEL",
           "links": [
-            11
+            26
           ]
         }
       ],
@@ -628,7 +628,7 @@
         "Node name for S&R": "TextEncodeQwenImage21"
       },
       "widgets_values": [
-        "移除遮罩区域内的漫画拟声词、效果字和残留笔画。根据遮罩边缘实际可见的线稿、网点、黑白块、灰度与阴影，自然补全被遮挡的黑白漫画内容，保持原有画风、人物、物体和构图一致；遮罩外区域保持不变，不添加文字或新的画面元素。",
+        "移除遮罩区域内的普通文字、漫画拟声词、效果字及残留笔画，根据周围内容自然补全被文字遮挡的部分，保持原有色彩、明暗、线条、纹理与画风一致。文字位于气泡或文字框内时，保留其原有底色、透明效果、边框、形状和尾巴，不用背后的景物替代。保持人物、物体、构图及遮罩外区域不变，不新增画面元素，不生成任何文字、字母、数字或符号。",
         "",
         0
       ],
@@ -1052,6 +1052,52 @@
         "qwen21_int8_manga"
       ],
       "title": "唯一最終結果"
+    },
+    {
+      "id": 21,
+      "type": "ModelAttentionBackend",
+      "pos": [
+        450,
+        -400
+      ],
+      "size": [
+        310,
+        100
+      ],
+      "flags": {},
+      "order": 21,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "model",
+          "type": "MODEL",
+          "link": 26
+        },
+        {
+          "name": "attention",
+          "type": "COMBO",
+          "link": null,
+          "widget": {
+            "name": "attention"
+          }
+        }
+      ],
+      "outputs": [
+        {
+          "name": "MODEL",
+          "type": "MODEL",
+          "links": [
+            11
+          ]
+        }
+      ],
+      "properties": {
+        "cnr_id": "comfy-core",
+        "Node name for S&R": "ModelAttentionBackend"
+      },
+      "widgets_values": [
+        "comfy kitchen attention"
+      ]
     }
   ],
   "links": [
@@ -1137,7 +1183,7 @@
     ],
     [
       11,
-      11,
+      21,
       0,
       13,
       0,
@@ -1254,6 +1300,14 @@
       19,
       0,
       "IMAGE"
+    ],
+    [
+      26,
+      11,
+      0,
+      21,
+      0,
+      "MODEL"
     ]
   ],
   "groups": [],

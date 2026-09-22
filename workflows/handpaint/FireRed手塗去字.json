@@ -388,7 +388,7 @@
           },
           {
             "id": 295,
-            "origin_id": 123,
+            "origin_id": 173,
             "origin_slot": 0,
             "target_id": 130,
             "target_slot": 0,
@@ -561,6 +561,14 @@
             "target_id": 130,
             "target_slot": 3,
             "type": "LATENT"
+          },
+          {
+            "id": 371,
+            "origin_id": 123,
+            "origin_slot": 0,
+            "target_id": 173,
+            "target_slot": 0,
+            "type": "MODEL"
           }
         ],
         "name": "Image Edit (FireRed Image Edit 1.1)",
@@ -735,7 +743,7 @@
             "outputs": [
               {
                 "links": [
-                  295
+                  371
                 ],
                 "localized_name": "patched_model",
                 "name": "patched_model",
@@ -1460,7 +1468,7 @@
             "title": "TextEncodeQwenImageEditPlus (Positive)",
             "type": "TextEncodeQwenImageEditPlus",
             "widgets_values": [
-              "移除图中的拟声词、效果字及残留笔画，依照文字周围的漫画线稿、黑白块、网点、阴影和背景纹理，自然补全被文字覆盖的背景。保持人物、构图及其他内容不变，不新增物体，不生成任何文字、字母、汉字、数字或符号。"
+              "移除遮罩区域内的普通文字、漫画拟声词、效果字及残留笔画，根据周围内容自然补全被文字遮挡的部分，保持原有色彩、明暗、线条、纹理与画风一致。文字位于气泡或文字框内时，保留其原有底色、透明效果、边框、形状和尾巴，不用背后的景物替代。保持人物、物体、构图及遮罩外区域不变，不新增画面元素，不生成任何文字、字母、数字或符号。"
             ]
           },
           {
@@ -1775,6 +1783,52 @@
             },
             "widgets_values": [],
             "title": "Restrict FireRed sampling to cropped mask"
+          },
+          {
+            "id": 173,
+            "type": "ModelAttentionBackend",
+            "pos": [
+              220,
+              -1660
+            ],
+            "size": [
+              310,
+              100
+            ],
+            "flags": {},
+            "order": 13,
+            "mode": 0,
+            "inputs": [
+              {
+                "name": "model",
+                "type": "MODEL",
+                "link": 371
+              },
+              {
+                "name": "attention",
+                "type": "COMBO",
+                "link": null,
+                "widget": {
+                  "name": "attention"
+                }
+              }
+            ],
+            "outputs": [
+              {
+                "name": "MODEL",
+                "type": "MODEL",
+                "links": [
+                  295
+                ]
+              }
+            ],
+            "properties": {
+              "cnr_id": "comfy-core",
+              "Node name for S&R": "ModelAttentionBackend"
+            },
+            "widgets_values": [
+              "comfy kitchen attention"
+            ]
           }
         ],
         "outputNode": {
@@ -1804,8 +1858,8 @@
         "revision": 0,
         "state": {
           "lastGroupId": 8,
-          "lastLinkId": 370,
-          "lastNodeId": 172,
+          "lastLinkId": 371,
+          "lastNodeId": 173,
           "lastRerouteId": 0
         },
         "version": 1,
@@ -2298,7 +2352,7 @@
       ],
       "type": "4e4e025b-dcef-4cf9-a96b-cc11a46c1ab2",
       "widgets_values": [
-        "移除图中的拟声词、效果字及残留笔画，依照文字周围的漫画线稿、黑白块、网点、阴影和背景纹理，自然补全被文字覆盖的背景。保持人物、构图及其他内容不变，不新增物体，不生成任何文字、字母、汉字、数字或符号。",
+        "移除遮罩区域内的普通文字、漫画拟声词、效果字及残留笔画，根据周围内容自然补全被文字遮挡的部分，保持原有色彩、明暗、线条、纹理与画风一致。文字位于气泡或文字框内时，保留其原有底色、透明效果、边框、形状和尾巴，不用背后的景物替代。保持人物、物体、构图及遮罩外区域不变，不新增画面元素，不生成任何文字、字母、数字或符号。",
         "FireRed-Image-Edit-1.1_fp8mixed_comfy.safetensors",
         "FireRed-Image-Edit-1.1-Lightning-8steps-v1.2.safetensors",
         "qwen_2.5_vl_7b_fp8_scaled.safetensors",

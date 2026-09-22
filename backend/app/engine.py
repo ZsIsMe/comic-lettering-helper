@@ -411,6 +411,8 @@ class JobManager:
                 str(self.settings.tools_root / "run_independent_edit_models_batch.py"),
                 "--model",
                 model,
+                "--workflow-override",
+                str(self.settings.workflow_root / "Flux2-Klein-9B-FP8-Manga-Mask-LanPaint-4step.json"),
                 "--input-root",
                 batch_name,
                 "--skip",
