@@ -116,6 +116,18 @@ def test_labelplus_groups_are_preserved(store, project):
     assert all(i['match_status'] == 'unmatched' for i in data['transMap']['2.png'])
 
 
+def test_group_names_can_be_added_and_are_exported(store, project):
+    project['template']['groupList'] = [{'name': '框內', 'legacy': 'kept'}]
+    store.write(project)
+    updated = store.update_groups(project['id'], 0, ['框內', '框外'])
+    assert updated['template']['groupList'] == [{'name': '框內', 'legacy': 'kept'}, {'name': '框外'}]
+    assert store.translation(project['id'])['groupList'] == [{'name': '框內', 'legacy': 'kept'}, {'name': '框外'}]
+    with pytest.raises(Conflict):
+        store.update_groups(project['id'], 0, ['旁白'])
+    with pytest.raises(ValueError, match='重複'):
+        store.update_groups(project['id'], 1, ['框內', '框內'])
+
+
 def test_preview_originals_and_clean_pairing(store, project):
     page = project['pages'][0]
     root = store.directory(project['id'])

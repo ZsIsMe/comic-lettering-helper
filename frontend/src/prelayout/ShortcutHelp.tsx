@@ -1,10 +1,10 @@
-import { useId, useState } from 'react'
+import { useId } from 'react'
 import { shortcutHelpGroups } from './shortcuts'
 import './ShortcutHelp.css'
 
 type ShortcutHelpProps = {
   collapsible?: boolean
-  defaultOpen?: boolean
+  onOpen?: () => void
 }
 
 function HelpContent() {
@@ -31,14 +31,12 @@ function HelpContent() {
   </>
 }
 
-export function ShortcutHelp({ collapsible = true, defaultOpen = true }: ShortcutHelpProps) {
-  const [open, setOpen] = useState(defaultOpen)
+export function ShortcutHelp({ collapsible = true, onOpen }: ShortcutHelpProps) {
   if (!collapsible) return <div className="pl-shortcut-guide"><HelpContent /></div>
-  return <details className="pl-shortcut-guide pl-shortcut-guide--top" open={open} onToggle={event => setOpen(event.currentTarget.open)}>
-    <summary>
+  return <button type="button" className="pl-shortcut-guide pl-shortcut-guide--trigger" onClick={onOpen}>
+    <span>
       <span>快捷鍵與滑鼠操作</span>
-      <small>完整操作表</small>
-    </summary>
-    <HelpContent />
-  </details>
+      <small>點擊開啟完整操作表</small>
+    </span>
+  </button>
 }

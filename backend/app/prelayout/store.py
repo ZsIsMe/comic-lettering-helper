@@ -106,6 +106,32 @@ class PrelayoutStore:
         project['updated_at'] = now()
         atomic_json(self.directory(project['id']) / 'project.json', project)
 
+    def update_groups(self, pid, expected_revision, names):
+        with self.lock(pid):
+            project = self.read(pid)
+            if project['revision'] != expected_revision:
+                raise Conflict('項目已有更新，請重新載入分組')
+            if not isinstance(names, list) or len(names) > 1000:
+                raise ValueError('分組格式錯誤或超過 1,000 組')
+            existing = project.get('template', {}).get('groupList', [])
+            groups, seen = [], set()
+            for index, value in enumerate(names):
+                if not isinstance(value, str):
+                    raise ValueError('分組名稱格式錯誤')
+                name = value.strip()
+                if not name or len(name) > 80:
+                    raise ValueError('分組名稱須為 1 至 80 個字元')
+                key = name.casefold()
+                if key in seen:
+                    raise ValueError(f'分組名稱重複：{name}')
+                seen.add(key)
+                previous = existing[index] if isinstance(existing, list) and index < len(existing) else None
+                groups.append(copy.deepcopy(previous) if isinstance(previous, dict) and previous.get('name') == name else {'name': name})
+            project.setdefault('template', {})['groupList'] = groups
+            project['revision'] += 1
+            self.write(project)
+            return project
+
     def list(self):
         if not self.projects.exists():
             return []

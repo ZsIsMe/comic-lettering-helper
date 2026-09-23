@@ -102,7 +102,7 @@ export const shortcutHelpGroups = [
       ['移動文字', '方向鍵：1 px；Shift＋方向鍵：10 px；⌘／Ctrl＋Shift＋方向鍵：50 px'],
       ['放大／縮小文字', '⌘／Ctrl＋＋／－：2；再加 Option／Alt：10（＋也可直接按 =）'],
       ['旋轉文字', '⌘／Ctrl＋[：逆時針 1°；⌘／Ctrl＋]：順時針 1°；再加 Option／Alt：5°'],
-      ['快速切換樣式', '框旁「色」：黑→白、其他→黑；「描」：非 0→0、0→4；「排」：橫排／直排切換'],
+      ['快速切換樣式', '框旁按鈕會顯示下一個狀態：切換黑／白色文字、添加／關閉描邊、文字橫排／豎排'],
     ] satisfies readonly ShortcutHelpItem[],
   },
   {

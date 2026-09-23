@@ -95,6 +95,10 @@ def router(store, detector, max_bytes):
             call(store.write, record)
             return record
 
+    @api.put('/projects/{pid}/groups')
+    def groups(pid: str, data: dict = Body(...)):
+        return call(store.update_groups, pid, data.get('expected_revision'), data.get('names'))
+
     @api.delete('/projects/{pid}')
     def delete(pid: str):
         with store.lock(pid):

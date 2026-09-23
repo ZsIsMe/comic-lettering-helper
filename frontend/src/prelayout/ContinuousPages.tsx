@@ -23,6 +23,7 @@ export function ContinuousPages({ project, controller, selection, onSelect, zoom
   const restored = useRef(false), previousRows = useRef<Row[]>([])
   const previousWide = useRef(0), previousCompare = useRef(compare)
   const anchor = useRef<Anchor | null>(null)
+  const groupNames = useMemo(() => (project.template?.groupList || []).map(group => group.name), [project.template?.groupList])
   const rows = useMemo(() => {
     let top = 24
     const width = Math.max(180, (area.width - 48 - (compare ? 20 : 0)) / (compare ? 2 : 1))
@@ -136,7 +137,7 @@ export function ContinuousPages({ project, controller, selection, onSelect, zoom
           const right = Math.min(row.page.width, (area.left + area.width - left - side * (width + 20)) / row.scale), bottom = Math.min(row.page.height, (area.top + area.height - row.top - 28) / row.scale)
           return right > x && bottom > y ? { x, y, width: right - x, height: bottom - y } : null
         }
-        const common = { project: project.id, page: row.page, scale: row.scale, edge, controller, selection, onSelect, onInteracting: interactionChanged, onMeasure, onPointer, detailed: settled, interacting: !!interacting }
+        const common = { project: project.id, page: row.page, scale: row.scale, edge, controller, selection, onSelect, onInteracting: interactionChanged, onMeasure, onPointer, detailed: settled, interacting: !!interacting, groupNames }
         return <section className="pl-page-row" key={row.page.id} style={{ top: row.top, height: row.height, width: wide }}>
           <div className="pl-page-caption">{row.page.name}{compare ? ' · 左：預排版　右：原圖與偵測框' : clean && !row.page.clean ? ' · 原圖（尚無去字預覽）' : clean && row.page.clean_kind === 'inpainted' ? ' · inpainted 預覽' : clean ? ' · 去字圖' : ' · 原圖'}</div>
           <div className="pl-page-pair">
