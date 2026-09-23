@@ -74,7 +74,7 @@ def check(root, method='ocr_aligned', require_cuda=False, device=None):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--model-root', type=Path, default=Path(os.getenv('COMIC_PRELAYOUT_MODEL_ROOT', '/root/models/comic-prelayout')))
-    parser.add_argument('--method', choices=['single_char', 'ocr_aligned'], default='ocr_aligned')
+    parser.add_argument('--method', choices=['fixed', 'single_char', 'ocr_aligned'], default='ocr_aligned')
     parser.add_argument('--require-cuda', action='store_true')
     parser.add_argument('--device', choices=['cuda', 'mps'], help='Explicit GPU backend; no CPU fallback')
     args = parser.parse_args()

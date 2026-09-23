@@ -114,6 +114,8 @@ class PrelayoutStore:
             if not isinstance(names, list) or len(names) > 1000:
                 raise ValueError('分組格式錯誤或超過 1,000 組')
             existing = project.get('template', {}).get('groupList', [])
+            if isinstance(existing, list) and len(names) < len(existing):
+                raise ValueError('不能刪除既有分組')
             groups, seen = [], set()
             for index, value in enumerate(names):
                 if not isinstance(value, str):
@@ -126,7 +128,9 @@ class PrelayoutStore:
                     raise ValueError(f'分組名稱重複：{name}')
                 seen.add(key)
                 previous = existing[index] if isinstance(existing, list) and index < len(existing) else None
-                groups.append(copy.deepcopy(previous) if isinstance(previous, dict) and previous.get('name') == name else {'name': name})
+                group = copy.deepcopy(previous) if isinstance(previous, dict) else {}
+                group['name'] = name
+                groups.append(group)
             project.setdefault('template', {})['groupList'] = groups
             project['revision'] += 1
             self.write(project)

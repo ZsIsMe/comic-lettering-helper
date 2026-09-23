@@ -9,6 +9,7 @@ import { CharacterOverlay, type CharacterOverlayHandle } from './CharacterOverla
 import { InlineTextEditor } from './InlineTextEditor'
 import { fontLabel, quickControlLabel, textInfoLabel, type QuickControlKind } from './text-control-labels'
 import { GroupName } from './GroupName'
+import { DifferenceOverlay } from './DifferenceOverlay'
 
 const noCharacters: CharacterBox[] = []
 
@@ -24,8 +25,9 @@ const quickControls = [
   { kind: 'orientation' },
 ] as const satisfies readonly { kind: QuickControlKind }[]
 
-export const TextPage = memo(function TextPage({ project, page, scale, edge, clean, readonly, controller, selection, onSelect, onInteracting, showMeasure, onMeasure, region, detailed, interacting, onPointer, groupNames = [] }: {
+export const TextPage = memo(function TextPage({ project, page, scale, edge, clean, difference, differenceColor, differenceOpacity, readonly, controller, selection, onSelect, onInteracting, showMeasure, onMeasure, region, detailed, interacting, onPointer, groupNames = [] }: {
   project: string; page: Page; scale: number; edge: number; clean: boolean; readonly?: boolean;
+  difference: boolean; differenceColor: string; differenceOpacity: number;
   controller: EditorState; selection: Selection; onSelect: (selection: Selection) => void; onInteracting: (id: string | null) => void;
   showMeasure: boolean; onMeasure: (index: number, page: string) => void;
   region: VisibleRegion | null; detailed: boolean; interacting: boolean; onPointer: (pointer: PagePointer | null) => void;
@@ -148,6 +150,7 @@ export const TextPage = memo(function TextPage({ project, page, scale, edge, cle
       onSelect({ page: page.id, ids: [] })
     }}>
       <PreviewLayer project={project} page={page} edge={edge} scale={scale} clean={clean} region={region} detailed={detailed} interacting={interacting} />
+      {difference && !!page.clean && !readonly && <DifferenceOverlay project={project} page={page} edge={edge} interacting={interacting} color={differenceColor} opacity={differenceOpacity} />}
       {!readonly && state?.data.items.map(item => <div key={item._id} data-item={item._id} className={`pl-text ${selected.includes(item._id) ? 'selected' : ''} ${editing?.id === item._id ? 'editing' : ''}`} style={{ left: item.x * page.width, top: item.y * page.height, transform: transform(item), fontSize: item['font-size'], writingMode: item.orientation === 'vertical' ? 'vertical-rl' : 'horizontal-tb', color: color(item.color), WebkitTextStroke: `${item['stroke-weight']}px ${color(item['stroke-color'])}`, outlineWidth: selected.includes(item._id) ? 1.5 / scale : 0 }}
         onPointerDown={event => {
           if (event.button === 0 && event.metaKey) {

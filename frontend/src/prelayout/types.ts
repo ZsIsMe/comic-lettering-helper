@@ -11,6 +11,6 @@ export type PageData = Page & { items: Item[]; measure: Measure[]; character_box
 export type Group = { name: string }
 export type Project = { id: string; name: string; updated_at: string; revision: number; pages: Page[]; detection_id: string | null; template?: { groupList?: Group[]; [key: string]: unknown } }
 export type Availability = { methods: Record<string, boolean>; assets: Record<string, boolean>; font_version?: string; runtime: boolean; device?: string; gpu_owner: string | null }
-export type Detection = { id: string; state: string; device?: string; message?: string; progress?: { completed: number; total: number; stage: string } }
+export type Detection = { id: string; state: string; device?: string; message?: string; options?: { method?: string }; progress?: { completed: number; total: number; stage: string } }
 export const uid = () => `t_${crypto.randomUUID().replaceAll('-', '')}`
 export const activeDetection = (task: Detection | null) => !!task && ['queued', 'validating', 'detecting', 'aligning', 'measuring', 'previewing', 'calibrating', 'publishing', 'cancelling', 'recovery_required'].includes(task.state)

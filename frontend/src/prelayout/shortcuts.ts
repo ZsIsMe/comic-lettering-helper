@@ -80,7 +80,7 @@ export const shortcutHelpGroups = [
     title: '一般操作',
     items: [
       ['保存／撤銷／重做', '⌘／Ctrl＋S；⌘／Ctrl＋Z；⌘／Ctrl＋Shift＋Z'],
-      ['切換頁面／底圖', 'PageUp／PageDown：上一頁／下一頁；Q：切換去字底圖'],
+      ['切換頁面／底圖／差異', 'PageUp／PageDown：上一頁／下一頁；Q：切換去字底圖；H：切換差異高亮'],
       ['多選／取消選取', 'Shift＋點選文字：加入多選；Esc：取消選取'],
       ['刪除文字', 'Delete／Backspace：刪除所選文字框'],
       ['複製所選文字', '⌘／Ctrl＋D：複製所選文字框，並向右下偏移 16 原圖像素'],

@@ -65,11 +65,13 @@ def run_ctd(folder, record, images, models):
     aligned, _ = core._align_pages(str(images), paths, block, save_center_preview=False, need_neck=True,
                                   on_page=lambda done, total: progress(folder, 'aligning', done, total))
     core._write_json(str(images / 'ctd' / 'progressing' / core.ALIGNED_BOX_MAP_JSON), aligned)
-    method = 'char_box' if record['options']['method'] == 'single_char' else 'ocr_aligned'
+    method = {'single_char': 'char_box', 'fixed': 'fixed'}.get(record['options']['method'], 'ocr_aligned')
     progress(folder, 'measuring', 0, len(names))
     measure, debug = core._build_measure_maps(str(images), paths, block, lines, aligned,
                                              font_size_calculation_method=method, default_font_size=record['options']['font_size'], font_size_step=record['options']['step'],
                                              on_page=lambda done, total: progress(folder, 'measuring', done, total))
+    # Fixed size still keeps source color/stroke analysis, but avoids every
+    # per-character and font-fitting operation.
     _, errors = enrich_measure_map(images, measure)
     if errors: raise ValueError('；'.join(errors))
     for name in names:

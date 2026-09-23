@@ -47,7 +47,7 @@ function release(key: string, entry: Entry) {
   trim()
 }
 export function usePreview(key: string, frozen = false) {
-  const [value, setValue] = useState({ url: '', error: '' })
+  const [value, setValue] = useState<{ url: string; error: string; image?: HTMLImageElement }>({ url: '', error: '' })
   const displayed = useRef<{ key: string; entry: Entry } | null>(null)
   useEffect(() => {
     let live = true
@@ -56,7 +56,7 @@ export function usePreview(key: string, frozen = false) {
       if (!live || (frozen && displayed.current && displayed.current.entry !== entry)) return
       const old = displayed.current
       displayed.current = { key, entry }
-      setValue({ url, error: '' })
+      setValue({ url, error: '', image: entry.image })
       if (old) release(old.key, old.entry)
     }).catch(error => {
       if (live) setValue(previous => ({ ...previous, error: (error as Error).message }))

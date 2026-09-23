@@ -33,7 +33,7 @@ def main():
     core.TextDetector = FixtureDetector
     with tempfile.TemporaryDirectory(prefix='prelayout-probe-') as temporary:
         root = Path(temporary)
-        for method in ('single_char', 'ocr_aligned'):
+        for method in ('single_char', 'ocr_aligned', 'fixed'):
             folder = root / method; images = folder / 'input'; images.mkdir(parents=True)
             image = Image.new('RGB', (600, 900), 'white'); draw = ImageDraw.Draw(image)
             draw.ellipse((55, 50, 225, 340), outline='black', width=3)
@@ -47,7 +47,7 @@ def main():
             if method == 'single_char':
                 single_char_sizes = [item['font_size'] for item in measure['pages']['001.png']]
                 assert all('font_size_char_box' not in item for item in measure['pages']['001.png'])
-            else:
+            elif method == 'ocr_aligned':
                 assert [item['font_size_char_box'] for item in measure['pages']['001.png']] == single_char_sizes
                 for suggested, status in ((16, 'ready'), (80, 'ready'), (16, 'ready_overlap_inherited'), (None, 'no_reliable_characters')):
                     updated = copy.deepcopy(measure)
@@ -65,15 +65,22 @@ def main():
                     expected = copy.deepcopy(updated)
                     assert measure_ocr.apply_calibrated_font_sizes(updated, fits) == 0
                     assert updated == expected
-            # Exercise real OCR crop/line alignment without a model or font calibration.
-            output = measure_ocr.run(str(images / 'ctd' / 'measure.json'), str(images), None,
-                model_path='', alphabet_path='', implementation_path='', device='cuda', pads=[4, 8], minimum_probability=.3,
-                page=None, measure_debug_path=None, source_block_index=None, limit_pages=None, limit_items=None,
-                batch_size=32, save_crops=None, dry_run=True)
-            assert set(load(output)['pages']) == {'001.png', '002.png'}
-            print(f'{method}: alignment, measurement, source styling and OCR crop contracts passed', flush=True)
+            else:
+                fixed_items = measure['pages']['001.png']
+                assert all(item['font_size'] == 24 and item['font_size_method'] == 'fixed' for item in fixed_items)
+                debug = load(images / 'ctd' / 'measure.debug.json')
+                assert all(not item['char_boxes'] for item in debug['font_size']['001.png'])
+                assert measure['font_size_calculation_settings'] == {'default_font_size': 24.0}
+            if method != 'fixed':
+                # Exercise real OCR crop/line alignment without a model or font calibration.
+                output = measure_ocr.run(str(images / 'ctd' / 'measure.json'), str(images), None,
+                    model_path='', alphabet_path='', implementation_path='', device='cuda', pads=[4, 8], minimum_probability=.3,
+                    page=None, measure_debug_path=None, source_block_index=None, limit_pages=None, limit_items=None,
+                    batch_size=32, save_crops=None, dry_run=True)
+                assert set(load(output)['pages']) == {'001.png', '002.png'}
+            print(f'{method}: alignment, measurement and source styling contracts passed', flush=True)
         args.output.parent.mkdir(parents=True, exist_ok=True)
-        args.output.write_text(json.dumps({'passed': True, 'synthetic_detector': True, 'gpu_verified': False, 'methods': ['single_char', 'ocr_aligned']}))
+        args.output.write_text(json.dumps({'passed': True, 'synthetic_detector': True, 'gpu_verified': False, 'methods': ['single_char', 'ocr_aligned', 'fixed']}))
 
 
 if __name__ == '__main__': main()

@@ -43,6 +43,22 @@ def test_inpainted_overlay_preserves_transparent_pixels_and_checks_size(tmp_path
     assert not (tmp_path / 'bad.png').exists()
 
 
+def test_fixed_font_measurement_skips_character_analysis():
+    from prelayout_core.fixed_font import fixed_font_measurement
+
+    char_boxes, font_size, method, debug = fixed_font_measurement(37, 'vertical')
+    assert char_boxes == []
+    assert font_size == 37
+    assert method == 'fixed'
+    assert debug == {
+        'method': 'fixed',
+        'accepted': True,
+        'orientation': 'vertical',
+        'font_size': 37,
+        'skipped_font_measurement': True,
+    }
+
+
 @pytest.fixture
 def store(tmp_path):
     return PrelayoutStore(tmp_path / 'prelayout')
@@ -122,10 +138,14 @@ def test_group_names_can_be_added_and_are_exported(store, project):
     updated = store.update_groups(project['id'], 0, ['框內', '框外'])
     assert updated['template']['groupList'] == [{'name': '框內', 'legacy': 'kept'}, {'name': '框外'}]
     assert store.translation(project['id'])['groupList'] == [{'name': '框內', 'legacy': 'kept'}, {'name': '框外'}]
+    renamed = store.update_groups(project['id'], 1, ['對話框', '框外'])
+    assert renamed['template']['groupList'] == [{'name': '對話框', 'legacy': 'kept'}, {'name': '框外'}]
+    with pytest.raises(ValueError, match='不能刪除'):
+        store.update_groups(project['id'], 2, ['對話框'])
     with pytest.raises(Conflict):
         store.update_groups(project['id'], 0, ['旁白'])
     with pytest.raises(ValueError, match='重複'):
-        store.update_groups(project['id'], 1, ['框內', '框內'])
+        store.update_groups(project['id'], 2, ['框內', '框內'])
 
 
 def test_preview_originals_and_clean_pairing(store, project):
@@ -181,6 +201,7 @@ def test_missing_models_and_gpu_gate(store, project, tmp_path, monkeypatch):
     monkeypatch.setenv('COMIC_PRELAYOUT_PYTHON', '')
     detector = PrelayoutDetection(Settings(), store, ResourceGate())
     assert not detector.availability()['methods']['ocr_aligned']
+    assert not detector.availability()['methods']['fixed']
     with pytest.raises(ValueError, match='尚未安裝'):
         asyncio.run(detector.submit(project['id'], {}))
     assert detector.gate.owner is None

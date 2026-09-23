@@ -41,6 +41,7 @@ from prelayout_core.vendor.detect_folder import (
     SHRINK_PERCENTILE_PADDING,
 )
 from prelayout_core.vendor.bubble_pipeline import split_candidates as _split_bubble_candidates
+from prelayout_core.fixed_font import fixed_font_measurement
 
 
 CTD_DIR = 'ctd'
@@ -942,7 +943,12 @@ def _build_measure_maps(
 
             matched_lines = line_groups.get(source_index, [])
             orientation = _orientation_from_lines(matched_lines)
-            if font_size_calculation_method in {'char_box', 'ocr_aligned'}:
+            if font_size_calculation_method == 'fixed':
+                char_boxes, font_size, font_method, font_debug = fixed_font_measurement(
+                    default_font_size,
+                    orientation,
+                )
+            elif font_size_calculation_method in {'char_box', 'ocr_aligned'}:
                 char_boxes = _char_boxes_for_lines(mask, matched_lines)
                 detected_font_size, font_debug = _paragraph_font_size_from_char_boxes(char_boxes, orientation)
                 if detected_font_size is not None:
@@ -1029,11 +1035,11 @@ def _build_measure_maps(
         if on_page: on_page(len(pages), len(align_pages))
 
     measure = {'pages': pages}
-    if font_size_calculation_method == 'char_box':
-        measure['font_size_calculation_method'] = 'char_box'
+    if font_size_calculation_method in {'char_box', 'fixed'}:
+        measure['font_size_calculation_method'] = font_size_calculation_method
         measure['font_size_calculation_settings'] = {
             'default_font_size': round(float(default_font_size), 1),
-            'font_size_step': round(float(font_size_step), 1),
+            **({'font_size_step': round(float(font_size_step), 1)} if font_size_calculation_method == 'char_box' else {}),
         }
     measure_debug = {
         'pages': pages,
@@ -1042,8 +1048,8 @@ def _build_measure_maps(
         'line': line_trans_map,
         'align': aligned_box_map,
     }
-    if font_size_calculation_method == 'char_box':
-        measure_debug['font_size_calculation_method'] = 'char_box'
+    if font_size_calculation_method in {'char_box', 'fixed'}:
+        measure_debug['font_size_calculation_method'] = font_size_calculation_method
     return measure, measure_debug
 
 

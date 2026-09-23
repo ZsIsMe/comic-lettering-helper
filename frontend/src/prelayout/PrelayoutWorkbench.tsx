@@ -13,6 +13,26 @@ import { GroupName } from './GroupName'
 import './styles.css'
 
 const showCleanUpload = false
+const defaultDifferenceColor = '#ff288c'
+const defaultDifferenceOpacity = .4
+const detectionMethodOptions = [
+  { value: 'ocr_aligned', label: 'OCR 對齊逐字計算' },
+  { value: 'single_char', label: '單字框計算' },
+  { value: 'fixed', label: '固定字體大小' },
+]
+
+function differenceStylePreference() {
+  try {
+    const value = JSON.parse(localStorage.getItem('pl-difference-style') || '{}')
+    const opacity = Number(value.opacity)
+    return {
+      color: typeof value.color === 'string' && /^#[0-9a-f]{6}$/i.test(value.color) ? value.color : defaultDifferenceColor,
+      opacity: Number.isFinite(opacity) && opacity >= 0 && opacity <= 1 ? opacity : defaultDifferenceOpacity,
+    }
+  } catch {
+    return { color: defaultDifferenceColor, opacity: defaultDifferenceOpacity }
+  }
+}
 
 export default function PrelayoutWorkbench({ onExit, onReadyToLeave }: { onExit: () => void; onReadyToLeave?: (handler: () => Promise<boolean>) => void }) {
   const [modal, modalContext] = Modal.useModal()
@@ -72,12 +92,16 @@ function Workspace({ project: initial, promptDetection, onExit, onReadyToLeave }
   useSyncExternalStore(callback => controller.subscribe('*', callback), () => controller.tick('*'))
   const [selection, setSelection] = useState<Selection>({ page: initial.pages[0].id, ids: [] })
   const [view] = useState(() => { try { return JSON.parse(localStorage.getItem(`pl-view-${initial.id}`) || '{}') } catch { return {} } })
-  const [current, setCurrent] = useState(initial.pages[0].id), [zoom, setZoom] = useState<number>(Math.max(.5, Math.min(3, Number(view.zoom) || 1))), [compare, setCompare] = useState(view.compare !== false), [clean, setClean] = useState(view.clean !== false), [showMeasure, setShowMeasure] = useState(view.showMeasure !== false)
+  const [differenceStyle] = useState(differenceStylePreference)
+  const [current, setCurrent] = useState(initial.pages[0].id), [zoom, setZoom] = useState<number>(Math.max(.5, Math.min(3, Number(view.zoom) || 1))), [compare, setCompare] = useState(view.compare !== false), [clean, setClean] = useState(view.clean !== false), [difference, setDifference] = useState(view.difference === true), [showMeasure, setShowMeasure] = useState(view.showMeasure !== false)
+  const [differenceColor, setDifferenceColor] = useState(differenceStyle.color), [differenceOpacity, setDifferenceOpacity] = useState(differenceStyle.opacity)
   const [jump, setJump] = useState<{ id: string; version: number; y?: number } | null>(null), [error, setError] = useState(''), [busy, setBusy] = useState(false)
   const [pendingOnly, setPendingOnly] = useState(false)
   const [availability, setAvailability] = useState<Availability | null>(null), [task, setTask] = useState<Detection | null>(null)
   const [detectOpen, setDetectOpen] = useState(promptDetection)
   const [shortcutOpen, setShortcutOpen] = useState(false)
+  const [groupOpen, setGroupOpen] = useState(false), [groupDraft, setGroupDraft] = useState<string[]>([]), [newGroupName, setNewGroupName] = useState('')
+  const [groupRevision, setGroupRevision] = useState<number | null>(null), [groupError, setGroupError] = useState('')
   const [method, setMethod] = useState('ocr_aligned'), [fontBase, setFontBase] = useState(24), [fontStep, setFontStep] = useState(2)
   const [clipboard, setClipboard] = useState<Item[]>([]), [memory, setMemory] = useState<Item | null>(null)
   const [fontReady, setFontReady] = useState(false)
@@ -105,9 +129,11 @@ function Workspace({ project: initial, promptDetection, onExit, onReadyToLeave }
   const groupNames = (project.template?.groupList || []).map(group => group.name).filter(name => typeof name === 'string')
   const selectedGroupIds = new Set(selected.map(item => typeof item.groupId === 'number' ? item.groupId : -1))
   const selectedGroupId = selectedGroupIds.size === 1 ? [...selectedGroupIds][0] : undefined
+  const hasClean = project.pages.some(page => page.clean)
   const errors = [...controller.pages.values()].map(state => state.error).filter(Boolean)
   const saving = [...controller.pages.values()].some(state => state.saving)
-  useEffect(() => { try { localStorage.setItem(`pl-view-${initial.id}`, JSON.stringify({ zoom, compare, clean, showMeasure })) } catch { /* Optional view preferences. */ } }, [initial.id, zoom, compare, clean, showMeasure])
+  useEffect(() => { try { localStorage.setItem(`pl-view-${initial.id}`, JSON.stringify({ zoom, compare, clean, difference, showMeasure })) } catch { /* Optional view preferences. */ } }, [initial.id, zoom, compare, clean, difference, showMeasure])
+  useEffect(() => { try { localStorage.setItem('pl-difference-style', JSON.stringify({ color: differenceColor, opacity: differenceOpacity })) } catch { /* Optional browser preference. */ } }, [differenceColor, differenceOpacity])
   useEffect(() => {
     void request<Item[]>(`${base}/preferences`).then(setClipboard).catch(e => setError(e.message))
     const refresh = () => { void request<Availability>(`${base}/availability`).then(setAvailability).catch(() => {}); void request<Detection | null>(`${projectPath(initial.id)}/detections`).then(setTask).catch(() => {}) }
@@ -138,45 +164,46 @@ function Workspace({ project: initial, promptDetection, onExit, onReadyToLeave }
     setBusy(true); setError('')
     try { await fn() } catch (e) { setError((e as Error).message) } finally { setBusy(false) }
   }
-  function addGroup() {
-    let value = ''
-    modal.confirm({
-      title: '新增分組',
-      okText: '新增',
-      cancelText: '取消',
-      content: <Input autoFocus maxLength={80} placeholder="分組名稱" onChange={event => { value = event.target.value }} onPressEnter={() => document.querySelector<HTMLButtonElement>('.ant-modal-confirm-btns .ant-btn-primary')?.click()} />,
-      onOk: async () => {
-        const name = value.trim()
-        if (!name) throw new Error('請輸入分組名稱')
-        if (!await controller.flush()) throw new Error('文字尚未保存，請先處理保存衝突')
-        const fresh = await request<Project>(projectPath(project.id))
-        const names = (fresh.template?.groupList || []).map(group => group.name)
-        const result = await request<Project>(`${projectPath(project.id)}/groups`, body({ expected_revision: fresh.revision, names: [...names, name] }, 'PUT'))
-        setProject(result)
-        notices.success(`已新增分組「${name}」`)
-      },
-    })
+  async function openGroupOrganizer() {
+    if (!await controller.flush()) throw new Error('文字尚未保存，請先處理保存衝突')
+    const fresh = await request<Project>(projectPath(project.id))
+    setProject(fresh)
+    setGroupDraft((fresh.template?.groupList || []).map(group => group.name))
+    setGroupRevision(fresh.revision)
+    setNewGroupName('')
+    setGroupError('')
+    setGroupOpen(true)
   }
-  function replaceGroup(index: number) {
-    let value = groupNames[index] || ''
-    modal.confirm({
-      title: `替換分組「${value}」`,
-      okText: '替換',
-      cancelText: '取消',
-      content: <Input autoFocus maxLength={80} defaultValue={value} placeholder="新分組名稱" onChange={event => { value = event.target.value }} onPressEnter={() => document.querySelector<HTMLButtonElement>('.ant-modal-confirm-btns .ant-btn-primary')?.click()} />,
-      onOk: async () => {
-        const name = value.trim()
-        if (!name) throw new Error('請輸入分組名稱')
-        if (!await controller.flush()) throw new Error('文字尚未保存，請先處理保存衝突')
-        const fresh = await request<Project>(projectPath(project.id))
-        const names = (fresh.template?.groupList || []).map(group => group.name)
-        if (index >= names.length) throw new Error('分組已更新，請重新操作')
-        names[index] = name
-        const result = await request<Project>(`${projectPath(project.id)}/groups`, body({ expected_revision: fresh.revision, names }, 'PUT'))
-        setProject(result)
-        notices.success(`已用「${name}」替換舊分組`)
-      },
-    })
+  function appendGroup() {
+    const name = newGroupName.trim()
+    if (!name) { setGroupError('請輸入分組名稱'); return }
+    if (groupDraft.some(value => value.trim().toLocaleLowerCase() === name.toLocaleLowerCase())) { setGroupError(`分組名稱重複：${name}`); return }
+    setGroupDraft(names => [...names, name])
+    setNewGroupName('')
+    setGroupError('')
+  }
+  async function saveGroups() {
+    const names = groupDraft.map(name => name.trim())
+    const empty = names.findIndex(name => !name)
+    if (empty >= 0) { setGroupError(`第 ${empty + 1} 個分組名稱不能為空`); return }
+    const seen = new Set<string>()
+    for (const name of names) {
+      const key = name.toLocaleLowerCase()
+      if (seen.has(key)) { setGroupError(`分組名稱重複：${name}`); return }
+      seen.add(key)
+    }
+    if (groupRevision === null) { setGroupError('分組資料尚未載入，請關閉後重試'); return }
+    setBusy(true); setGroupError('')
+    try {
+      const result = await request<Project>(`${projectPath(project.id)}/groups`, body({ expected_revision: groupRevision, names }, 'PUT'))
+      setProject(result)
+      setGroupOpen(false)
+      notices.success('分組已整理')
+    } catch (e) {
+      setGroupError((e as Error).message)
+    } finally {
+      setBusy(false)
+    }
   }
   const patch = useCallback((changes: Partial<Item>) => {
     const state = controller.pages.get(selection.page)
@@ -255,6 +282,7 @@ function Workspace({ project: initial, promptDetection, onExit, onReadyToLeave }
       if (meta && !event.altKey && event.key.toLowerCase() === 'z') { event.preventDefault(); controller.undo(selection.page, event.shiftKey); return }
       if (event.key === 'Escape') { setSelection(value => ({ ...value, ids: [] })); return }
       if (!meta && !event.altKey && !event.shiftKey && event.key.toLowerCase() === 'q') { event.preventDefault(); if (!event.repeat) setClean(value => !value); return }
+      if (!meta && !event.altKey && !event.shiftKey && event.key.toLowerCase() === 'h' && hasClean) { event.preventDefault(); if (!event.repeat) setDifference(value => !value); return }
       if (!meta && !event.altKey && !event.shiftKey && ['PageUp', 'PageDown'].includes(event.key)) {
         event.preventDefault()
         const index = project.pages.findIndex(page => page.id === current) + (event.key === 'PageUp' ? -1 : 1)
@@ -304,6 +332,15 @@ function Workspace({ project: initial, promptDetection, onExit, onReadyToLeave }
     <Modal title="預排版快捷鍵與滑鼠操作" open={shortcutOpen} onCancel={() => setShortcutOpen(false)} width="calc(100vw - 32px)" centered className="pl-shortcut-modal" footer={<Button onClick={() => setShortcutOpen(false)}>關閉</Button>}>
       <ShortcutHelp collapsible={false} />
     </Modal>
+    <Modal title="整理分組" open={groupOpen} okText="保存" cancelText="取消" confirmLoading={busy} onCancel={() => { if (!busy) setGroupOpen(false) }} onOk={() => void saveGroups()}>
+      <p className="pl-muted">可以新增或修改分組名稱。分組順序與文字的分組關聯保持不變；不能移動或刪除分組。</p>
+      <div className="pl-group-editor-list">
+        {groupDraft.map((name, index) => <label key={index} className="pl-group-editor-row"><span><GroupName name={name || `分組 ${index + 1}`} index={index} /></span><Input aria-label={`分組 ${index + 1} 名稱`} maxLength={80} value={name} onChange={event => { const value = event.target.value; setGroupDraft(names => names.map((current, currentIndex) => currentIndex === index ? value : current)); setGroupError('') }} /></label>)}
+        {!groupDraft.length && <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="尚無分組，請在下方新增" />}
+      </div>
+      <div className="pl-group-editor-add"><Input aria-label="新分組名稱" maxLength={80} value={newGroupName} placeholder="新分組名稱" onChange={event => { setNewGroupName(event.target.value); setGroupError('') }} onPressEnter={appendGroup} /><Button onClick={appendGroup}>新增分組</Button></div>
+      {groupError && <Alert type="error" showIcon message={groupError} />}
+    </Modal>
     <Modal title="圖片已匯入，是否進行 CTD 識別？" open={detectOpen} okText="開始識別" cancelText="稍後再說" confirmLoading={busy}
       okButtonProps={{ disabled: !availability?.methods[method] || !!availability?.gpu_owner || activeDetection(task) }}
       onCancel={() => { if (!busy) setDetectOpen(false) }} onOk={() => void execute(async () => {
@@ -311,8 +348,9 @@ function Workspace({ project: initial, promptDetection, onExit, onReadyToLeave }
         setTask(await request<Detection>(`${projectPath(project.id)}/detections`, body({ method, font_size: fontBase, step: fontStep })))
         setDetectOpen(false)
       })}>
-      <p>識別整個項目的文字框與字級。完成後匯入 LP.txt，會自動匹配譯文。</p>
-      <Select aria-label="CTD 識別方式" value={method} onChange={setMethod} options={[{ value: 'ocr_aligned', label: 'OCR 對齊逐字計算' }, { value: 'single_char', label: '單字框計算' }]} />
+      <p>{method === 'fixed' ? '識別整個項目的文字框，直接套用固定字級；不執行 OCR、逐字框分析或字級校準。' : '識別整個項目的文字框與字級。完成後匯入 LP.txt，會自動匹配譯文。'}</p>
+      <Select aria-label="CTD 識別方式" value={method} onChange={setMethod} options={detectionMethodOptions} />
+      {method === 'fixed' && <label className="pl-detection-fixed-size">固定字級<InputNumber aria-label="固定字級" value={fontBase} min={1} max={999} onChange={value => value !== null && setFontBase(value)} /></label>}
       <p>{!availability ? '正在檢查識別環境…' : !availability.methods[method] ? '尚未準備模型，可稍後再識別。' : availability.gpu_owner ? 'GPU 正忙，請稍後開始。' : '識別環境已就緒。'}</p>
       {error && <Alert type="error" message={error} />}
     </Modal>
@@ -323,30 +361,33 @@ function Workspace({ project: initial, promptDetection, onExit, onReadyToLeave }
     <div className="pl-tool-row"><Space wrap>
       {(['bt', 'labelplus', 'clean'] as const).filter((kind): boolean => kind !== 'clean' || showCleanUpload).map(kind => <Button key={kind} disabled={busy} onClick={() => { importKind.current = kind; if (fileInput.current) { fileInput.current.accept = kind === 'bt' ? '.json' : kind === 'labelplus' ? '.txt' : '.png,.jpg,.jpeg'; fileInput.current.multiple = kind === 'clean'; fileInput.current.click() } }}>{kind === 'bt' ? '開啟 Meo.json' : kind === 'labelplus' ? '匯入LP.txt' : '上傳去字圖'}</Button>)}
       <input hidden ref={fileInput} type="file" onChange={e => { const list = files(e.target.files); e.target.value = ''; void execute(() => importFile(list)) }} />
-      <Button onClick={() => add()}>新增文字</Button><Button onClick={addGroup}>新增分組</Button><Button onClick={() => controller.undo(selection.page)}>撤銷</Button><Button onClick={() => controller.undo(selection.page, true)}>重做</Button>
+      <Button onClick={() => add()}>新增文字</Button><Button onClick={() => void execute(openGroupOrganizer)}>整理分組</Button><Button onClick={() => controller.undo(selection.page)}>撤銷</Button><Button onClick={() => controller.undo(selection.page, true)}>重做</Button>
       <Select aria-label="縮放" title="相對適合寬度的縮放比例" value={zoom} onChange={setZoom} options={[...new Set([.5, .75, 1, 1.5, 2, 3, zoom])].sort((a, b) => a - b).map(value => ({ value, label: value === 1 ? '適合寬度' : `${Math.round(value * 100)}%` }))} />
-      <Checkbox checked={compare} onChange={e => setCompare(e.target.checked)}>原圖對照</Checkbox><Checkbox checked={clean} onChange={e => setClean(e.target.checked)}>去字底圖</Checkbox><Checkbox checked={showMeasure} onChange={e => setShowMeasure(e.target.checked)}>偵測框</Checkbox>
+      <Checkbox checked={compare} onChange={e => setCompare(e.target.checked)}>原圖對照</Checkbox><Checkbox checked={clean} onChange={e => setClean(e.target.checked)}>去字底圖</Checkbox><Checkbox checked={difference} disabled={!hasClean} title="以自訂顏色顯示原圖與去字圖的像素差異；只在記憶體計算。快捷鍵：H" onChange={e => setDifference(e.target.checked)}>差異高亮（H）</Checkbox>
+      <label className="pl-difference-setting" title="差異高亮顏色">顏色<input aria-label="差異高亮顏色" type="color" value={differenceColor} disabled={!hasClean} onChange={event => setDifferenceColor(event.target.value)} /></label>
+      <label className="pl-difference-setting pl-difference-opacity" title="差異高亮透明度">透明度<input aria-label="差異高亮透明度" type="range" min="0" max="100" step="1" value={Math.round(differenceOpacity * 100)} disabled={!hasClean} onChange={event => setDifferenceOpacity(Number(event.target.value) / 100)} /><output>{Math.round(differenceOpacity * 100)}%</output></label>
+      <Checkbox checked={showMeasure} onChange={e => setShowMeasure(e.target.checked)}>偵測框</Checkbox>
     </Space></div>
     {(error || errors.length > 0) && <Alert type="error" message={error || errors[0]} closable onClose={() => setError('')} />}
     <nav className="pl-pages-nav" aria-label="頁面導覽"><div className="pl-section-label">{project.pages.length} 頁</div>{project.pages.map((page, index) => <button key={page.id} className={current === page.id ? 'active' : ''} aria-current={current === page.id ? 'page' : undefined} title={page.name} onClick={() => go(page.id)}><span>{String(index + 1).padStart(2, '0')}</span><span>{page.name}</span></button>)}</nav>
     <div className="pl-layout">
-      <ContinuousPages project={project} controller={controller} selection={selection} onSelect={select} zoom={zoom} onZoom={setZoom} compare={compare} clean={clean} showMeasure={showMeasure} jump={jump} onCurrent={currentPage} onMeasure={onMeasure} onPointer={pointerChanged} onFontWheel={fontWheel} onInteractionChange={interactionChanged} />
+      <ContinuousPages project={project} controller={controller} selection={selection} onSelect={select} zoom={zoom} onZoom={setZoom} compare={compare} clean={clean} difference={difference} differenceColor={differenceColor} differenceOpacity={differenceOpacity} showMeasure={showMeasure} jump={jump} onCurrent={currentPage} onMeasure={onMeasure} onPointer={pointerChanged} onFontWheel={fontWheel} onInteractionChange={interactionChanged} />
       <aside className="pl-inspector">
         <div className="pl-inspector-title"><h2>文字編輯</h2><Tooltip title="雙擊頁面文字可原位編輯；Mac 也可用 ⌘＋單擊，並支援直排。Enter 換行；⌘／Ctrl＋Enter 完成；Esc 保存並結束編輯。"><button type="button" className="pl-help" aria-label="文字編輯說明">?</button></Tooltip></div>{state?.conflict && <Space wrap><Button onClick={() => void execute(() => controller.resolve(selection.page, true))}>保留我的草稿</Button><Button onClick={() => void execute(() => controller.resolve(selection.page, false))}>載入伺服器版</Button></Space>}
+        <details open className="pl-groups-top"><summary>分組</summary><Space wrap>{groupNames.map((name, index) => <Tooltip key={`${index}-${name}`} title={selected.length ? `切換選取文字至「${name}」` : '請先選取文字'}><Button size="small" type={selectedGroupIds.size === 1 && selectedGroupId === index ? 'primary' : 'default'} disabled={!selected.length} onClick={() => patch({ groupId: index })}><GroupName name={name} index={index} /></Button></Tooltip>)}{!groupNames.length && <span className="pl-muted">尚無分組</span>}<Button size="small" onClick={() => void execute(openGroupOrganizer)}>整理分組</Button></Space></details>
         {first ? <><label>文字 {selected.length > 1 && `· 已選 ${selected.length} 條`}<Input.TextArea rows={5} value={first.text} onChange={e => patch({ text: e.target.value })} /></label>
-          <label>分組<Select aria-label="文字分組" allowClear placeholder={selectedGroupIds.size > 1 ? '多個分組' : '未分組'} value={selectedGroupId === -1 ? undefined : selectedGroupId} onChange={value => patch({ groupId: value })} options={groupNames.map((name, index) => ({ value: index, label: <GroupName name={name} index={index} /> }))} /></label>
           <div className="pl-two-fields"><label>角度<InputNumber aria-label="角度" value={first.rotation} min={-180} max={180} step={1} onChange={v => v !== null && patch({ rotation: v })} /></label><label>方向<Select value={first.orientation} onChange={v => patch({ orientation: v })} options={[{ value: 'vertical', label: '直排' }, { value: 'horizontal', label: '橫排' }]} /></label></div>
           <div className="pl-four-fields"><label>字級<InputNumber aria-label="字級" value={first['font-size']} min={1} max={999} onChange={v => v !== null && patch({ 'font-size': v })} /></label><label>文字色<input aria-label="文字色" type="color" value={color(first.color)} onChange={e => patch({ color: e.target.value })} /></label><label>描邊粗細<InputNumber aria-label="描邊粗細" min={0} max={99} value={first['stroke-weight']} onChange={v => v !== null && patch({ 'stroke-weight': v })} /></label><label>描邊色<input aria-label="描邊色" type="color" value={color(first['stroke-color'])} onChange={e => patch({ 'stroke-color': e.target.value })} /></label></div>
           <Space wrap><Button onClick={duplicate}>複製</Button><Button danger onClick={() => { if (state) controller.edit(selection.page, state.data.items.filter(item => !selection.ids.includes(item._id))); setSelection(value => ({ ...value, ids: [] })) }}>刪除</Button><Button onClick={() => void execute(async () => { const values = [...clipboard, { ...first, _id: uid() }]; await request(`${base}/preferences`, body(values, 'PUT')); setClipboard(values) })}>加入常用框</Button></Space>
         </> : <p className="pl-muted">雙擊文字可原位編輯（橫排／直排）；Mac 也可用 ⌘＋單擊。雙擊底圖新增文字；Shift 點選可多選。</p>}
-        <details open><summary>分組</summary><Space wrap>{groupNames.map((name, index) => <Tooltip key={`${index}-${name}`} title="用新名稱替換此分組"><Button size="small" onClick={() => replaceGroup(index)}><GroupName name={name} index={index} /></Button></Tooltip>)}{!groupNames.length && <span className="pl-muted">尚無分組</span>}<Button size="small" onClick={addGroup}>新增分組</Button></Space></details>
         <details open><summary>本頁文字</summary><Space wrap><Checkbox checked={pendingOnly} onChange={e => setPendingOnly(e.target.checked)}>只看待處理</Checkbox><Button size="small" onClick={() => void execute(nextPending)}>下一個待處理</Button></Space><div className="pl-items-list">{state?.data.items.filter(item => !pendingOnly || ['unmatched', 'duplicate'].includes(item.match_status || '')).map((item, index) => <button key={item._id} className={selection.ids.includes(item._id) ? 'active' : ''} onClick={() => { setSelection({ page: state.data.id, ids: [item._id] }); setJump({ id: state.data.id, y: item.y, version: Date.now() }) }}><span>{index + 1}. {item.text || '空文字'}</span><small>{typeof item.groupId === 'number' && groupNames[item.groupId] ? <GroupName name={groupNames[item.groupId]} index={item.groupId} /> : typeof item.groupId === 'number' ? `未知分組 ${item.groupId + 1}` : '未分組'} · {({ auto: '自動', manual: '手動', duplicate: '待確認', unmatched: '未匹配' } as Record<string, string>)[item.match_status || ''] || '—'}</small></button>)}</div></details>
         <details><summary>常用文字框</summary>{clipboard.map(item => <div className="pl-clipboard" key={item._id}><button title="暫存此框，再用 F2 貼到指標位置" onClick={() => { setMemory(structuredClone(item)); notices.info('已暫存，將指標移到頁面後按 F2 貼上') }}>{item.text || '空文字'}</button><Button size="small" onClick={() => void execute(async () => { const next = clipboard.filter(i => i._id !== item._id); await request(`${base}/preferences`, body(next, 'PUT')); setClipboard(next) })}>移除</Button></div>)}</details>
         <details open><summary>偵測與字級</summary><p className="pl-muted">{availability?.methods[method] ? `本地模型已就緒；提交時檢查 ${availability.device === 'mps' ? 'Apple GPU（MPS）' : 'CUDA GPU'}` : '尚未準備模型；可繼續人工編輯。'}</p>
-          <Select value={method} onChange={setMethod} options={[{ value: 'ocr_aligned', label: 'OCR 對齊逐字計算' }, { value: 'single_char', label: '單字框計算' }]} />
-          <div className="pl-two-fields"><label>預設字級<InputNumber value={fontBase} min={1} max={999} onChange={v => v !== null && setFontBase(v)} /></label><label>字級步長<InputNumber value={fontStep} min={.1} max={100} onChange={v => v !== null && setFontStep(v)} /></label></div>
-          <Button disabled={!availability?.methods[method] || !!availability?.gpu_owner || activeDetection(task)} onClick={() => void execute(async () => { setTask(await request<Detection>(`${projectPath(project.id)}/detections`, body({ method, font_size: fontBase, step: fontStep }))) })}>生成 CTD／字級</Button>
-          {task && <p>{({ queued: '等候開始', validating: '檢查環境', detecting: '偵測文字', aligning: '對齊文字框', measuring: '量測字框', previewing: '生成去字預覽', calibrating: '計算字級', publishing: '保存偵測結果', completed: '偵測完成', failed: '偵測失敗', cancelling: '正在停止', cancelled: '已取消', recovery_required: '恢復任務中' } as Record<string, string>)[task.state] || task.state}{task.progress ? ` · ${task.progress.completed}／${task.progress.total} 頁` : ''} · {task.message}</p>}{activeDetection(task) && <Button danger onClick={() => void execute(async () => { setTask(await request<Detection>(`${projectPath(project.id)}/detections/cancel`, body({}))) })}>取消偵測</Button>}
+          <Select aria-label="字級計算方式" value={method} onChange={setMethod} options={detectionMethodOptions} />
+          <div className="pl-two-fields"><label>{method === 'fixed' ? '固定字級' : '預設字級'}<InputNumber aria-label={method === 'fixed' ? '固定字級' : '預設字級'} value={fontBase} min={1} max={999} onChange={v => v !== null && setFontBase(v)} /></label><label>字級步長<InputNumber aria-label="字級步長" disabled={method === 'fixed'} value={fontStep} min={.1} max={100} onChange={v => v !== null && setFontStep(v)} /></label></div>
+          {method === 'fixed' && <p className="pl-muted">保留文字框對齊與去字預覽；跳過 OCR、逐字框分析及字級校準。</p>}
+          <Button disabled={!availability?.methods[method] || !!availability?.gpu_owner || activeDetection(task)} onClick={() => void execute(async () => { setTask(await request<Detection>(`${projectPath(project.id)}/detections`, body({ method, font_size: fontBase, step: fontStep }))) })}>{method === 'fixed' ? '生成 CTD／固定字級' : '生成 CTD／字級'}</Button>
+          {task && <p>{task.state === 'measuring' && task.options?.method === 'fixed' ? '整理文字框' : ({ queued: '等候開始', validating: '檢查環境', detecting: '偵測文字', aligning: '對齊文字框', measuring: '量測字框', previewing: '生成去字預覽', calibrating: '計算字級', publishing: '保存偵測結果', completed: '偵測完成', failed: '偵測失敗', cancelling: '正在停止', cancelled: '已取消', recovery_required: '恢復任務中' } as Record<string, string>)[task.state] || task.state}{task.progress ? ` · ${task.progress.completed}／${task.progress.total} 頁` : ''} · {task.message}</p>}{activeDetection(task) && <Button danger onClick={() => void execute(async () => { setTask(await request<Detection>(`${projectPath(project.id)}/detections/cancel`, body({}))) })}>取消偵測</Button>}
           {task && <Button onClick={() => void execute(async () => {
             const response = await fetch(`${projectPath(project.id)}/detections/${task.id}/log`)
             if (!response.ok) { const error = await response.json(); throw new Error(error.detail || '無法下載日誌') }

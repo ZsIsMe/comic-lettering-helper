@@ -38,7 +38,8 @@ class PrelayoutDetection:
             font_version = ''
         supported = self.device in ('cuda', 'mps')
         return {'assets': present, 'runtime': runtime, 'device': self.device,
-                'methods': {'single_char': supported and runtime and present['ctd'],
+                'methods': {'fixed': supported and runtime and present['ctd'],
+                            'single_char': supported and runtime and present['ctd'],
                             'ocr_aligned': supported and runtime and all(present.values())}, 'gpu_owner': self.gate.owner,
                 'font_version': font_version, 'message': '模型只供偵測與字級計算；人工編輯不需要模型。'}
 
@@ -207,7 +208,7 @@ class PrelayoutDetection:
         if self.device not in ('cuda', 'mps'):
             raise ValueError('預排版設備只接受 cuda 或 mps；不自動降級 CPU')
         method = options.get('method', 'ocr_aligned')
-        if method not in ('ocr_aligned', 'single_char'):
+        if method not in ('ocr_aligned', 'single_char', 'fixed'):
             raise ValueError('字級計算方法無效')
         base, step = options.get('font_size', 24), options.get('step', 2)
         if not isinstance(base, (float, int)) or not isinstance(step, (float, int)) or not 1 <= base <= 999 or not .1 <= step <= 100:

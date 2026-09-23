@@ -6,9 +6,9 @@ import type { PagePointer, Selection, VisibleRegion } from './geometry'
 type Row = { page: Page; top: number; height: number; scale: number }
 type Anchor = { id: string; offset: number; x: number; side: number; viewX: number; viewY: number }
 
-export function ContinuousPages({ project, controller, selection, onSelect, zoom, compare, clean, showMeasure, jump, onCurrent, onMeasure, onZoom, onPointer, onFontWheel, onInteractionChange }: {
+export function ContinuousPages({ project, controller, selection, onSelect, zoom, compare, clean, difference, differenceColor, differenceOpacity, showMeasure, jump, onCurrent, onMeasure, onZoom, onPointer, onFontWheel, onInteractionChange }: {
   project: Project; controller: EditorState; selection: Selection; onSelect: (value: Selection) => void;
-  zoom: number; compare: boolean; clean: boolean; showMeasure: boolean; jump: { id: string; version: number; y?: number } | null;
+  zoom: number; compare: boolean; clean: boolean; difference: boolean; differenceColor: string; differenceOpacity: number; showMeasure: boolean; jump: { id: string; version: number; y?: number } | null;
   onCurrent: (id: string) => void; onMeasure: (index: number, page: string) => void; onZoom: (value: number) => void;
   onPointer: (pointer: PagePointer | null) => void;
   onFontWheel: (event: WheelEvent) => boolean; onInteractionChange: (value: boolean) => void;
@@ -137,12 +137,12 @@ export function ContinuousPages({ project, controller, selection, onSelect, zoom
           const right = Math.min(row.page.width, (area.left + area.width - left - side * (width + 20)) / row.scale), bottom = Math.min(row.page.height, (area.top + area.height - row.top - 28) / row.scale)
           return right > x && bottom > y ? { x, y, width: right - x, height: bottom - y } : null
         }
-        const common = { project: project.id, page: row.page, scale: row.scale, edge, controller, selection, onSelect, onInteracting: interactionChanged, onMeasure, onPointer, detailed: settled, interacting: !!interacting, groupNames }
+        const common = { project: project.id, page: row.page, scale: row.scale, edge, controller, selection, onSelect, onInteracting: interactionChanged, onMeasure, onPointer, detailed: settled, interacting: !!interacting, groupNames, differenceColor, differenceOpacity }
         return <section className="pl-page-row" key={row.page.id} style={{ top: row.top, height: row.height, width: wide }}>
           <div className="pl-page-caption">{row.page.name}{compare ? ' · 左：預排版　右：原圖與偵測框' : clean && !row.page.clean ? ' · 原圖（尚無去字預覽）' : clean && row.page.clean_kind === 'inpainted' ? ' · inpainted 預覽' : clean ? ' · 去字圖' : ' · 原圖'}</div>
           <div className="pl-page-pair">
-            <TextPage key="editor" {...common} clean={clean} showMeasure={!compare && showMeasure} region={region(0)} />
-            {compare && <TextPage key="source" {...common} clean={false} readonly showMeasure={showMeasure} region={region(1)} />}
+            <TextPage key="editor" {...common} clean={clean} difference={difference} showMeasure={!compare && showMeasure} region={region(0)} />
+            {compare && <TextPage key="source" {...common} clean={false} difference={false} readonly showMeasure={showMeasure} region={region(1)} />}
           </div>
         </section>
       })}

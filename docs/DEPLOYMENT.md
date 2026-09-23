@@ -569,3 +569,7 @@ PDF 中文字型：支援 `CJK_FONT_PATH` 及腳本旁 `fonts/SourceHanSansTC-Re
 ## 0.2.14：內嵌工作流加速與英文 PDF
 
 三套內嵌模板啟用 Kitchen Attention、統一保留色彩和氣泡的去字提示詞；網頁直接讀應用模板。比較 PDF 改為英文並使用 Pillow 內附字型，不再依賴中文字型。當前統一提示詞顯示標示的英文翻譯，歷史非英文內容以 Unicode escapes 保留；原文及統計另存同名 `.report.json`，不修改推理提示詞。舊鏡像（ComfyUI 0.37.0／comfy-kitchen 0.2.35）5090 上兩張彩圖、三套共六次生成通過；其他環境不在本次驗收範圍。
+
+## 0.2.15：預排版分組、差異高亮與固定字級
+
+本版只更新應用程式程式碼與前端資產，不新增模型、ComfyUI 節點或 runtime contract。固定字級模式仍需要 CTD 模型與既有推理 Python，但不需要 OCR checkpoint、字表或校準字型；OCR 對齊模式的既有依賴不變。分組整理與差異高亮均不新增伺服器端資料檔。
