@@ -81,7 +81,7 @@ def export_project(store: ProjectStore, repository, pid: str) -> Path:
         thumbnails = {page.get('thumbnail') for page in project['pages']}
         for path in root.rglob('*'):
             relative = str(path.relative_to(root))
-            if relative in thumbnails or relative.split('/')[0] in {'exports', 'logs'} or path.is_dir():
+            if relative == 'repair_scope.json' or relative in thumbnails or relative.split('/')[0] in {'exports', 'logs'} or path.is_dir():
                 continue
             if path.is_symlink():
                 raise ValueError('項目封存不接受符號連結')
@@ -162,6 +162,7 @@ def import_project(store: ProjectStore, repository, archive_path: Path, max_byte
                 if digest_file(destination) != expected:
                     raise ValueError(f'封存內容校驗失敗：{name}')
         project = json.loads((stage / 'project.json').read_text())
+        project.pop('repair_scope', None)
         if project.get('version') != 1 or not project.get('pages'):
             raise ValueError('項目缺少原圖或版本不支援')
         if 'detection_options' in project:
@@ -400,6 +401,15 @@ def create_project_router(settings, repository, manager, store: ProjectStore, co
         except Exception as exc:
             fail(exc)
 
+    @router.put('/{pid}/pages/{page_id}/repair-scope')
+    def repair_scope(pid: str, page_id: str, body: dict = Body(...)):
+        try:
+            if set(body) - {'revision', 'enabled', 'rect', 'apply_all'}:
+                raise ValueError('不支援外部作用範圍設定或匯入')
+            return store.save_repair_scope(pid, page_id, body.get('revision'), body.get('enabled'), body.get('rect'), body.get('apply_all', False), repository)
+        except Exception as exc:
+            fail(exc)
+
     @router.put('/{pid}/pages/{page_id}/edit')
     async def edit(pid: str, page_id: str, expected_revision: int = Form(...), overlay: UploadFile = File(...), other: UploadFile = File(...), edited: UploadFile = File(...)):
         try:
@@ -474,6 +484,9 @@ def create_project_router(settings, repository, manager, store: ProjectStore, co
                     store.require_idle(project, repository)
                     snapshot = store.snapshot(pid, body.get('expected_revision'))
                     job_dir = repository.job_dir(job_id)
+                    geometry = {page['stem']: page['repair_rect'] for page in snapshot['pages'] if 'repair_rect' in page}
+                    if geometry:
+                        atomic_json(job_dir / 'input_geometry.json', geometry)
                     for page in snapshot['pages']:
                         for key, folder in [('source', 'pair'), ('mask', 'pair_mask')]:
                             destination = job_dir / 'uploads' / folder / f"{page['stem']}.png"

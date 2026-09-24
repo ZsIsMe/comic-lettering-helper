@@ -20,6 +20,7 @@ from .schemas import JobRecord, JobState, WorkflowId, WorkflowProgress
 from .resources import ResourceGate
 from .storage import validate_pairs
 from .workflow_progress import WORKFLOW_NAMES, TimingReader, update_progress
+from .repair_scope import box, validate_rect, paste_result
 
 
 WORKFLOW_META: dict[WorkflowId, dict[str, str]] = {
@@ -231,8 +232,13 @@ class JobManager:
         with urllib.request.urlopen(url, timeout=3) as response:
             return json.load(response)
 
+    def _input_geometry(self, record: JobRecord) -> dict:
+        path = self.repository.job_dir(record.id) / 'input_geometry.json'
+        return json.loads(path.read_text(encoding='utf-8')) if path.exists() else {}
+
     def _prepare_comfy_input(self, record: JobRecord) -> tuple[str, list[str]]:
         job_dir = self.repository.job_dir(record.id)
+        geometry = self._input_geometry(record)
         sources = job_dir / "uploads" / "pair"
         masks = job_dir / "uploads" / "pair_mask"
         batch_name = f"web_{record.id.replace('-', '')[:12]}"
@@ -251,14 +257,24 @@ class JobManager:
                 shutil.copy2(path, mask_target / f"{path.stem}.png")
 
         stems = sorted(path.stem for path in source_target.iterdir() if path.is_file())
+        if geometry and set(geometry) != set(stems):
+            raise ValueError('作用範圍與圖片未完整配對')
         for stem in stems:
             source = next(path for path in source_target.iterdir() if path.is_file() and path.stem == stem)
             mask = mask_target / f"{stem}.png"
+            if stem in geometry:
+                with Image.open(source) as image, Image.open(mask) as other:
+                    rect = validate_rect(geometry[stem], *image.size)
+                    cropped_source = image.convert('RGB').crop(box(rect))
+                    cropped_mask = other.convert('L').crop(box(rect))
+                cropped_source.save(source)
+                cropped_mask.save(mask)
             shutil.copy2(source, self.settings.comfy_input / f"{batch_name}_{source.name}")
             shutil.copy2(mask, self.settings.comfy_input / f"{batch_name}_mask_{mask.name}")
         return batch_name, stems
 
     def _prepare_existing_outputs(self, record: JobRecord, stems: list[str]) -> None:
+        geometry = self._input_geometry(record)
         for workflow in record.workflows:
             prefix = f"web_{record.id.replace('-', '')[:12]}_{WORKFLOW_META[workflow]['prefix']}_"
             for stem in stems:
@@ -269,6 +285,8 @@ class JobManager:
                             image.verify()
                         with Image.open(raw) as image:
                             image.load()
+                            if stem in geometry and image.size != (geometry[stem]['width'], geometry[stem]['height']):
+                                raise ValueError('已有推理輸出尺寸與作用範圍不一致')
                         valid = True
                     except (OSError, SyntaxError, ValueError):
                         backup = self.repository.job_dir(record.id) / "incomplete-output-backups" / raw.name
@@ -286,7 +304,11 @@ class JobManager:
                     continue
                 raw = self.settings.comfy_output / f"{prefix}{stem}_00001_.png"
                 raw.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(saved, raw)
+                if stem in geometry:
+                    with Image.open(saved) as image:
+                        image.crop(box(validate_rect(geometry[stem], *image.size))).save(raw)
+                else:
+                    shutil.copy2(saved, raw)
 
     async def _run_job(self, job_id: str) -> None:
         self._raise_if_abandoned(job_id)
@@ -559,6 +581,7 @@ class JobManager:
         require_all: bool = False,
     ) -> int:
         destination = self.repository.job_dir(record.id) / "inpaint_workflows" / WORKFLOW_META[workflow]["result_dir"]
+        geometry = self._input_geometry(record)
         destination.mkdir(parents=True, exist_ok=True)
         names: list[str] = []
         for stem in stems:
@@ -586,6 +609,11 @@ class JobManager:
                         image.verify()
                     with Image.open(temporary) as image:
                         image.load()
+                        if stem in geometry:
+                            with Image.open(self.repository.job_dir(record.id) / 'uploads' / 'pair' / f'{stem}.png') as base:
+                                restored = paste_result(base, image, geometry[stem])
+                    if stem in geometry:
+                        restored.save(temporary, format='PNG')
                     temporary.replace(target)
                 except (OSError, SyntaxError, ValueError) as exc:
                     if require_all:
@@ -632,8 +660,8 @@ class JobManager:
         stage = job_dir / "pdf-stage"
         stage.mkdir(parents=True, exist_ok=True)
         all_links = {
-            "pair": self.settings.comfy_input / batch_name / "pair",
-            "pair_mask": self.settings.comfy_input / batch_name / "pair_mask",
+            "pair": job_dir / 'uploads' / 'pair',
+            "pair_mask": job_dir / 'uploads' / 'pair_mask',
             "result_firered": results / "firered",
             "result_qwen2511_lanpaint": results / "qwen2511_lanpaint",
             "result_flux2klein_lanpaint": results / "flux2klein_lanpaint",

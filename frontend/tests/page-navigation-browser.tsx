@@ -172,6 +172,17 @@ function installMock(mock: MockProject, onRequest: (entry: RequestLog) => void) 
       return jsonResponse({ available: false, ready: false, available_without_bubbles: false, errors: ['fixture disables detection'] })
     }
     if (url.pathname === `/api/projects/${PROJECT_ID}/detection`) { log(method, 'detection', url.pathname); return jsonResponse(null) }
+    const scopeMatch = url.pathname.match(new RegExp(`^/api/projects/${PROJECT_ID}/pages/([^/]+)/repair-scope$`))
+    if (scopeMatch && method === 'PUT') {
+      const update = JSON.parse(String(init?.body))
+      const scope = mock.project.repair_scope || { enabled: false, revision: 0, pages: {} }
+      if (scope.revision !== update.revision) return jsonResponse({ detail: '作用範圍修訂衝突' }, 409)
+      scope.enabled = update.enabled; scope.revision++
+      for (const p of mock.project.pages) if (update.apply_all || p.id === scopeMatch[1]) scope.pages[p.id] = { ...update.rect }
+      mock.project.repair_scope = scope; mock.project.revision++
+      log(method, 'scope-save', url.pathname, scopeMatch[1])
+      return jsonResponse(mock.project)
+    }
     const save = url.pathname.match(new RegExp(`^/api/projects/${PROJECT_ID}/pages/([^/]+)/edit$`))
     if (save && method === 'PUT') {
       const pageId = decodeURIComponent(save[1])

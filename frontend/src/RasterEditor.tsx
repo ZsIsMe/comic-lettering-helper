@@ -12,6 +12,8 @@ import { rasterCursor } from './raster-cursors'
 import { loadSourceImage } from './source-image-cache'
 import { baselinePageLoad } from './page-load-options'
 import { measurePageStage, type PageLoadTrace } from './page-load-performance'
+import { useRepairScope } from './useRepairScope'
+import type { RepairScope, ScopeUpdate } from './repair-scope'
 
 type Pixels = { overlay: ImageData; other: ImageData; edited: ImageData; assignment: Uint16Array }
 export interface RasterSave {
@@ -21,6 +23,9 @@ export interface RasterHandle { flush: (trace?: PageLoadTrace) => Promise<boolea
 interface Candidate { code: number; label: string; url: string; diffUrl: string }
 export interface ComposeView { widths?: Record<number, string>; panelScroll?: number; operation?: SelectionOperation; category?: EditCategory; color?: string; tolerance?: number; expand?: number; intersectOffset?: number; fit?: boolean; tool?: string; size?: number; zoom?: number; compare?: number; order?: number[]; show?: boolean; x?: number; y?: number }
 interface Props {
+  scopePageId?: string
+  repairScope?: RepairScope
+  onSaveRepairScope?: (update: ScopeUpdate) => Promise<RepairScope>
   pageLoadTrace?: PageLoadTrace
   acquireWorker?: () => { client: RasterWorkerClient; reused: boolean }
   compareLayout?: 'multi' | 'context' | 'cards'
@@ -89,6 +94,7 @@ export const RasterEditor = forwardRef<RasterHandle, Props>(function RasterEdito
   const [localDraft, setLocalDraft] = useState<LocalDraft | null>(null)
   const [openingLocal, setOpeningLocal] = useState(false)
   const disabled = props.disabled || !!localDraft || openingLocal
+  const scope = useRepairScope({ pageId: props.scopePageId, initial: props.repairScope, width, height, disabled, save: props.onSaveRepairScope })
   const localBlocked = useRef(false); localBlocked.current = !!localDraft || openingLocal
   const initialView = useRef({...props.viewState?.current})
   const confirming = useRef(false)
@@ -526,7 +532,9 @@ export const RasterEditor = forwardRef<RasterHandle, Props>(function RasterEdito
     saving.current = task()
     return saving.current
   }, [])
-  useImperativeHandle(ref, () => ({ flush }), [flush])
+  const flushScope = scope.flush
+  const flushAll = useCallback(async (trace?: PageLoadTrace) => await flush(trace) && await flushScope(), [flush, flushScope])
+  useImperativeHandle(ref, () => ({ flush: flushAll }), [flushAll])
   useEffect(() => {
     if (!localDraft && !openingLocal && persisted.current < version.current) {
       timer.current = setTimeout(() => void flush(), 800)
@@ -750,7 +758,7 @@ export const RasterEditor = forwardRef<RasterHandle, Props>(function RasterEdito
   const historyControls = <div className="editor-history-controls">
     <Button size="small" disabled={disabled || !historyState[0]} onClick={() => undo()}>撤銷</Button>
     <Button size="small" disabled={disabled || !historyState[1]} onClick={() => undo(true)}>重做</Button>
-    {(mode === 'edit' || saveState.includes('失敗')) && <Button size="small" onClick={() => void flush()} disabled={disabled}>{props.local ? '更新副本' : '保存'}</Button>}
+    {(mode === 'edit' || saveState.includes('失敗')) && <Button size="small" onClick={() => void flushAll()} disabled={disabled}>{props.local ? '更新副本' : '保存'}</Button>}
     <span className="editor-save-state" role="status">{computing ? '正在處理選區…' : props.local && saveState === '已保存' ? '副本・尚未套用' : saveState}</span>
   </div>
   const zoomControls = <div className="editor-zoom-controls" onClickCapture={() => { if (props.viewState) props.viewState.current.fit = false }} onChangeCapture={() => { if (props.viewState) props.viewState.current.fit = false }}><Button size="small" aria-label="縮小圖片" onClick={() => setZoom(z => Math.max(.05, z / 1.25))}>−</Button><Button size="small" aria-label="放大圖片" onClick={() => setZoom(z => Math.min(4, z * 1.25))}>＋</Button><Button size="small" onClick={() => setZoom(1)}>原尺寸</Button><label>縮放 <InputNumber size="small" aria-label="縮放百分比" min={5} max={400} value={Math.round(zoom * 100)} onChange={v => setZoom((v || 100) / 100)} /> %</label><Button size="small" onClick={fit}>適合視窗</Button></div>
@@ -787,6 +795,7 @@ export const RasterEditor = forwardRef<RasterHandle, Props>(function RasterEdito
     if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'z') { event.preventDefault(); undo(event.shiftKey) }
   }}>
     {error && <Alert type="error" showIcon message={error} action={<Button onClick={() => { if (mode === 'compose' && persisted.current === version.current) setPreviewRetry(v => v + 1); else void flush() }}>重試</Button>} />}
+    {scope.error}
     {mode === 'edit' ? <div className="edit-control-panel">
       <div className="edit-control-row category-row">
         <span className="edit-row-label">編輯</span>
@@ -795,6 +804,7 @@ export const RasterEditor = forwardRef<RasterHandle, Props>(function RasterEdito
           <Button aria-pressed={category === 'other'} type={category === 'other' ? 'primary' : 'default'} disabled={disabled || props.local} onClick={() => chooseCategory('other')}>F2 待修補</Button>
         </div>
         {historyControls}
+        {scope.toolbar}
       </div>
       <div className="edit-control-row">
         <span className="edit-row-label">工具</span>
@@ -854,6 +864,7 @@ export const RasterEditor = forwardRef<RasterHandle, Props>(function RasterEdito
             onPointerLeave={() => { if (!gesture.current) { hover.current=null; previewMagic(null) } }} />
           {mode === 'edit' && panel.code === 0 && <canvas aria-hidden="true" className="raster-magic-preview" ref={magicCanvas} width={width} height={height} />}
           {mode === 'edit' && (panel.code === 0 || props.clipRect) && <svg aria-hidden="true" className="raster-interaction" viewBox={`0 0 ${width} ${height}`} ref={panel.code === 0 ? interactionSvg : previewClipSvg} />}
+          {mode === 'edit' && scope.overlay(panel.code === 0)}
           </div>
         </div>
       </section>)}

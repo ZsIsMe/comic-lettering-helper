@@ -363,7 +363,7 @@ footer { padding: 20px 0; color: #746e63; font-size: 12px; }
 .compact-edit .edit-row-label { display: none; }
 .compact-edit .edit-control-panel .ant-btn { height: 26px; padding: 0 7px; font-size: 12px; }
 .compact-edit .category-buttons, .compact-edit .selection-tools { gap: 3px; }
-.compact-edit .editor-history-controls { margin-left: 0; gap: 3px; }
+.compact-edit .editor-history-controls { margin-left: 0; gap: 3px; flex-basis: auto; }
 .compact-edit .editor-save-state { min-width: 45px; font-size: 11px; }
 .compact-edit .panel-controls { min-height: 0; padding: 4px 6px; gap: 4px 8px; font-size: 12px; }
 .compact-edit .canvas-panels section > strong { min-height: 0; padding: 3px 6px; }
@@ -439,6 +439,11 @@ footer { padding: 20px 0; color: #746e63; font-size: 12px; }
 /* The input overlay is independent of worker-generated full-resolution pixels. */
 .raster-stage, .raster-compose-stage { position: relative; flex: 0 0 auto; margin: auto; }
 .raster-interaction { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; overflow: hidden; }
+.repair-scope-toolbar { display: inline-flex; align-items: center; flex-wrap: wrap; gap: 4px 6px; padding: 2px 6px; border: 1px solid #bad1d6; border-radius: 6px; background: #eaf3f3; font-size: 11px; }
+.repair-scope-toolbar .ant-checkbox-wrapper { font-size: 12px; white-space: nowrap; }
+.repair-scope-saved { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.repair-scope-overlay { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; overflow: hidden; touch-action: none; }
+.repair-scope-handle:focus { outline: none; }
 
 .raster-stage > .raster-magic-preview { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; visibility: hidden; }
 

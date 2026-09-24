@@ -9,6 +9,7 @@ import { WorkflowProgressSummary } from './WorkflowProgressSummary'
 import { friendlyWorkflowText } from './workflow-progress'
 import { RasterEditor, type RasterHandle, type ComposeView, type RasterSave } from './RasterEditor'
 import { RasterWorkerOwner } from './raster-worker-owner'
+import type { ScopeUpdate } from './repair-scope'
 import { baselinePageLoad } from './page-load-options'
 import { startPageLoad, type PageLoadTrace } from './page-load-performance'
 import { clearSourceImageCache, scheduleSourceImagePreload, type SourceImageRequest } from './source-image-cache'
@@ -315,7 +316,13 @@ function ProjectWorkspace({ initial, initialError, gpuOwner, onExit, onReadyToLe
     const body = new FormData(); body.append('expected_revision', String(editRevision.current))
     body.append('overlay', data.overlay, 'overlay.png'); body.append('other', data.other, 'other.png'); body.append('edited', data.edited, 'edited.png')
     const p = await api<Project>(`${url}/pages/${page.id}/edit`, { method: 'PUT', body })
-    editRevision.current = p.pages.find(item => item.id === page.id)!.edit_revision; setProject(p)
+    editRevision.current = p.pages.find(item => item.id === page.id)!.edit_revision
+    setProject(previous => ({ ...p, revision: Math.max(previous.revision, p.revision), repair_scope: (previous.repair_scope?.revision ?? 0) > (p.repair_scope?.revision ?? 0) ? previous.repair_scope : p.repair_scope }))
+  }
+  async function saveRepairScope(update: ScopeUpdate) {
+    const p = await api<Project>(`${url}/pages/${page.id}/repair-scope`, json('PUT', update))
+    setProject(previous => ({ ...previous, repair_scope: p.repair_scope, revision: Math.max(previous.revision, p.revision) }))
+    return p.repair_scope!
   }
   async function saveComposition(data: RasterSave) {
     const c = await api<Composition>(`${compUrl}/pages/${page.id}`, json('PUT', {
@@ -432,6 +439,7 @@ function ProjectWorkspace({ initial, initialError, gpuOwner, onExit, onReadyToLe
         {detecting ? <Alert type="info" showIcon message={detection?.progress ? `${detectionLabels[detection.state] || detectionLabels[detection.progress.stage] || '自動檢測中'} · ${detection.progress.completed} / ${detection.progress.total} 頁` : detectionLabels[detection?.state || ''] || '自動檢測中，完成後即可編輯'} action={<Button danger onClick={() => void execute(async () => { await api(`${url}/detection/${detection?.state === 'recovery_required' ? 'recover' : 'cancel'}`, { method: 'POST' }); await reloadProject(); setEditorKey(k => k + 1) })}>{detection?.state === 'recovery_required' ? '檢查恢復' : '停止偵測'}</Button>} /> : <RasterEditor key={`${page.id}-${editorKey}`} ref={editor} width={page.width} height={page.height} mode="edit" viewState={editView} pageLoadTrace={pageLoadTrace} acquireWorker={baselinePageLoad() ? undefined : editWorkerOwner.acquire}
           baseUrl={assetUrl(project.id, page.source)} overlayUrl={`${assetUrl(project.id, page.overlay)}?v=${page.edit_revision}`} otherUrl={`${assetUrl(project.id, page.other)}?v=${page.edit_revision}`} editedUrl={`${assetUrl(project.id, page.edited)}?v=${page.edit_revision}`}
           detectedTextUrl={page.detected_text ? assetUrl(project.id, page.detected_text) : undefined}
+          scopePageId={page.id} repairScope={project.repair_scope} onSaveRepairScope={saveRepairScope}
           onSave={saveEdit} onDirty={setDirty} onRepairMaskChange={value => setLiveRepair(previous => ({ ...previous, [page.id]: value }))} disabled={busy} />}
         {project.pages.some(p => !p.mask_ready) && <Button disabled={busy || !!gpuOwner || detecting || !detectionCanConfigure} onClick={() => void detect(true)}>補充缺少的 Mask</Button>}
         {detection?.error && <Alert type="error" message="自動檢測未完成，請重試；若持續失敗，請聯絡管理員查看檢測日誌。" />}
