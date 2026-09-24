@@ -10,6 +10,7 @@ from app.engine import JobManager
 from app.repository import JobRepository
 from app.schemas import JobRecord, JobState
 from PIL import Image
+import pytest
 
 
 def make_manager(tmp_path):
@@ -175,6 +176,68 @@ def test_pdf_failure_still_packages_images_and_logs(tmp_path):
     with zipfile.ZipFile(root / "download.zip") as archive:
         assert len([name for name in archive.namelist() if name.endswith(".png")]) == 3
         assert b"PDF failure" in archive.read("logs/pdf.log")
+
+
+@pytest.mark.parametrize("workflows", [
+    ["flux2klein_lanpaint"],
+    ["flux2klein_lanpaint", "firered"],
+    ["flux2klein_lanpaint", "firered", "qwen2511_lanpaint"],
+])
+def test_package_generates_pdf_for_every_selected_workflow_count(tmp_path, workflows):
+    manager, repository = make_manager(tmp_path)
+    record = make_record()
+    record.workflows = workflows
+    repository.write(record)
+    root = repository.job_dir(record.id)
+    for workflow in workflows:
+        result = root / "inpaint_workflows" / workflow / "01.png"
+        result.parent.mkdir(parents=True, exist_ok=True)
+        Image.new("RGB", (4, 4)).save(result)
+
+    async def create_pdf(_record, _batch):
+        from app.engine import PDF_NAMES
+        (root / "inpaint_workflows" / f"{record.name}-{PDF_NAMES[len(workflows)]}.pdf").write_bytes(b"comparison")
+
+    manager._generate_compare_pdf = AsyncMock(side_effect=create_pdf)
+    assert asyncio.run(manager._package(record, "batch")) is None
+    manager._generate_compare_pdf.assert_awaited_once_with(record, "batch")
+    with zipfile.ZipFile(root / "download.zip") as archive:
+        assert len([name for name in archive.namelist() if name.endswith(".png")]) == len(workflows)
+        assert len([name for name in archive.namelist() if name.endswith(".pdf")]) == 1
+
+
+@pytest.mark.parametrize("workflows", [
+    ["firered"],
+    ["qwen2511_lanpaint", "flux2klein_lanpaint"],
+])
+def test_pdf_process_receives_only_selected_workflows(tmp_path, monkeypatch, workflows):
+    manager, repository = make_manager(tmp_path)
+    record = make_record()
+    record.workflows = workflows
+    repository.write(record)
+    (repository.job_dir(record.id) / "logs").mkdir()
+    calls = []
+
+    class Process:
+        returncode = 0
+
+        async def communicate(self):
+            return b"generated", b""
+
+    async def start(*args, **kwargs):
+        calls.append(args)
+        return Process()
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", start)
+    asyncio.run(manager._generate_compare_pdf(record, "batch"))
+
+    command = calls[0]
+    assert command[command.index("--workflows") + 1:] == tuple(workflows)
+    stage = repository.job_dir(record.id) / "pdf-stage"
+    assert (stage / "pair").is_symlink()
+    assert (stage / "pair_mask").is_symlink()
+    for workflow in ["firered", "qwen2511_lanpaint", "flux2klein_lanpaint"]:
+        assert (stage / f"result_{workflow}").is_symlink() == (workflow in workflows)
 
 
 def test_pdf_abandon_does_not_become_success(tmp_path):

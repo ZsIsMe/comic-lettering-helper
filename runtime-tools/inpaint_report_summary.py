@@ -75,13 +75,14 @@ def date_text(value):
         return 'Not recorded'
 
 
-def collect_report(root, logs_dir=None, job_file=None, environment_file=None, counts=None, model_files=None, prompts=None):
+def collect_report(root, logs_dir=None, job_file=None, environment_file=None, counts=None, model_files=None, prompts=None, workflows=None):
     root = Path(root)
     logs = Path(logs_dir) if logs_dir else root / 'logs'
+    selected = tuple((key, label) for key, label in WORKFLOWS if workflows is None or key in workflows)
     job = read_json(job_file or root / 'job.json')
     environment = read_json(environment_file or logs / 'environment.json')
     if not environment and environment_file is None:
-        for workflow, _ in WORKFLOWS:
+        for workflow, _ in selected:
             environment = read_json(logs / f'{workflow}_environment.json')
             if environment:
                 break
@@ -90,7 +91,7 @@ def collect_report(root, logs_dir=None, job_file=None, environment_file=None, co
               'black_count': (counts or {}).get('black', job.get('black_mask_count')),
               'environment': environment, 'models': [], 'notes': []}
     gpu_names, totals = set(), []
-    for workflow, label in WORKFLOWS:
+    for workflow, label in selected:
         summary = read_json(logs / f'{workflow}_vram_summary.json')
         progress = job.get('workflow_progress', {}).get(workflow, {})
         previous = read_rows(logs / 'before-auto-recovery' / f'{workflow}.log')

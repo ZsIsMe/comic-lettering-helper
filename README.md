@@ -118,6 +118,7 @@ PYTHONPATH=backend /root/comic-prelayout-venv/bin/python -m prelayout_core.check
 - 原圖接受 PNG／JPG／JPEG，Mask 接受 PNG；文件夾僅匯入第一層，忽略 `._*`，重新選擇整批取代，按 stem 配對並拒絕重名、缺頁和尺寸不符。
 - 待修補 Mask 灰階值大於等於 128 為白色修補區。缺少 Mask 不等於全黑 Mask。Qwen 2.1 接收原圖及獨立 Mask；工作流先補洞、擴張 8px，使用相同遮罩回貼 RGB 修復區。
 - 全黑頁沿用**當次底圖**，仍保留完整輸出集合。整批全黑不等待 ComfyUI、不載入修復模型，也不產生無內容的比較 PDF。
+- 選擇一、二或三套修復工作流，都會把比較 PDF 放進候選結果 ZIP。PDF 先顯示原圖 + Mask，再依 Flux、FireRed、Qwen 的固定順序顯示本次選中的結果；全黑 Mask 頁略過。
 - 偵測與修復共用單一 GPU 保留鎖；忙碌時拒絕新提交。RF、MangaLens 及三套修復模型均不並行常駐。
 - 模型缺失只禁用第一部分偵測，不影響匯入 Mask、人工編輯或第二部分。普通編輯與合成不觸發模型。
 

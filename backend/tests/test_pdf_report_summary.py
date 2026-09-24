@@ -2,6 +2,7 @@ import importlib.util
 import json
 import sys
 from pathlib import Path
+import pytest
 
 TOOLS = Path(__file__).resolve().parents[2] / 'runtime-tools'
 spec = importlib.util.spec_from_file_location('report_summary_test', TOOLS / 'inpaint_report_summary.py')
@@ -76,6 +77,33 @@ def test_generator_passes_report_before_comparison_pages_without_writing_pdf(tmp
     monkeypatch.setattr(Image.Image, 'save', save)
     generator.build_pdf(tmp_path, tmp_path / 'out.pdf', .4)
     assert captured == {'first_pixel': (0, 0, 255), 'following_pages': 1}
+
+
+@pytest.mark.parametrize("workflows", [
+    ("firered",),
+    ("qwen2511_lanpaint", "flux2klein_lanpaint"),
+    ("flux2klein_lanpaint", "firered", "qwen2511_lanpaint"),
+])
+def test_generator_uses_only_selected_workflow_columns(tmp_path, monkeypatch, workflows):
+    from PIL import Image
+    monkeypatch.syspath_prepend(str(TOOLS))
+    spec = importlib.util.spec_from_file_location('compare_selected_test', TOOLS / 'make_three_model_inpaint_compare_pdf.py')
+    generator = importlib.util.module_from_spec(spec); spec.loader.exec_module(generator)
+    for folder in ['pair', 'pair_mask', *(f'result_{key}' for key in workflows)]:
+        path = tmp_path / folder; path.mkdir()
+        Image.new('RGB', (8, 8), 'white').save(path / 'edit.png')
+    pasted = []
+    monkeypatch.setattr(generator, 'draw_cover', lambda *args: Image.new('RGB', (16, 16)))
+    monkeypatch.setattr(generator, '_as_jpeg_image', lambda page: page.copy())
+    monkeypatch.setattr(generator, 'paste_centered', lambda canvas, image, box: pasted.append(box))
+    monkeypatch.setattr(Image.Image, 'save', lambda *args, **kwargs: None)
+
+    generator.build_pdf(tmp_path, tmp_path / 'out.pdf', .4, workflows=workflows)
+
+    saved = json.loads((tmp_path / 'out.report.json').read_text())
+    expected = [key for key in generator.WORKFLOW_LABELS if key in workflows]
+    assert [model['name'] for model in saved['models']] == [generator.WORKFLOW_LABELS[key] for key in expected]
+    assert len(pasted) == len(workflows) + 1
 
 
 def test_cover_uses_saved_execution_snapshot(tmp_path):

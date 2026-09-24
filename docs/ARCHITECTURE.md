@@ -124,7 +124,7 @@ CTD 階段沿用來源核心的 OpenCV Telea 生成 `output/inpainted/<stem>.png
 - 同一個批次可選擇一套或多套正式工作流；多套工作流一律在單張 GPU 上串行執行。
 - 對 Qwen 隱藏 RGBA 輸入差異：Web 端仍只接收普通原圖與獨立 Mask。
 - 每個工作流保存逐批日誌與每秒一次的整卡顯存採樣。
-- 完成後提供一個可直接解壓使用的下載包；三套工作流全選時另外生成比較 PDF。
+- 完成後提供一個可直接解壓使用的下載包；選擇一、二或三套工作流均生成比較 PDF。
 - 保留既有、已實測的工作流 JSON 與批次器，不在 Web 層重新推導或改寫推理參數。
 
 ## 組件與連線
@@ -264,7 +264,7 @@ inpaint_workflows/
 ├── firered/
 ├── qwen2511_lanpaint/
 ├── flux2klein_lanpaint/
-└── <批次名>-三工作流對比.pdf
+└── <批次名>-<單／雙／三工作流對比>.pdf
 logs/
 ├── <workflow>.log
 ├── <workflow>_vram.csv
@@ -272,7 +272,7 @@ logs/
 └── ...
 ```
 
-比較 PDF 只在三套正式工作流全部選中時生成，欄位從左到右固定為：
+只要有非全黑 Mask 頁，任何一、二或三套正式工作流完成後均生成比較 PDF。欄位先放原圖 + Mask，再依下列固定順序放本次選中的工作流：
 
 1. 原圖 + Mask
 2. Flux2 Klein FP8 + LanPaint

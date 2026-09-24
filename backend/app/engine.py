@@ -37,6 +37,8 @@ WORKFLOW_META: dict[WorkflowId, dict[str, str]] = {
     },
 }
 
+PDF_NAMES = {1: "單工作流對比", 2: "雙工作流對比", 3: "三工作流對比"}
+
 
 class ComfyUnavailable(RuntimeError):
     """The model service stopped responding; safe to attempt one recovery."""
@@ -607,7 +609,7 @@ class JobManager:
         logs = job_dir / "logs"
         logs.mkdir(parents=True, exist_ok=True)
         warning = None
-        if set(record.workflows) == set(WORKFLOW_META):
+        if record.workflows:
             try:
                 await self._generate_compare_pdf(record, batch_name)
             except JobAbandoned:
@@ -616,8 +618,9 @@ class JobManager:
                 warning = "圖片已完成；比較 PDF 生成失敗，圖片與日誌仍可下載"
                 with (logs / "pdf.log").open("a", encoding="utf-8") as log:
                     log.write(f"\nPDF 附加輸出失敗：{type(exc).__name__}: {exc}\n")
-                pdf = job_dir / "inpaint_workflows" / f"{record.name}-三工作流對比.pdf"
+                pdf = job_dir / "inpaint_workflows" / f"{record.name}-{PDF_NAMES[len(record.workflows)]}.pdf"
                 pdf.unlink(missing_ok=True)
+                pdf.with_suffix(".report.json").unlink(missing_ok=True)
         self._raise_if_abandoned(record.id)
         self._write_archive(job_dir, job_dir / "download.zip")
         return warning
@@ -628,18 +631,20 @@ class JobManager:
         logs = job_dir / "logs"
         stage = job_dir / "pdf-stage"
         stage.mkdir(parents=True, exist_ok=True)
-        links = {
+        all_links = {
             "pair": self.settings.comfy_input / batch_name / "pair",
             "pair_mask": self.settings.comfy_input / batch_name / "pair_mask",
             "result_firered": results / "firered",
             "result_qwen2511_lanpaint": results / "qwen2511_lanpaint",
             "result_flux2klein_lanpaint": results / "flux2klein_lanpaint",
         }
+        links = {key: target for key, target in all_links.items()
+                 if key in ("pair", "pair_mask") or key.removeprefix("result_") in record.workflows}
         for name, target in links.items():
             link = stage / name
             link.unlink(missing_ok=True)
             link.symlink_to(target, target_is_directory=True)
-        pdf = results / f"{record.name}-三工作流對比.pdf"
+        pdf = results / f"{record.name}-{PDF_NAMES[len(record.workflows)]}.pdf"
         process = await asyncio.create_subprocess_exec(
             self.settings.python_bin,
             str(self.settings.tools_root / "make_three_model_inpaint_compare_pdf.py"),
@@ -648,6 +653,7 @@ class JobManager:
             str(pdf),
             "--logs-dir", str(logs),
             "--job-file", str(job_dir / "job.json"),
+            "--workflows", *record.workflows,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.STDOUT,
             start_new_session=True,
