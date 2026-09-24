@@ -310,6 +310,8 @@ class PrelayoutDetection:
                 for page, background, relative in pending:
                     shutil.copyfile(background, self.store.directory(pid) / relative)
                     page.update(clean=relative, clean_kind='inpainted')
+            for page in project['pages']:
+                page.pop('reviewed_revision', None)
             project['detection_id'] = did
             project['revision'] += 1
             self.store.write(project)

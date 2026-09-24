@@ -1,0 +1,19 @@
+:root { --app-statusbar-height: 36px; }
+.app-statusbar {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  height: var(--app-statusbar-height);
+  padding: 4px 16px;
+  box-sizing: border-box;
+  white-space: nowrap;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: thin;
+}
+.app-statusbar > :first-child { margin-inline-start: auto; }
+.app-status-group { display: flex; align-items: center; gap: 8px; flex: 0 0 auto; }
+.app-status-group .ant-tag { margin-inline-end: 0; }
+.app-service-message { max-width: 320px; padding: 1px 8px; }
+.app-service-message .ant-alert-message { overflow: hidden; text-overflow: ellipsis; }
+:root:has(.pl-focus-mode) .app-statusbar { display: none; }

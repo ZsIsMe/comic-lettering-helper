@@ -15,6 +15,8 @@ export function ContinuousPages({ project, controller, selection, onSelect, zoom
 }) {
   const viewport = useRef<HTMLDivElement>(null)
   const [area, setArea] = useState({ top: 0, left: 0, width: 900, height: 800 })
+  const measuredArea = useRef({ top: area.top, left: area.left, width: area.width })
+  measuredArea.current = { top: area.top, left: area.left, width: area.width }
   const [interacting, setInteracting] = useState<string | null>(null)
   const interactionChanged = useCallback((id: string | null) => { setInteracting(id); onInteractionChange(id !== null) }, [onInteractionChange])
   const [settled, setSettled] = useState(false)
@@ -83,19 +85,23 @@ export function ContinuousPages({ project, controller, selection, onSelect, zoom
         }
       } catch { /* Local preferences never replace project data. */ }
     } else if (restored.current && previousRows.current.length && previousRows.current !== rows) {
-      const old = previousRows.current.find(row => row.top + row.height > element.scrollTop)
+      // The browser may clamp scrollTop as soon as the new track is laid out.
+      // area still holds the last position measured against previousRows.
+      const oldPosition = measuredArea.current
+      const old = previousRows.current.find(row => row.top + row.height > oldPosition.top)
       let target = anchor.current
       if (!target && old) {
         const width = old.page.width * old.scale, sides = previousCompare.current ? 2 : 1
         const left = (previousWide.current - width * sides - (sides === 2 ? 20 : 0)) / 2
-        target = { id: old.page.id, offset: (element.scrollTop - old.top - 28) / old.scale,
-          x: (element.scrollLeft + element.clientWidth / 2 - left) / old.scale, side: 0, viewX: element.clientWidth / 2, viewY: 0 }
+        target = { id: old.page.id, offset: (oldPosition.top - old.top - 28) / old.scale,
+          x: (oldPosition.left + oldPosition.width / 2 - left) / old.scale, side: 0, viewX: element.clientWidth / 2, viewY: 0 }
       }
       const row = rows.find(row => row.page.id === target?.id)
       if (row && target) {
         const width = row.page.width * row.scale, left = (wide - width * (compare ? 2 : 1) - (compare ? 20 : 0)) / 2
         element.scrollTop = row.top + 28 + target.offset * row.scale - target.viewY
         element.scrollLeft = left + (compare ? target.side : 0) * (width + 20) + target.x * row.scale - target.viewX
+        currentCallback.current(row.page.id)
       }
     }
     previousRows.current = rows; previousWide.current = wide; previousCompare.current = compare; anchor.current = null

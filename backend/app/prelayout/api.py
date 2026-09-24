@@ -118,6 +118,10 @@ def router(store, detector, max_bytes):
             raise HTTPException(400, '缺少有效操作 ID')
         return call(store.save_page, pid, page_id, data.get('expected_revision'), data.get('items'), data['operation_id'])
 
+    @api.put('/projects/{pid}/pages/{page_id}/review')
+    def review(pid: str, page_id: str, data: dict = Body(...)):
+        return call(store.review_page, pid, page_id, data.get('expected_revision'), data.get('reviewed'))
+
     @api.post('/projects/{pid}/imports')
     async def import_data(pid: str, kind: str = Form(...), expected_revision: int = Form(...), apply: bool = Form(False), files: list[UploadFile] = File(...)):
         async with upload_slots:

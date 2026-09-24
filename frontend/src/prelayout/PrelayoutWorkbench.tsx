@@ -10,6 +10,8 @@ import { pasteFrame } from './frame-clipboard'
 import { useFrameClipboard } from './use-frame-clipboard'
 import { ShortcutHelp } from './ShortcutHelp'
 import { GroupName } from './GroupName'
+import { PageNavigation, type PageRange } from './PageNavigation'
+import { usePrelayoutAgent } from './usePrelayoutAgent'
 import './styles.css'
 
 const showCleanUpload = false
@@ -91,6 +93,14 @@ function Workspace({ project: initial, promptDetection, onExit, onReadyToLeave }
   const controller = useMemo(() => new EditorState(initial.id), [initial.id])
   useSyncExternalStore(callback => controller.subscribe('*', callback), () => controller.tick('*'))
   const [selection, setSelection] = useState<Selection>({ page: initial.pages[0].id, ids: [] })
+  const [range, setRange] = useState<PageRange>(() => {
+    try {
+      const saved: unknown = JSON.parse(localStorage.getItem(`pl-review-range-${initial.id}`) || 'null')
+      if (Array.isArray(saved) && saved.length === 2 && saved.every(value => Number.isInteger(value)) && saved[0] >= 1 && saved[0] <= saved[1] && saved[1] <= initial.pages.length) return [saved[0], saved[1]]
+    } catch { /* Use the full range when a preference is unavailable. */ }
+    return [1, initial.pages.length]
+  })
+  const [focus, setFocus] = useState(false)
   const [view] = useState(() => { try { return JSON.parse(localStorage.getItem(`pl-view-${initial.id}`) || '{}') } catch { return {} } })
   const [differenceStyle] = useState(differenceStylePreference)
   const [current, setCurrent] = useState(initial.pages[0].id), [zoom, setZoom] = useState<number>(Math.max(.5, Math.min(3, Number(view.zoom) || 1))), [compare, setCompare] = useState(view.compare !== false), [clean, setClean] = useState(view.clean !== false), [difference, setDifference] = useState(view.difference === true), [showMeasure, setShowMeasure] = useState(view.showMeasure !== false)
@@ -132,6 +142,7 @@ function Workspace({ project: initial, promptDetection, onExit, onReadyToLeave }
   const hasClean = project.pages.some(page => page.clean)
   const errors = [...controller.pages.values()].map(state => state.error).filter(Boolean)
   const saving = [...controller.pages.values()].some(state => state.saving)
+  useEffect(() => { try { localStorage.setItem(`pl-review-range-${initial.id}`, JSON.stringify(range)) } catch { /* Optional range preference. */ } }, [initial.id, range])
   useEffect(() => { try { localStorage.setItem(`pl-view-${initial.id}`, JSON.stringify({ zoom, compare, clean, difference, showMeasure })) } catch { /* Optional view preferences. */ } }, [initial.id, zoom, compare, clean, difference, showMeasure])
   useEffect(() => { try { localStorage.setItem('pl-difference-style', JSON.stringify({ color: differenceColor, opacity: differenceOpacity })) } catch { /* Optional browser preference. */ } }, [differenceColor, differenceOpacity])
   useEffect(() => {
@@ -210,9 +221,39 @@ function Workspace({ project: initial, promptDetection, onExit, onReadyToLeave }
     if (!state) return
     controller.edit(selection.page, state.data.items.map(item => selection.ids.includes(item._id) ? { ...item, ...changes, match_status: 'manual' } : item))
   }, [controller, selection])
+  const moveSelected = (axis: 'x' | 'y', value: number | null) => {
+    if (value === null || !Number.isFinite(value) || !state || !first) return
+    const delta = value - first[axis] * (axis === 'x' ? state.data.width : state.data.height)
+    if (!delta) return
+    controller.edit(selection.page, state.data.items.map(item => selection.ids.includes(item._id)
+      ? moved(item, axis === 'x' ? delta : 0, axis === 'y' ? delta : 0, state.data.width, state.data.height) : item))
+  }
   const select = useCallback((value: Selection) => setSelection(value), [])
   const currentPage = useCallback((id: string) => { setCurrent(id); setSelection(value => value.ids.length ? value : { page: id, ids: [] }) }, [])
   function go(id: string) { setJump({ id, version: Date.now() }); setCurrent(id); setSelection({ page: id, ids: [] }) }
+  const isReviewed = (page: Project['pages'][number]) => {
+    const loaded = controller.pages.get(page.id)
+    if (loaded?.dirty) return false
+    if (!loaded || loaded.data.revision < page.revision) return page.reviewed_revision === page.revision
+    if (loaded.data.revision > page.revision) return loaded.data.reviewed_revision === loaded.data.revision
+    return page.reviewed_revision === page.revision && loaded.data.reviewed_revision === loaded.data.revision
+  }
+  async function setReviewed(reviewed: boolean) {
+    await controller.markReviewed(current, reviewed)
+    setProject(await request<Project>(projectPath(project.id)))
+  }
+  async function finishAndNext() {
+    const number = project.pages.findIndex(page => page.id === current) + 1
+    if (number >= range[0] && number <= range[1]) await controller.markReviewed(current, true)
+    const fresh = await request<Project>(projectPath(project.id))
+    setProject(fresh)
+    const subset = fresh.pages.slice(range[0] - 1, range[1])
+    const start = subset.findIndex(page => page.id === current)
+    const ordered = start < 0 ? subset : [...subset.slice(start + 1), ...subset.slice(0, start + 1)]
+    const pending = ordered.find(page => !isReviewed(page))
+    if (pending) go(pending.id)
+    else notices.success('範圍內所有頁面已完成')
+  }
   function add(template?: Item, atPointer = false) {
     const position = atPointer ? pointer.current : null
     const page = project.pages.find(page => page.id === (position?.page || current)) || project.pages[0]
@@ -232,9 +273,10 @@ function Workspace({ project: initial, promptDetection, onExit, onReadyToLeave }
     controller.edit(selection.page, [...state.data.items, ...added]); setSelection(value => ({ ...value, ids: added.map(item => item._id) }))
   }
   async function nextPending() {
-    const start = Math.max(0, project.pages.findIndex(page => page.id === selection.page))
-    for (let offset = 0; offset <= project.pages.length; offset++) {
-      const page = project.pages[(start + offset) % project.pages.length], state = await controller.load(page.id)
+    const pages = project.pages.slice(range[0] - 1, range[1])
+    const start = Math.max(0, pages.findIndex(page => page.id === selection.page))
+    for (let offset = 0; offset < pages.length; offset++) {
+      const page = pages[(start + offset) % pages.length], state = await controller.load(page.id)
       const after = offset === 0 ? state.data.items.findIndex(item => selection.ids.includes(item._id)) : -1
       const item = state.data.items.find((item, i) => i > after && ['unmatched', 'duplicate'].includes(item.match_status || ''))
       if (item) { setCurrent(page.id); setSelection({ page: page.id, ids: [item._id] }); setJump({ id: page.id, y: item.y, version: Date.now() }); return }
@@ -276,6 +318,7 @@ function Workspace({ project: initial, promptDetection, onExit, onReadyToLeave }
   }
   useEffect(() => {
     function key(event: KeyboardEvent) {
+      if (event.key === 'Escape' && focus && !shortcutBlocked(event)) { event.preventDefault(); setFocus(false); return }
       if (shortcutBlocked(event) || event.isComposing || event.keyCode === 229) return
       const meta = event.metaKey || event.ctrlKey
       if (meta && !event.altKey && event.key.toLowerCase() === 's') { event.preventDefault(); void controller.flush(); return }
@@ -311,7 +354,10 @@ function Workspace({ project: initial, promptDetection, onExit, onReadyToLeave }
     if (!list.length || !await controller.flush()) return
     const fresh = await request<Project>(projectPath(project.id))
     const form = new FormData(); form.append('kind', importKind.current); form.append('expected_revision', String(fresh.revision)); list.forEach(file => form.append('files', file, file.name))
-    if (importKind.current === 'clean') { setProject(await request<Project>(`${projectPath(project.id)}/imports`, { method: 'POST', body: form })); return }
+    if (importKind.current === 'clean') {
+      const result = await request<Project>(`${projectPath(project.id)}/imports`, { method: 'POST', body: form })
+      await controller.reload(); setProject(result); return
+    }
     const summary = await request<{ pages: number; items: number; groups: { name: string }[] }>(`${projectPath(project.id)}/imports`, { method: 'POST', body: form })
     modal.confirm({ title: '確認匯入譯稿', okText: '匯入', cancelText: '取消', content: <><p>{summary.pages} 頁，共 {summary.items} 條文字。對應頁面會替換為本次譯稿。</p><p>分組：{summary.groups.length ? summary.groups.map((group, index) => <span key={`${index}-${group.name}`}><GroupName name={group.name} index={index} />{index < summary.groups.length - 1 ? '、' : ''}</span>) : '無分組'}；所有分組均保留。</p></>, onOk: () => execute(async () => {
       form.set('apply', 'true'); const result = await request<Project>(`${projectPath(project.id)}/imports`, { method: 'POST', body: form })
@@ -328,7 +374,9 @@ function Workspace({ project: initial, promptDetection, onExit, onReadyToLeave }
     const size = measure.font_size || first?.['font-size'] || 40
     patch({ x: center[0], y: center[1], xyxy_pixel: box, 'font-size': size, orientation: measure.orientation === 'horizontal' ? 'horizontal' : 'vertical', ...measureStyle(measure, size) })
   }, [controller, first, patch, selection, notices])
-  return <main className="pl-shell pl-workspace">{modalContext}{noticesContext}
+  const agent = usePrelayoutAgent({ controller, project, current, busy, fontReady, interacting, range, compare, difference, zoom, focus, clean,
+    go, setCompare, setDifference, setZoom, setFocus, refreshProject: async () => setProject(await request<Project>(projectPath(project.id))) })
+  return <main className={`pl-shell pl-workspace ${focus ? 'pl-focus-mode' : ''}`}>{modalContext}{noticesContext}{agent.review}
     <Modal title="預排版快捷鍵與滑鼠操作" open={shortcutOpen} onCancel={() => setShortcutOpen(false)} width="calc(100vw - 32px)" centered className="pl-shortcut-modal" footer={<Button onClick={() => setShortcutOpen(false)}>關閉</Button>}>
       <ShortcutHelp collapsible={false} />
     </Modal>
@@ -362,6 +410,7 @@ function Workspace({ project: initial, promptDetection, onExit, onReadyToLeave }
       {(['bt', 'labelplus', 'clean'] as const).filter((kind): boolean => kind !== 'clean' || showCleanUpload).map(kind => <Button key={kind} disabled={busy} onClick={() => { importKind.current = kind; if (fileInput.current) { fileInput.current.accept = kind === 'bt' ? '.json' : kind === 'labelplus' ? '.txt' : '.png,.jpg,.jpeg'; fileInput.current.multiple = kind === 'clean'; fileInput.current.click() } }}>{kind === 'bt' ? '開啟 Meo.json' : kind === 'labelplus' ? '匯入LP.txt' : '上傳去字圖'}</Button>)}
       <input hidden ref={fileInput} type="file" onChange={e => { const list = files(e.target.files); e.target.value = ''; void execute(() => importFile(list)) }} />
       <Button onClick={() => add()}>新增文字</Button><Button onClick={() => void execute(openGroupOrganizer)}>整理分組</Button><Button onClick={() => controller.undo(selection.page)}>撤銷</Button><Button onClick={() => controller.undo(selection.page, true)}>重做</Button>
+      <Button disabled={!agent.hasReview} onClick={() => void agent.openReview().catch(e => setError(e.message))}>局部前後對比</Button>
       <Select aria-label="縮放" title="相對適合寬度的縮放比例" value={zoom} onChange={setZoom} options={[...new Set([.5, .75, 1, 1.5, 2, 3, zoom])].sort((a, b) => a - b).map(value => ({ value, label: value === 1 ? '適合寬度' : `${Math.round(value * 100)}%` }))} />
       <Checkbox checked={compare} onChange={e => setCompare(e.target.checked)}>原圖對照</Checkbox><Checkbox checked={clean} onChange={e => setClean(e.target.checked)}>去字底圖</Checkbox><Checkbox checked={difference} disabled={!hasClean} title="以自訂顏色顯示原圖與去字圖的像素差異；只在記憶體計算。快捷鍵：H" onChange={e => setDifference(e.target.checked)}>差異高亮（H）</Checkbox>
       <label className="pl-difference-setting" title="差異高亮顏色">顏色<input aria-label="差異高亮顏色" type="color" value={differenceColor} disabled={!hasClean} onChange={event => setDifferenceColor(event.target.value)} /></label>
@@ -369,13 +418,15 @@ function Workspace({ project: initial, promptDetection, onExit, onReadyToLeave }
       <Checkbox checked={showMeasure} onChange={e => setShowMeasure(e.target.checked)}>偵測框</Checkbox>
     </Space></div>
     {(error || errors.length > 0) && <Alert type="error" message={error || errors[0]} closable onClose={() => setError('')} />}
-    <nav className="pl-pages-nav" aria-label="頁面導覽"><div className="pl-section-label">{project.pages.length} 頁</div>{project.pages.map((page, index) => <button key={page.id} className={current === page.id ? 'active' : ''} aria-current={current === page.id ? 'page' : undefined} title={page.name} onClick={() => go(page.id)}><span>{String(index + 1).padStart(2, '0')}</span><span>{page.name}</span></button>)}</nav>
+    <PageNavigation pages={project.pages} current={current} range={range} onRange={setRange} onGo={go} reviewed={isReviewed}
+      onReview={reviewed => void execute(() => setReviewed(reviewed))} onFinishAndNext={() => void execute(finishAndNext)} busy={busy || saving} focus={focus} onFocus={setFocus} />
     <div className="pl-layout">
       <ContinuousPages project={project} controller={controller} selection={selection} onSelect={select} zoom={zoom} onZoom={setZoom} compare={compare} clean={clean} difference={difference} differenceColor={differenceColor} differenceOpacity={differenceOpacity} showMeasure={showMeasure} jump={jump} onCurrent={currentPage} onMeasure={onMeasure} onPointer={pointerChanged} onFontWheel={fontWheel} onInteractionChange={interactionChanged} />
       <aside className="pl-inspector">
         <div className="pl-inspector-title"><h2>文字編輯</h2><Tooltip title="雙擊頁面文字可原位編輯；Mac 也可用 ⌘＋單擊，並支援直排。Enter 換行；⌘／Ctrl＋Enter 完成；Esc 保存並結束編輯。"><button type="button" className="pl-help" aria-label="文字編輯說明">?</button></Tooltip></div>{state?.conflict && <Space wrap><Button onClick={() => void execute(() => controller.resolve(selection.page, true))}>保留我的草稿</Button><Button onClick={() => void execute(() => controller.resolve(selection.page, false))}>載入伺服器版</Button></Space>}
         <details open className="pl-groups-top"><summary>分組</summary><Space wrap>{groupNames.map((name, index) => <Tooltip key={`${index}-${name}`} title={selected.length ? `切換選取文字至「${name}」` : '請先選取文字'}><Button size="small" type={selectedGroupIds.size === 1 && selectedGroupId === index ? 'primary' : 'default'} disabled={!selected.length} onClick={() => patch({ groupId: index })}><GroupName name={name} index={index} /></Button></Tooltip>)}{!groupNames.length && <span className="pl-muted">尚無分組</span>}<Button size="small" onClick={() => void execute(openGroupOrganizer)}>整理分組</Button></Space></details>
         {first ? <><label>文字 {selected.length > 1 && `· 已選 ${selected.length} 條`}<Input.TextArea rows={5} value={first.text} onChange={e => patch({ text: e.target.value })} /></label>
+          <div className="pl-two-fields"><label>X 位置（像素）<InputNumber aria-label="X 位置（像素）" min={0} max={state?.data.width} step={1} precision={1} value={state ? Math.round(first.x * state.data.width * 10) / 10 : 0} onChange={value => moveSelected('x', value)} /></label><label>Y 位置（像素）<InputNumber aria-label="Y 位置（像素）" min={0} max={state?.data.height} step={1} precision={1} value={state ? Math.round(first.y * state.data.height * 10) / 10 : 0} onChange={value => moveSelected('y', value)} /></label></div>
           <div className="pl-two-fields"><label>角度<InputNumber aria-label="角度" value={first.rotation} min={-180} max={180} step={1} onChange={v => v !== null && patch({ rotation: v })} /></label><label>方向<Select value={first.orientation} onChange={v => patch({ orientation: v })} options={[{ value: 'vertical', label: '直排' }, { value: 'horizontal', label: '橫排' }]} /></label></div>
           <div className="pl-four-fields"><label>字級<InputNumber aria-label="字級" value={first['font-size']} min={1} max={999} onChange={v => v !== null && patch({ 'font-size': v })} /></label><label>文字色<input aria-label="文字色" type="color" value={color(first.color)} onChange={e => patch({ color: e.target.value })} /></label><label>描邊粗細<InputNumber aria-label="描邊粗細" min={0} max={99} value={first['stroke-weight']} onChange={v => v !== null && patch({ 'stroke-weight': v })} /></label><label>描邊色<input aria-label="描邊色" type="color" value={color(first['stroke-color'])} onChange={e => patch({ 'stroke-color': e.target.value })} /></label></div>
           <Space wrap><Button onClick={duplicate}>複製</Button><Button danger onClick={() => { if (state) controller.edit(selection.page, state.data.items.filter(item => !selection.ids.includes(item._id))); setSelection(value => ({ ...value, ids: [] })) }}>刪除</Button><Button onClick={() => void execute(async () => { const values = [...clipboard, { ...first, _id: uid() }]; await request(`${base}/preferences`, body(values, 'PUT')); setClipboard(values) })}>加入常用框</Button></Space>

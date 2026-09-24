@@ -101,6 +101,60 @@ def test_revision_idempotency_and_precision(store, project):
     assert exported['text'] == '測試\n文字'
 
 
+def test_page_review_api_requires_current_revision_and_strict_types(store, project):
+    pid, page = project['id'], project['pages'][0]
+    app = FastAPI()
+    app.include_router(router(store, PrelayoutDetection(Settings(), store, ResourceGate()), 10_000_000))
+    url = f'/api/prelayout/projects/{pid}/pages/{page["id"]}'
+    with TestClient(app) as client:
+        saved = client.patch(f'{url}/text', json={'items': [item()], 'expected_revision': 0, 'operation_id': 'save-review-test'})
+        assert saved.status_code == 200 and saved.json()['revision'] == 1
+        reviewed = client.put(f'{url}/review', json={'expected_revision': 1, 'reviewed': True})
+        assert reviewed.status_code == 200
+        assert reviewed.json()['reviewed_revision'] == 1
+        assert reviewed.json()['items'] == saved.json()['items']
+        assert store.read(pid)['pages'][0]['reviewed_revision'] == 1
+        for revision in (0, 2):
+            assert client.put(f'{url}/review', json={'expected_revision': revision, 'reviewed': False}).status_code == 409
+        for revision in (True, 1.0, '1', None):
+            assert client.put(f'{url}/review', json={'expected_revision': revision, 'reviewed': False}).status_code == 400
+        for reviewed_value in (1, 'true', None):
+            assert client.put(f'{url}/review', json={'expected_revision': 1, 'reviewed': reviewed_value}).status_code == 400
+        assert client.patch(f'{url}/text', json={'items': [item()], 'expected_revision': 1, 'operation_id': 'after-review'}).status_code == 200
+        assert 'reviewed_revision' not in client.get(url).json()
+        assert client.put(f'{url}/review', json={'expected_revision': 1, 'reviewed': True}).status_code == 409
+        assert client.put(f'{url}/review', json={'expected_revision': 2, 'reviewed': True}).status_code == 200
+        cancelled = client.put(f'{url}/review', json={'expected_revision': 2, 'reviewed': False})
+        assert cancelled.status_code == 200 and 'reviewed_revision' not in cancelled.json()
+
+
+def test_review_metadata_survives_archive_and_old_page_without_field(store, project):
+    pid, page = project['id'], project['pages'][0]
+    assert 'reviewed_revision' not in store.page(pid, page['id'])
+    store.save_page(pid, page['id'], 0, [item()], 'archived-review')
+    store.review_page(pid, page['id'], 1, True)
+    archive = store.export_archive(pid)
+    imported = store.import_archive(archive.read_bytes(), 10_000_000)
+    archive.unlink()
+    assert imported['pages'][0]['reviewed_revision'] == 1
+    assert store.page(imported['id'], page['id'])['reviewed_revision'] == 1
+    assert 'reviewed_revision' not in store.page(imported['id'], project['pages'][1]['id'])
+
+
+def test_reimport_and_clean_image_invalidate_review_only_for_affected_page(store, project):
+    pid, first, second = project['id'], *project['pages']
+    store.review_page(pid, first['id'], 0, True)
+    store.review_page(pid, second['id'], 0, True)
+    store.clean_images(pid, [('2.png', picture(fill='black'))])
+    assert 'reviewed_revision' not in store.page(pid, first['id'])
+    assert store.page(pid, second['id'])['reviewed_revision'] == 0
+    store.review_page(pid, first['id'], 0, True)
+    draft = {'version': [1, 0], 'transMap': {'2.png': [item()]}}
+    store.import_translation(pid, json.dumps(draft).encode(), 'bt', store.read(pid)['revision'], True)
+    assert 'reviewed_revision' not in store.page(pid, first['id'])
+    assert store.page(pid, second['id'])['reviewed_revision'] == 0
+
+
 def test_invalid_page_save_does_not_change_revision(store, project):
     page = project['pages'][0]
     bad = item(); bad['rotation'] = float('nan')
@@ -235,10 +289,12 @@ def test_matching_transaction_preserves_manual_and_rejects_stale(store, project)
     pid = project['id']; page = project['pages'][0]
     auto, manual = item(), item(match_status='manual')
     store.save_page(pid, page['id'], 0, [auto, manual], 'a')
+    store.review_page(pid, page['id'], 1, True)
     did, folder, original_measure = install_measure(store, project)
     candidate = store.matches(pid)
     assert candidate['summary'] == {'manual': 1, 'automatic': 1}
     store.apply_matches(pid, candidate['project_revision'], {})
+    assert 'reviewed_revision' not in store.page(pid, page['id'])
     saved = store.page(pid, page['id'])['items']
     assert saved[1]['rotation'] == manual['rotation']
     assert saved[1]['match_status'] == 'manual'
@@ -254,6 +310,7 @@ def test_matching_transaction_preserves_manual_and_rejects_stale(store, project)
 def test_inpainted_publication_requires_all_pages_and_keeps_text(store, project):
     pid = project['id']; page = project['pages'][0]
     store.save_page(pid, page['id'], 0, [item(match_status='manual')], 'existing-edit')
+    store.review_page(pid, page['id'], 1, True)
     did, folder, _ = install_measure(store, project)
     record = store.read(pid); record['detection_id'] = None; store.write(record)
     before = store.read(pid); text = store.translation(pid)
@@ -268,6 +325,7 @@ def test_inpainted_publication_requires_all_pages_and_keeps_text(store, project)
     result = store.read(pid)
     assert result['detection_id'] == did
     assert all(p['clean_kind'] == 'inpainted' and p['clean'].startswith('clean/') for p in result['pages'])
+    assert 'reviewed_revision' not in result['pages'][0]
     assert store.translation(pid) == text
     clean, clean_key = store.preview(pid, page['id'], 384, True)
     _, source_key = store.preview(pid, page['id'], 384, False)

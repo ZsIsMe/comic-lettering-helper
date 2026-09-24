@@ -89,7 +89,7 @@ export class EditorState {
     const previous = this.groups.get(id), time = performance.now()
     if (record && (!group || previous?.key !== group || (!continuing && time - previous.time > 350))) { state.undo.push(copy(undoSnapshot || state.data.items)); state.undo = state.undo.slice(-100); state.redo = [] }
     if (group) this.groups.set(id, { key: group, time }); else this.groups.delete(id)
-    state.data.items = copy(items); state.dirty = true; state.version += 1
+    state.data.items = copy(items); delete state.data.reviewed_revision; state.dirty = true; state.version += 1
     this.persist(id); this.emit(id); this.schedule(id)
   }
   endGroup(id: string) { this.groups.delete(id) }
@@ -148,11 +148,25 @@ export class EditorState {
     }
     return !this.dirty
   }
+  async markReviewed(id: string, reviewed: boolean) {
+    this.textDraft?.finish()
+    if (!await this.save(id)) throw new Error('文字尚未保存，請先處理保存錯誤。')
+    const state = await this.load(id)
+    const version = state.version
+    const data = await request<PageData>(`${projectPath(this.project)}/pages/${id}/review`, body({ expected_revision: state.data.revision, reviewed }, 'PUT'))
+    if (state.version !== version || state.dirty) {
+      // A concurrent local edit must never acquire the older revision's completion marker.
+      delete state.data.reviewed_revision
+      this.emit(id)
+      throw new Error('保存期間文字已有修改，請重新檢查後標記完成。')
+    }
+    state.data = data; state.server = copy(data); this.emit(id)
+  }
   async resolve(id: string, keepLocal: boolean) {
     const state = this.pages.get(id)
     if (!state) return
     const server = await request<PageData>(`${projectPath(this.project)}/pages/${id}`)
-    state.server = copy(server); state.data.revision = server.revision; state.conflict = false; state.pending = undefined; state.error = ''
+    state.server = copy(server); state.data.revision = server.revision; state.version += 1; state.conflict = false; state.pending = undefined; state.error = ''
     if (keepLocal) { state.dirty = true; await this.save(id) }
     else { state.undo.push(copy(state.data.items)); state.data = server; state.dirty = false; this.persist(id, true); this.emit(id) }
   }
@@ -170,10 +184,11 @@ export class EditorState {
       if (JSON.stringify(data.items) !== JSON.stringify(state.data.items)) {
         state.undo.push(copy(state.data.items)); state.undo = state.undo.slice(-100); state.redo = []
       }
-      state.data = data; state.pending = undefined; state.error = ''; state.conflict = false
+      state.data = data; state.version += 1; state.pending = undefined; state.error = ''; state.conflict = false
       this.persist(id, true); this.emit(id)
     }
   }
   get dirty() { return !!this.textDraft?.changed || [...this.pages.values()].some(state => state.dirty) }
+  get editing() { return this.textDraft !== null }
   dispose() { this.timers.forEach(clearTimeout) }
 }

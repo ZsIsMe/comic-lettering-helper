@@ -3,7 +3,8 @@ import type { PointerEvent as ReactPointer } from 'react'
 import { type Item, type Page, type CharacterBox, uid } from './types'
 import { EditorState } from './editor-state'
 import { PreviewLayer } from './PreviewLayer'
-import { color, moved, resized, transform, type Selection, type PagePointer, type VisibleRegion } from './geometry'
+import { textStyle } from './layout-review'
+import { moved, resized, transform, type Selection, type PagePointer, type VisibleRegion } from './geometry'
 import { adjustedItems, type TextAdjustment } from './shortcuts'
 import { CharacterOverlay, type CharacterOverlayHandle } from './CharacterOverlay'
 import { InlineTextEditor } from './InlineTextEditor'
@@ -151,7 +152,7 @@ export const TextPage = memo(function TextPage({ project, page, scale, edge, cle
     }}>
       <PreviewLayer project={project} page={page} edge={edge} scale={scale} clean={clean} region={region} detailed={detailed} interacting={interacting} />
       {difference && !!page.clean && !readonly && <DifferenceOverlay project={project} page={page} edge={edge} interacting={interacting} color={differenceColor} opacity={differenceOpacity} />}
-      {!readonly && state?.data.items.map(item => <div key={item._id} data-item={item._id} className={`pl-text ${selected.includes(item._id) ? 'selected' : ''} ${editing?.id === item._id ? 'editing' : ''}`} style={{ left: item.x * page.width, top: item.y * page.height, transform: transform(item), fontSize: item['font-size'], writingMode: item.orientation === 'vertical' ? 'vertical-rl' : 'horizontal-tb', color: color(item.color), WebkitTextStroke: `${item['stroke-weight']}px ${color(item['stroke-color'])}`, outlineWidth: selected.includes(item._id) ? 1.5 / scale : 0 }}
+      {!readonly && state?.data.items.map(item => <div key={item._id} data-item={item._id} className={`pl-text ${selected.includes(item._id) ? 'selected' : ''} ${editing?.id === item._id ? 'editing' : ''}`} style={{ ...textStyle(item, page), outlineWidth: selected.includes(item._id) ? 1.5 / scale : 0 }}
         onPointerDown={event => {
           if (event.button === 0 && event.metaKey) {
             if (beginInlineEdit(event, item)) event.preventDefault()

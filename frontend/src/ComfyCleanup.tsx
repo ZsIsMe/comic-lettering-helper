@@ -63,7 +63,7 @@ export function ComfyCleanup() {
   const category = (name: 'web_safe' | 'web_protected' | 'unknown') => inventory ? Object.values(inventory.summary).reduce((value, item) => ({ files: value.files + item[name], bytes: value.bytes + item[`${name}_bytes`] }), { files: 0, bytes: 0 }) : { files: 0, bytes: 0 }
   const safeSummary = category('web_safe'), protectedSummary = category('web_protected'), unknownSummary = category('unknown')
   const safeBytes = safe.reduce((sum, item) => sum + item.bytes, 0)
-  return <div style={{ padding: '0 16px 4px', textAlign: 'right' }}>
+  return <div className="app-status-group">
     <Button size="small" onClick={() => { setOpen(true); void scan() }}>清理 ComfyUI 圖片</Button>
     <Modal title="ComfyUI 圖片清理" width={960} open={open} footer={null} onCancel={() => { if (!loading) { setOpen(false); setPendingDelete(null) } }} closable={!loading} maskClosable={!loading} keyboard={!loading}>
       {error && <Alert type="error" showIcon message={error} style={{ marginBottom: 12 }} />}

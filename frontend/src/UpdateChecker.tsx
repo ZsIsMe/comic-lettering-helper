@@ -59,7 +59,7 @@ export function UpdateChecker({ beforeInstall }: { beforeInstall: () => Promise<
     finally { setBusy(false) }
   }
   return <>
-    <div style={{ display: 'flex', justifyContent: 'flex-end', padding: '8px 24px', gap: 12, alignItems: 'center' }}>
+    <div className="app-status-group">
       <Typography.Text type="secondary">{version ? `應用版本 ${version}` : '應用版本'}</Typography.Text>
       <Button size="small" loading={busy || installing} onClick={() => installing ? setOpen(true) : void check()}>{installing ? '更新中' : '檢查更新'}</Button>
     </div>

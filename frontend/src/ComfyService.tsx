@@ -36,14 +36,14 @@ export function ComfyService() {
     finally { setSending(false) }
   }
   const busy = Boolean(health?.active_job_id || health?.gpu_owner)
-  return <div style={{ padding: '4px 16px', textAlign: 'right' }}>
-    <Space wrap>
+  return <div className="app-status-group">
+    <Space>
       <Tag color={health?.comfy_ready ? 'green' : 'orange'}>{restarting ? 'ComfyUI 重啟中' : health?.comfy_ready ? 'ComfyUI 可用' : 'ComfyUI 未就緒'}</Tag>
       <Button size="small" loading={restarting} disabled={!health?.gpu_name || busy} onClick={() => { setError(''); setOpen(true) }}>重啟 ComfyUI</Button>
       {!health?.gpu_name && <span>需要有卡開機</span>}
       {busy && !restarting && <span>請先停止任務再重啟</span>}
     </Space>
-    {status.message && <Alert style={{ marginTop: 6, textAlign: 'left' }} type={status.state === 'failed' ? 'error' : 'info'} message={status.message} />}
+    {status.message && <Alert className="app-service-message" type={status.state === 'failed' ? 'error' : 'info'} message={<span title={status.message}>{status.message}</span>} />}
     <Modal title="重啟 ComfyUI" open={open} onCancel={() => setOpen(false)} onOk={() => void restart()} confirmLoading={sending} okText="重啟" cancelText="取消">
       <p>重新啟動圖片生成服務。網頁、已保存圖片和歷史會保留；失敗任務需要你重新提交。</p>
       {error && <Alert type="error" message={error} />}

@@ -238,6 +238,25 @@ class PrelayoutStore:
             operations = (state.get('operations', []) + [operation_id])[-128:]
             atomic_json(self.directory(pid) / relative, {'revision': updated, 'items': items, 'operations': operations})
             page.update(revision=updated, state=relative)
+            page.pop('reviewed_revision', None)
+            project['revision'] += 1
+            self.write(project)
+            return self.page(pid, page_id)
+
+    def review_page(self, pid, page_id, expected_revision, reviewed):
+        if type(expected_revision) is not int or expected_revision < 0 or type(reviewed) is not bool:
+            raise ValueError('完成狀態或預期修訂格式無效')
+        with self.lock(pid):
+            project = self.read(pid)
+            page = next((p for p in project['pages'] if p['id'] == page_id), None)
+            if page is None:
+                raise KeyError('頁面不存在')
+            if page['revision'] != expected_revision:
+                raise Conflict('此頁已有較新版本，請重新載入後再標記完成')
+            if reviewed:
+                page['reviewed_revision'] = page['revision']
+            else:
+                page.pop('reviewed_revision', None)
             project['revision'] += 1
             self.write(project)
             return self.page(pid, page_id)
@@ -292,6 +311,7 @@ class PrelayoutStore:
                 relative = f'pages/{page["id"]}/{revision}-{identifier()}.json'
                 atomic_json(self.directory(pid) / relative, {'revision': revision, 'items': items, 'operations': []})
                 page.update(revision=revision, state=relative)
+                page.pop('reviewed_revision', None)
             project['template'] = {k: v for k, v in data.items() if k != 'transMap'}
             project['revision'] += 1
             (self.directory(pid) / 'imports').mkdir(exist_ok=True)
@@ -329,6 +349,7 @@ class PrelayoutStore:
                 (root / relative).write_bytes(data)
                 page['clean'] = relative
                 page['clean_kind'] = 'uploaded'
+                page.pop('reviewed_revision', None)
             project['revision'] += 1
             self.write(project)
             return project
@@ -443,6 +464,7 @@ class PrelayoutStore:
                 relative = f'pages/{page["id"]}/{revision}-{identifier()}.json'
                 atomic_json(self.directory(pid) / relative, {'revision': revision, 'items': items, 'operations': []})
                 page.update(revision=revision, state=relative)
+                page.pop('reviewed_revision', None)
             project['revision'] += 1
             self.write(project)
             return project
@@ -489,6 +511,9 @@ class PrelayoutStore:
             for page in project['pages']:
                 if not isinstance(page, dict) or type(page.get('revision')) is not int or page['revision'] < 0:
                     raise ValueError('封存頁面格式／修訂無效')
+                reviewed_revision = page.get('reviewed_revision')
+                if reviewed_revision is not None and (type(reviewed_revision) is not int or reviewed_revision < 0 or reviewed_revision > page['revision']):
+                    raise ValueError('封存頁面完成修訂無效')
                 filename(page['name'])
                 if not re.fullmatch(r'p_[a-f0-9]{32}', page['id']) or page['id'] in ids or Path(page['name']).stem.casefold() in names:
                     raise ValueError('頁面 ID／名稱重複或無效')
