@@ -354,6 +354,8 @@ footer { padding: 20px 0; color: #746e63; font-size: 12px; }
 .compact-edit .project-body { margin-top: 6px; }
 .compact-edit .editor-toolbar { padding: 3px 0; }
 .compact-edit .page-summary .ant-btn { height: 26px; padding: 0 7px; }
+.ant-btn.workbench-next-step,
+.compact-edit .page-summary .ant-btn.workbench-next-step { min-width:160px; height:48px; padding:0 24px; font-size:17px; font-weight:700; box-shadow:0 3px 8px rgba(218,79,42,.22); }
 .compact-edit .page-summary .ant-select { width: 160px; }
 .compact-edit .detection-unavailable { display: inline-block; font-size: 11px; color: #756e63; margin: 0 0 3px; }
 .compact-edit .edit-control-panel { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 8px; padding: 5px 0; margin-bottom: 4px; }

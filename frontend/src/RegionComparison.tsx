@@ -6,6 +6,7 @@ interface Candidate { code: number; label: string; image: ImageData; diff: Image
 interface Props {
   layout: 'context' | 'cards'; base: ImageData; preview: ImageData | null
   candidates: Candidate[]; assignment: Uint16Array
+  visibleCodes?: number[]
   disabled: boolean; onAdopt: (region: CompareRegion, code: number) => void
 }
 function surface(image: ImageData) { const c = document.createElement('canvas'); c.width = image.width; c.height = image.height; c.getContext('2d')!.putImageData(image, 0, 0); return c }
@@ -45,7 +46,7 @@ function ImageView({ image, crop, regions = [], selected = 0, onRegion, style }:
     if (i >= 0) onRegion(i)
   }} />
 }
-export function RegionComparison({layout, base, preview, candidates, assignment, disabled, onAdopt}: Props) {
+export function RegionComparison({layout, base, preview, candidates, visibleCodes, assignment, disabled, onAdopt}: Props) {
   const [index, setIndex] = useState(0), [expanded, setExpanded] = useState(false)
   const [overviewFit, setOverviewFit] = useState<'width' | 'page'>('width'), [overviewZoom, setOverviewZoom] = useState(1)
   const [floatingPosition, setFloatingPosition] = useState(initialFloating)
@@ -56,7 +57,7 @@ export function RegionComparison({layout, base, preview, candidates, assignment,
   const overviewRef = useRef<HTMLDivElement>(null)
   const pan = useRef<{x:number;y:number} | null>(null)
   // Freeze grouping for the mounted page: adopting a source must not move cards.
-  const [regions] = useState(() => comparisonRegions(base.width, base.height, candidates.map(c => c.diff.data), assignment))
+  const [regions] = useState(() => comparisonRegions(base.width, base.height, candidates.filter(c => !visibleCodes || visibleCodes.includes(c.code)).map(c => c.diff.data), assignment))
   useEffect(() => {
     const view = overviewRef.current, region = regions[index]
     if (!view || !region || overviewFit !== 'width' || layout !== 'context') return
@@ -93,7 +94,7 @@ export function RegionComparison({layout, base, preview, candidates, assignment,
     const box = resultRef.current?.getBoundingClientRect()
     if (box) setFloatingPosition(clampFloating({ x, y }, box.width, box.height))
   }
-  const sources = useMemo(() => [{code:1,label:'底圖',image:surface(base)}, ...candidates.map(c => ({code:c.code,label:c.label.startsWith('Flux')?'Flux':c.label.startsWith('FireRed')?'FireRed':c.label.startsWith('Qwen')?'Qwen':c.label,image:surface(c.image)}))], [base, candidates])
+  const sources = useMemo(() => [{code:1,label:'底圖',image:surface(base)}, ...candidates.filter(c => !visibleCodes || visibleCodes.includes(c.code)).map(c => ({code:c.code,label:c.label,image:surface(c.image)}))], [base, candidates, visibleCodes])
   const result = useMemo(() => {
     if (preview) return surface(preview)
     const image = new ImageData(new Uint8ClampedArray(base.data), base.width, base.height)
@@ -124,7 +125,7 @@ export function RegionComparison({layout, base, preview, candidates, assignment,
   function row(region: CompareRegion, i: number) {
     const chosen=choice(region)
     return <section className="region-row" key={i}>
-      {<div className="region-row-title">區域 {i+1}<span>{chosen ? `目前採用：${sources.find(s=>s.code===chosen)?.label}` : '混合來源'} <Button size="small" onClick={()=>{setIndex(i);setExpanded(true)}}>查看位置</Button></span></div>}
+      {<div className="region-row-title">區域 {i+1}<span>{chosen ? `目前採用：${chosen === 1 ? '底圖' : candidates.find(c=>c.code===chosen)?.label || '已保存來源'}` : '混合來源'} <Button size="small" onClick={()=>{setIndex(i);setExpanded(true)}}>查看位置</Button></span></div>}
       <div className="region-candidates" style={{gridTemplateColumns:`repeat(${sources.length}, minmax(0,1fr))`}}>{sources.map(source=>{ const selected=selectedSource(region,source.code,chosen); return <button key={source.code} className={`region-candidate${selected?' chosen':''}`} aria-pressed={selected} aria-label={`區域 ${i+1} 採用 ${source.label}`} disabled={disabled || !canAdopt(region,source.code)} onClick={()=>onAdopt(region,source.code)}>
         <span>{source.label}<small>{selected?'✓ 已採用':'點選採用'}</small></span><ImageView image={source.image} crop={padding(region,base.width,base.height)} />
       </button>})}</div>

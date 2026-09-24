@@ -424,7 +424,7 @@ function ProjectWorkspace({ initial, initialError, gpuOwner, onExit, onReadyToLe
           {[{key:'untouched',label:'未處理',cls:'page-untouched'},{key:'repair',label:'待修補',cls:'page-needs-repair'},{key:'complete',label:'完成',cls:'page-complete'}].map(status => <Button size="small" key={status.key} className={status.cls} aria-pressed={pageFilter === status.key} type={pageFilter === status.key ? 'default' : 'text'} onClick={() => setPageFilter(pageFilter === status.key ? 'all' : status.key)}>{status.label} {project.pages.filter(item => pageStatus(item) === status.key).length}</Button>)}
           <Button type="primary" loading={detecting} disabled={!!gpuOwner || busy || detecting || !detectionCanConfigure} onClick={() => { setDetectError(''); setDetectConfirmOpen(true) }}>自動檢測</Button>
           <Dropdown menu={{items:[{key:'pairs',label:'導出底圖＋Mask',disabled:detecting || !!gpuOwner},{key:'project',label:'導出項目',disabled:busy || detecting || !!gpuOwner}],onClick:({key}) => void download(`${url}/${key === 'pairs' ? 'export-pair' : 'export'}`)}}><Button size="small">更多 ▾</Button></Dropdown>
-          <Button onClick={() => void execute(() => navigate(1))}>下一步 →</Button>
+          <Button type="primary" size="large" className="workbench-next-step" onClick={() => void execute(() => navigate(1))}>下一步 →</Button>
         </Space>
         {!detectionCanConfigure && <span className="detection-unavailable">自動檢測暫不可用，可手動編輯</span>}
         {detecting && <p className="detection-estimate">參考估算：首次準備約 20 秒，每張約 8 秒；第一張合計約 28 秒，之後每張約 8 秒。{project.pages.length} 張合計約 {Math.floor((20 + project.pages.length * 8) / 60)} 分 {(20 + project.pages.length * 8) % 60} 秒（依圖片與設備浮動）。</p>}

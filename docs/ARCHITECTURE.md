@@ -1,5 +1,11 @@
 # 系統架構
 
+## 工作流輪次預覽隔離
+
+輪次列表先切換選中，再點「前往比較合成」進入；準備頁「下一步」加大為醒目的主色按鈕。
+
+`frontend/previews/repair-rounds.html` 使用獨立 Vite 配置，無 API proxy；`ExecutionImagePicker` 與選圖狀態函式可復用，`RegionComparison.visibleCodes` 允許隱藏候選而保留其合成分配。素材為既有結果副本，狀態只存 localStorage，未變更正式後端快照／合成契約。見 [預覽範圍](ROUNDS_PREVIEW.md)。
+
 預排版左右字級標示只顯示數字，不加「目前」或「計算」前綴；缺少數值時仍顯示「—」。
 
 本專案以項目串接「準備與編輯 → 批量修復 → 比較合成」。第二部分沿用既有 ComfyUI 引擎、批次器與三份固定工作流；第一部分新增獨立 RF-DETR／MangaLens 推理程序，第三部分是 CPU／Canvas 像素合成。

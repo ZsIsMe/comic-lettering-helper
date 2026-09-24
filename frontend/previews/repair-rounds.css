@@ -1,0 +1,41 @@
+.rounds-preview { max-width:1600px; margin:0 auto; }
+.rounds-preview-banner { margin-bottom:20px; }
+.rounds-preview .project-header { border-bottom:1px solid #d4ccbf; padding-bottom:16px; margin-bottom:20px; }
+.rounds-batch, .rounds-compare { margin-top:26px; }
+.rounds-execution-row { display:flex; justify-content:space-between; align-items:center; gap:18px; margin-top:26px; }
+.rounds-execution-row p { margin-bottom:0; color:#6f675d; font-size:13px; }
+.rounds-latest-mask { margin-left:14px; }
+.rounds-selected-names { margin-top:16px; }
+.rounds-history-title { display:flex; align-items:center; justify-content:space-between; margin-top:26px; }
+.rounds-history-title h4 { margin:0; }
+.rounds-history-title { gap:16px; flex-wrap:wrap; }
+.rounds-history { margin-top:14px; border:1px solid #d8d1c5; border-radius:10px; overflow:hidden; }
+.rounds-history-row { display:flex; align-items:center; justify-content:space-between; gap:16px; padding:16px 20px; background:#faf7f0; border-bottom:1px solid #e3dcd0; }
+.rounds-history-row:last-child { border-bottom:0; }
+.rounds-history-row.selected { background:#fff0e6; box-shadow:inset 4px 0 #da4f2a; }
+.rounds-history-row > .ant-btn { flex-shrink:0; min-width:106px; }
+.rounds-history-row > div { display:flex; align-items:center; gap:12px; flex-wrap:wrap; }
+.rounds-history-row strong, .rounds-image-heading strong { font-variant-numeric:tabular-nums; }
+.rounds-history-row > div > span { color:#6f675d; }
+.rounds-submission { margin-top:20px; }
+.rounds-compare-toolbar { display:flex; justify-content:space-between; gap:14px; flex-wrap:wrap; }
+.rounds-compare-toolbar .ant-select { min-width:140px; }
+.rounds-candidate-picker { display:flex; align-items:center; gap:14px; margin-top:20px; }
+.rounds-candidate-picker > .ant-select { flex:1; min-width:140px; }
+.rounds-compare-help, .rounds-missing { font-size:13px; color:#6b6359; }
+.rounds-images { display:flex; gap:14px; overflow:auto; padding-bottom:18px; align-items:stretch; }
+.rounds-image-card { flex:0 0 320px; min-width:0; background:#fffdf8; border:1px solid #d8d1c5; border-radius:8px; overflow:hidden; }
+.rounds-image-heading { display:flex; align-items:center; gap:8px; flex-wrap:wrap; min-height:78px; padding:12px; background:#ebe5da; }
+.rounds-image-heading strong { flex-basis:100%; font-size:14px; overflow-wrap:anywhere; }
+.rounds-image-card canvas, .rounds-image-card .ant-image { width:100%; height:auto; display:block; }
+.rounds-image-card .ant-image img { display:block; width:100%; height:auto; }
+.rounds-absent { height:350px; display:grid; place-items:center; }
+.rounds-loading { min-height:60vh; display:grid; place-items:center; }
+.rounds-preview .region-candidate > span { flex-wrap:wrap; gap:6px; overflow-wrap:anywhere; }
+@media(max-width:800px) {
+  .rounds-execution-row { align-items:start; flex-direction:column; }
+  .rounds-latest-mask { display:block; margin:6px 0 0; }
+  .rounds-candidate-picker { flex-wrap:wrap; }
+  .rounds-history-row { padding:12px; }
+  .rounds-preview.project-workspace { padding:14px; }
+}
