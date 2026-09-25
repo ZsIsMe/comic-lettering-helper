@@ -39,6 +39,7 @@ const fixture = () => [
 ]
 const { textShortcut, adjustedItems } = sources().load('shortcuts')
 const { splitTextItem, splitTextParts } = sources().load('split-text')
+const { applyPageSplit } = sources().load('webmcp')
 const { characterLabel, characterAt, characterPath } = sources().load('character-overlay')
 
 test('character hover labels use original width/height and the estimated font size', () => {
@@ -186,6 +187,19 @@ test('split including an in-progress draft is one undo operation', () => {
   assert.equal(state.undo.length, 1); assert.equal(state.data.items.length, 4)
   assert.equal(state.data.items[0].text, '草稿中的'); assert.equal(state.data.items[3].text, '選字')
   controller.undo('page'); assert.equal(state.data.items.length, original.length); assert.equal(state.data.items[0].text, draft); assert.equal(state.data.items[0].match_status, 'manual')
+  controller.dispose()
+})
+
+test('WebMCP split uses the editor undo and autosave path', () => {
+  const { controller, state, original, timers } = editorFixture()
+  const result = applyPageSplit(state.data, 'a', 0, 1, () => 't_webmcp')
+  controller.edit('page', result.page.items)
+  assert.equal(state.undo.length, 1)
+  assert.equal(state.data.items.at(-1).text, '甲')
+  assert.equal([...timers.values()][0].delay, 700)
+  controller.undo('page')
+  assert.deepEqual(state.data.items, original)
+  assert.equal(state.undo.length, 0)
   controller.dispose()
 })
 

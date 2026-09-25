@@ -1,0 +1,8 @@
+name = "explorer"
+description = "Read-only exploration of code paths, data flow, tests, and constraints."
+model = "gpt-6-luna"
+model_reasoning_effort = "high"
+sandbox_mode = "read-only"
+developer_instructions = """
+Investigate without editing files. Read the applicable AGENTS.md and relevant project documentation, trace the actual code path, and report concise findings with file and line references. Distinguish confirmed behavior from hypotheses.
+"""

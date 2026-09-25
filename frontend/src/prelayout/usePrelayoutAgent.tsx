@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from 'react'
 import type { EditorState } from './editor-state'
 import type { PageData, Project } from './types'
-import { applyPagePatches, registerPrelayoutTools, type PrelayoutHost } from './webmcp'
+import { applyPagePatches, applyPageSplit, registerPrelayoutTools, type PrelayoutHost } from './webmcp'
 import { cropRegions, measurePage } from './layout-review'
 import { LayoutReview } from './LayoutReview'
 
@@ -126,6 +126,25 @@ export function usePrelayoutAgent(options: Options) {
         const rendered = await ready(id)
         try { return { applied: true, rendered, new_risks: newRisks, ...await inspect() } }
         catch (error) { return { applied: true, rendered, new_risks: newRisks, warning: String(error), next: '請重新檢查頁面，勿重複套用。' } }
+      },
+      split: async args => {
+        const { id, state } = await checked(args.token, true)
+        const before = structuredClone(state.data)
+        const result = applyPageSplit(before, args.item_id, args.selection_start, args.selection_end)
+        const [a, b] = await Promise.all([measurePage(before), measurePage(result.page)])
+        await checked(args.token, true)
+        const newRisks = b.risks.filter(risk => !a.risks.includes(risk))
+        if (newRisks.some(risk => risk.startsWith('outside:') || risk.startsWith('invalid:'))) throw new Error(`分割會超出頁面或無法顯示：${newRisks.join('、')}`)
+        controller.edit(id, result.page.items)
+        setReview(null)
+        const rendered = await ready(id)
+        const split = {
+          original_item_id: result.originalId, new_item_id: result.newId,
+          selection_start: result.selectionStart, selection_end: result.selectionEnd,
+          reading_order: result.readingOrder, item_order: result.itemOrder,
+        }
+        try { return { applied: true, rendered, split, new_risks: newRisks, ...await inspect() } }
+        catch (error) { return { applied: true, rendered, split, new_risks: newRisks, warning: String(error), next: '請重新檢查頁面，勿重複分割。' } }
       },
       compare: async args => {
         const reviewId = await showReview(args)

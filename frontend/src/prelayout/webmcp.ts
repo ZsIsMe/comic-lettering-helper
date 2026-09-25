@@ -1,11 +1,14 @@
 import { moved } from './geometry'
+import { splitTextItem, splitTextParts } from './split-text'
 import type { Item, PageData } from './types'
 
 export type PrelayoutSet = Partial<Pick<Item, 'text' | 'x' | 'y' | 'font-size' | 'orientation' | 'rotation' | 'color' | 'stroke-color' | 'stroke-weight'>>
 export type PrelayoutPatch = { item_id: string; set?: PrelayoutSet; center?: [number, number] }
+export type PrelayoutSplit = { token: string; item_id: string; selection_start: number; selection_end: number }
 export type PrelayoutHost = {
   inspect: () => Promise<unknown>
   patch: (args: { token: string; patches: PrelayoutPatch[] }) => Promise<unknown>
+  split: (args: PrelayoutSplit) => Promise<unknown>
   compare: (args: { token: string; view: 'edited' | 'original' | 'before' | 'detail'; region?: number; includeOriginal?: boolean; padding?: number }) => Promise<unknown>
   undo: (args: { token: string }) => Promise<unknown>
   save: (args: { token: string; reviewed?: boolean; advance?: boolean }) => Promise<unknown>
@@ -34,6 +37,12 @@ const patchSchema = object({
   set: patchSetSchema,
   center: { type: 'array', items: { type: 'number' }, minItems: 2, maxItems: 2, description: 'New center in original-image pixels. Cannot be combined with set.x or set.y.' },
 }, ['item_id'])
+const splitSchema = object({
+  token,
+  item_id: { type: 'string', minLength: 1, description: 'Stable _id from prelayout_inspect_page.' },
+  selection_start: { type: 'integer', minimum: 0, description: 'Inclusive UTF-16 offset in the current item text.' },
+  selection_end: { type: 'integer', minimum: 1, description: 'Exclusive UTF-16 offset in the current item text; must exceed selection_start.' },
+}, ['token', 'item_id', 'selection_start', 'selection_end'])
 
 const allowed = new Set(['text', 'x', 'y', 'font-size', 'orientation', 'rotation', 'color', 'stroke-color', 'stroke-weight'])
 const own = (value: object, key: string) => Object.prototype.hasOwnProperty.call(value, key)
@@ -101,10 +110,33 @@ export function applyPagePatches(page: PageData, patches: PrelayoutPatch[]): Pag
   return { ...page, items: page.items.map(item => changes.get(item._id) || item) }
 }
 
+/** Split through the same operation as the inline editor, without changing any text characters. */
+export function applyPageSplit(page: PageData, itemId: string, start: number, end: number, makeId?: () => string) {
+  if (!page || !Array.isArray(page.items) || typeof page.width !== 'number' || !Number.isFinite(page.width) || page.width <= 0) throw new Error('頁面缺少有效文字項目或頁寬。')
+  if (typeof itemId !== 'string' || !itemId || page.items.filter(item => item._id === itemId).length !== 1) throw new Error('文字項目不存在或 ID 重複，請重新檢查頁面。')
+  const original = page.items.find(item => item._id === itemId)!
+  if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end) || start < 0 || end > original.text.length || start >= end) throw new Error('選取範圍必須是文字內非空的 UTF-16 起訖位置。')
+  const parts = splitTextParts(original.text, start, end)
+  if (!parts) throw new Error('選取必須包含文字，且原框須保留非空文字。')
+  const result = splitTextItem(page.items, itemId, original.text, start, end, page.width, undefined, makeId)
+  if (!result || !result.newId || page.items.some(item => item._id === result.newId)) throw new Error('分割無法建立唯一的新文字框。')
+  const readingOrder = [
+    { item_id: itemId, text: original.text.slice(0, parts.start) },
+    { item_id: result.newId, text: parts.selectedText },
+    { item_id: itemId, text: original.text.slice(parts.end) },
+  ].filter(segment => segment.text.length)
+  return {
+    page: { ...page, items: result.items }, originalId: result.originalId, newId: result.newId,
+    selectionStart: parts.start, selectionEnd: parts.end, readingOrder,
+    itemOrder: result.items.map(item => item._id),
+  }
+}
+
 export function prelayoutToolDefinitions(host: PrelayoutHost): Tool[] {
   const entries: [string, string, Schema, keyof PrelayoutHost, boolean][] = [
     ['prelayout_inspect_page', 'Read the current draft page, stable item IDs, geometry, saved status, and concurrency token.', object({}, []), 'inspect', true],
     ['prelayout_patch_page', 'Atomically edit current draft items by stable ID. Text may change line breaks only. The host validates the current token and saves through its normal editor state.', object({ token, patches: { type: 'array', items: patchSchema, minItems: 1 } }, ['token', 'patches']), 'patch', false],
+    ['prelayout_split_item', 'Split a nonempty UTF-16 selection into a new text box using the editor split operation. Preserves all text characters and returns the actual reading-order segments.', splitSchema, 'split', false],
     ['prelayout_compare_page', 'Show the edited, original, before, or latest local before/after detail view for visual review.', object({ token, view: { type: 'string', enum: ['edited', 'original', 'before', 'detail'] }, region: { type: 'integer', minimum: 0 }, includeOriginal: { type: 'boolean' }, padding: { type: 'number', minimum: 16, maximum: 300 } }, ['token', 'view']), 'compare', false],
     ['prelayout_undo_page', 'Undo the latest draft edit on the current page.', object({ token }, ['token']), 'undo', false],
     ['prelayout_save_page', 'Save the current draft using the page editor. reviewed:true marks the page complete; reviewed:false clears completion; omitting reviewed only saves. advance:true saves, marks complete, then opens the next unfinished page in scope.', object({ token, reviewed: { type: 'boolean' }, advance: { type: 'boolean' } }, ['token']), 'save', false],

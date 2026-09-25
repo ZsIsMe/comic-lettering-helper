@@ -88,16 +88,60 @@ test('rejects conflicting coordinates, bad bounds, unknown fields, and invalid g
   assert.throws(() => applyPagePatches(malformed, [{ item_id: 'stable-a', set: { x: .3 } }]), /來源框無效/)
 })
 
+test('split preserves every character and reports the exact reading order', () => {
+  const { applyPageSplit } = moduleUnderTest()
+  const page = fixture(), snapshot = structuredClone(page)
+  page.items[0].text = '甲 乙，\n丙丁'
+  const result = applyPageSplit(page, 'stable-a', 2, 5, () => 'new-id')
+  assert.deepEqual(result.readingOrder, [
+    { item_id: 'stable-a', text: '甲 ' },
+    { item_id: 'new-id', text: '乙，\n' },
+    { item_id: 'stable-a', text: '丙丁' },
+  ])
+  assert.equal(result.readingOrder.map(segment => segment.text).join(''), page.items[0].text)
+  assert.equal(result.page.items[0].text, '甲 丙丁')
+  assert.equal(result.page.items.at(-1).text, '乙，\n')
+  assert.deepEqual(result.itemOrder, ['stable-a', 'stable-b', 'new-id'])
+  assert.equal(result.page.items[0]._id, 'stable-a')
+  assert.equal(result.page.items.at(-1)._id, 'new-id')
+  assert.deepEqual(page, { ...snapshot, items: [{ ...snapshot.items[0], text: '甲 乙，\n丙丁' }, snapshot.items[1]] })
+})
+
+test('split rejects invalid ranges, stale identities, blank selection, and duplicate generated ID without mutation', () => {
+  const { applyPageSplit } = moduleUnderTest()
+  const page = fixture(), before = structuredClone(page)
+  for (const [id, start, end, makeId] of [
+    ['missing', 0, 1], ['stable-a', 0, 0], ['stable-a', -1, 1], ['stable-a', 0, 99],
+    ['stable-a', 0.5, 2], ['stable-a', 0, page.items[0].text.length],
+    ['stable-a', 1, 2, () => 'stable-b'],
+  ]) assert.throws(() => applyPageSplit(page, id, start, end, makeId))
+  const duplicate = { ...page, items: [page.items[0], { ...page.items[0] }] }
+  assert.throws(() => applyPageSplit(duplicate, 'stable-a', 0, 1))
+  const blank = fixture(); blank.items[0].text = '甲  乙'
+  assert.throws(() => applyPageSplit(blank, 'stable-a', 1, 3), /選取必須包含文字/)
+  assert.deepEqual(page, before)
+})
+
+test('split expands a UTF-16 selection to complete surrogate pairs', () => {
+  const { applyPageSplit } = moduleUnderTest()
+  const page = fixture(); page.items[0].text = '前😀後'
+  const result = applyPageSplit(page, 'stable-a', 2, 3, () => 'new-id')
+  assert.equal(result.selectionStart, 1)
+  assert.equal(result.selectionEnd, 3)
+  assert.equal(result.page.items.at(-1).text, '😀')
+  assert.equal(result.readingOrder.map(segment => segment.text).join(''), '前😀後')
+})
+
 test('tool schemas are strict, unsupported context is harmless, and writes proxy only to host', async () => {
   const calls = []
-  const host = Object.fromEntries(['inspect', 'patch', 'compare', 'undo', 'save', 'navigate', 'setView'].map(method => [method, async args => { calls.push([method, args]); return { method } }]))
+  const host = Object.fromEntries(['inspect', 'patch', 'split', 'compare', 'undo', 'save', 'navigate', 'setView'].map(method => [method, async args => { calls.push([method, args]); return { method } }]))
   const absent = moduleUnderTest()
   assert.doesNotThrow(() => absent.registerPrelayoutTools(host)())
   const registered = new Map(), removed = []
   const modelContext = { registerTool(tool) { registered.set(tool.name, tool) }, unregisterTool(name) { removed.push(name) } }
   const { registerPrelayoutTools } = moduleUnderTest({ document: { modelContext } })
   const dispose = registerPrelayoutTools(host)
-  assert.equal(registered.size, 7)
+  assert.equal(registered.size, 8)
   for (const tool of registered.values()) {
     assert.equal(tool.inputSchema.additionalProperties, false)
     assert.equal(tool.inputSchema.type, 'object')
@@ -110,7 +154,14 @@ test('tool schemas are strict, unsupported context is harmless, and writes proxy
   const request = { token: 'current-token', patches: [{ item_id: 'stable-a', set: { text: '甲乙丙丁' } }] }
   assert.deepEqual(await patch.execute(request), { content: [{ type: 'text', text: '{"method":"patch"}' }] })
   assert.deepEqual(calls, [['patch', request]])
+  const split = registered.get('prelayout_split_item')
+  assert.deepEqual(split.inputSchema.required, ['token', 'item_id', 'selection_start', 'selection_end'])
+  assert.equal(split.inputSchema.properties.selection_start.type, 'integer')
+  assert.equal(split.inputSchema.properties.selection_end.type, 'integer')
+  const selection = { token: 'current-token', item_id: 'stable-a', selection_start: 1, selection_end: 3 }
+  assert.deepEqual(await split.execute(selection), { content: [{ type: 'text', text: '{"method":"split"}' }] })
+  assert.deepEqual(calls.at(-1), ['split', selection])
   await Promise.resolve()
   dispose()
-  assert.equal(new Set(removed).size, 7)
+  assert.equal(new Set(removed).size, 8)
 })
