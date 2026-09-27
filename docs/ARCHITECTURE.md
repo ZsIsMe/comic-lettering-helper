@@ -546,3 +546,9 @@ WebMCP 在預排版頁註冊檢查、修改、局部對比、撤銷、保存與�
 ### WebMCP 文字分割
 
 `prelayout_split_item` 透過穩定 `item_id`、目前頁面 token 與 UTF-16 `selection_start` / `selection_end` 分割文字，呼叫共用 `splitTextItem`，再經相同 EditorState 建立撤銷紀錄及自動保存。分割保留空格、標點與字元，回傳來源／新框 ID 和重組閱讀順序；拒絕無效選取、過期 token 及新增越界。拆分後仍需看圖調整與核驗。
+
+### WebMCP 檢視模式
+
+`prelayout_set_view` 的 `mode` 可選 `overlay`（去字底圖、高亮與譯文）、`original`（原圖、無高亮、隱藏譯文）及 `final`（去字底圖與譯文、無高亮）。模式只切圖層，沿用目前 `comparison`、`zoom` 及 `fullscreen`，不重建連續畫布幾何。需要由並排改單頁時可另傳 `comparison:false`；這種幾何變動沿用既有捲動錨點恢復。
+
+獨立控制使用 `clean`、`show_text`、`difference_highlight`，高亮樣式使用 `difference_color`（`#RRGGBB`）與 `difference_opacity`（0–1）。先驗證整份請求，再套用顯示狀態；與模式矛盾的圖層旗標拒絕。隱藏譯文不改 items、修訂、完成標記或撤銷歷史；顏色及透明度沿用瀏覽器偏好，不寫伺服器資料。

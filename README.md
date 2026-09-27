@@ -51,6 +51,8 @@ RF、MangaLens、CTD、OCR 的用途、下載地址、配套字表／字型、�
 
 文字分割也可使用 `prelayout_split_item`：指定文字框 ID 與 UTF-16 選取範圍，保留所有字元，回傳拆分框 ID 與閱讀順序，沿用人工編輯的撤銷及保存流程。
 
+逐頁比對可用 `prelayout_set_view` 一次切換「疊合比較」「原文查看」「成品驗收」：分別顯示高亮加譯文、純原圖、去字底圖加譯文。三種模式沿用同一畫布，避免反覆左右平移；也可控制譯文顯示、高亮顏色及透明度。這些選項只改瀏覽器顯示，不改文字、圖片或完成標記；差異高亮顯示的是原圖與去字圖的像素差異，不能代替原圖字形核對。
+
 CTD 流程同時生成來源核心的 `inpainted` 去字預覽：沿用 OpenCV Telea（radius 3、mask expansion 5），把 RGBA 覆蓋層疊回原圖後作為預排版底圖，不必先上傳去字圖。全部頁面驗證完成後才切換底圖；原圖與排版文字保持不變，可隨時切回原圖。這是排版預覽，不调用三套修圖工作流，也不與修圖模組共用圖片。生成的底圖仍使用既有分級預覽及圖塊快取。
 
 **部署狀態：預排版及邊緣塗白已合入本地 `codex/project-workbench`，尚未推送或部署 AutoDL，未建立 Tag 或鏡像；CTD／OCR 真實 CUDA 推理與共享顯存切換仍待目標 GPU 驗收。** 詳見 [實作計劃與範圍](docs/PRELAYOUT_IMPLEMENTATION_PLAN.md)、[本地驗證](docs/PRELAYOUT_LOCAL_VALIDATION.md)及 [部署準備](docs/DEPLOYMENT.md#預排版部署準備)。

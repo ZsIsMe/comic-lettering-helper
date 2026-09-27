@@ -26,9 +26,9 @@ const quickControls = [
   { kind: 'orientation' },
 ] as const satisfies readonly { kind: QuickControlKind }[]
 
-export const TextPage = memo(function TextPage({ project, page, scale, edge, clean, difference, differenceColor, differenceOpacity, readonly, controller, selection, onSelect, onInteracting, showMeasure, onMeasure, region, detailed, interacting, onPointer, groupNames = [] }: {
+export const TextPage = memo(function TextPage({ project, page, scale, edge, clean, difference, differenceColor, differenceOpacity, showText = true, readonly, controller, selection, onSelect, onInteracting, showMeasure, onMeasure, region, detailed, interacting, onPointer, groupNames = [] }: {
   project: string; page: Page; scale: number; edge: number; clean: boolean; readonly?: boolean;
-  difference: boolean; differenceColor: string; differenceOpacity: number;
+  difference: boolean; differenceColor: string; differenceOpacity: number; showText?: boolean;
   controller: EditorState; selection: Selection; onSelect: (selection: Selection) => void; onInteracting: (id: string | null) => void;
   showMeasure: boolean; onMeasure: (index: number, page: string) => void;
   region: VisibleRegion | null; detailed: boolean; interacting: boolean; onPointer: (pointer: PagePointer | null) => void;
@@ -70,7 +70,7 @@ export const TextPage = memo(function TextPage({ project, page, scale, edge, cle
     frame.current = 0
   }
   function down(event: ReactPointer, item: Item, mode = 'move') {
-    if (readonly || event.button !== 0 || !scene.current || !state) return
+    if (readonly || !showText || event.button !== 0 || !scene.current || !state) return
     event.stopPropagation(); event.preventDefault()
     scene.current.closest<HTMLElement>('.pl-viewport')?.focus({ preventScroll: true })
     let ids = selection.page === page.id && selection.ids.includes(item._id) ? selection.ids : [item._id]
@@ -117,14 +117,14 @@ export const TextPage = memo(function TextPage({ project, page, scale, edge, cle
     if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId)
   }
   function add(event: React.MouseEvent) {
-    if (readonly || !scene.current || !state) return
+    if (readonly || !showText || !scene.current || !state) return
     const rect = scene.current.getBoundingClientRect()
     const item: Item = { _id: uid(), text: '新文字', x: (event.clientX - rect.left) / (page.width * scale), y: (event.clientY - rect.top) / (page.height * scale), 'font-size': 40, rotation: 0, orientation: 'vertical', color: '#000000', 'stroke-color': '#ffffff', 'stroke-weight': 0, match_status: 'manual' }
     controller.edit(page.id, [...state.data.items, item]); onSelect({ page: page.id, ids: [item._id] })
   }
   function adjust(adjustment: TextAdjustment) {
     const state = controller.pages.get(page.id)
-    if (readonly || interacting || dragging.current || !state || selection.page !== page.id) return
+    if (readonly || !showText || interacting || dragging.current || !state || selection.page !== page.id) return
     const items = adjustedItems(state.data.items, selection.ids, adjustment, page.width, page.height)
     if (items !== state.data.items) controller.edit(page.id, items)
   }
@@ -143,16 +143,16 @@ export const TextPage = memo(function TextPage({ project, page, scale, edge, cle
     const x = (event.clientX - rect.left) / scale, y = (event.clientY - rect.top) / scale
     if (event.target instanceof Element && event.target.closest('.pl-text')) characterOverlay.current?.clear()
     else if (!interacting) characterOverlay.current?.probe(x, y)
-    if (!readonly && !dragging.current) onPointer({ page: page.id, x: x / page.width, y: y / page.height })
+    if (!readonly && showText && !dragging.current) onPointer({ page: page.id, x: x / page.width, y: y / page.height })
   }} onPointerLeave={() => { characterOverlay.current?.clear(); if (!readonly && !dragging.current) onPointer(null) }}>
     <div className="pl-scene" ref={scene} style={{ width: page.width, height: page.height, transform: `scale(${scale})` }} onDoubleClick={add} onPointerDown={event => {
-      if (readonly || event.button !== 0) return
+      if (readonly || !showText || event.button !== 0) return
       scene.current?.closest<HTMLElement>('.pl-viewport')?.focus({ preventScroll: true })
       onSelect({ page: page.id, ids: [] })
     }}>
-      <PreviewLayer project={project} page={page} edge={edge} scale={scale} clean={clean} region={region} detailed={detailed} interacting={interacting} />
+      <PreviewLayer project={project} page={page} edge={edge} scale={scale} clean={clean && !!page.clean} region={region} detailed={detailed} interacting={interacting} />
       {difference && !!page.clean && !readonly && <DifferenceOverlay project={project} page={page} edge={edge} interacting={interacting} color={differenceColor} opacity={differenceOpacity} />}
-      {!readonly && state?.data.items.map(item => <div key={item._id} data-item={item._id} className={`pl-text ${selected.includes(item._id) ? 'selected' : ''} ${editing?.id === item._id ? 'editing' : ''}`} style={{ ...textStyle(item, page), outlineWidth: selected.includes(item._id) ? 1.5 / scale : 0 }}
+      {!readonly && showText && state?.data.items.map(item => <div key={item._id} data-item={item._id} className={`pl-text ${selected.includes(item._id) ? 'selected' : ''} ${editing?.id === item._id ? 'editing' : ''}`} style={{ ...textStyle(item, page), outlineWidth: selected.includes(item._id) ? 1.5 / scale : 0 }}
         onPointerDown={event => {
           if (event.button === 0 && event.metaKey) {
             if (beginInlineEdit(event, item)) event.preventDefault()
@@ -188,11 +188,11 @@ export const TextPage = memo(function TextPage({ project, page, scale, edge, cle
           </span>
         </>}
       </div>)}
-      {showMeasure && state?.data.measure.map((measure, index) => {
+      {showText && showMeasure && state?.data.measure.map((measure, index) => {
         const box = measure.xyxy_pixel
         return box && <button key={index} className="pl-measure" aria-label={`套用偵測框 ${index + 1}`} onPointerDown={event => event.stopPropagation()} onDoubleClick={event => event.stopPropagation()} onClick={event => { event.stopPropagation(); onMeasure(index, page.id) }} style={{ left: box[0], top: box[1], width: box[2] - box[0], height: box[3] - box[1], borderWidth: 2 / scale, fontSize: 13 / scale }}>{index + 1}<span className="pl-font-label pl-calculated-font" aria-label={`計算字級 ${fontLabel(measure.font_size)}`} style={{ fontSize: 11 / scale, padding: `${2 / scale}px ${4 / scale}px` }}>{fontLabel(measure.font_size)}</span></button>
       })}
-      {showMeasure && <CharacterOverlay ref={characterOverlay} characters={state?.data.character_boxes || noCharacters} width={page.width} height={page.height} scale={scale} region={region} disabled={interacting} />}
+      {showText && showMeasure && <CharacterOverlay ref={characterOverlay} characters={state?.data.character_boxes || noCharacters} width={page.width} height={page.height} scale={scale} region={region} disabled={interacting} />}
     </div>
     {error && <div className="pl-image-error">{error}</div>}
   </div>

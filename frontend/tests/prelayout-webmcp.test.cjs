@@ -161,6 +161,16 @@ test('tool schemas are strict, unsupported context is harmless, and writes proxy
   const selection = { token: 'current-token', item_id: 'stable-a', selection_start: 1, selection_end: 3 }
   assert.deepEqual(await split.execute(selection), { content: [{ type: 'text', text: '{"method":"split"}' }] })
   assert.deepEqual(calls.at(-1), ['split', selection])
+  const view = registered.get('prelayout_set_view')
+  assert.deepEqual(view.inputSchema.properties.mode.enum, ['overlay', 'original', 'final'])
+  assert.equal(view.inputSchema.properties.show_text.type, 'boolean')
+  assert.equal(view.inputSchema.properties.clean.type, 'boolean')
+  assert.equal(view.inputSchema.properties.difference_color.pattern, '^#[0-9a-fA-F]{6}$')
+  assert.equal(view.inputSchema.properties.difference_opacity.minimum, 0)
+  assert.equal(view.inputSchema.properties.difference_opacity.maximum, 1)
+  const viewRequest = { token: 'current-token', mode: 'overlay', difference_color: '#3250ff', difference_opacity: .65 }
+  assert.deepEqual(await view.execute(viewRequest), { content: [{ type: 'text', text: '{"method":"setView"}' }] })
+  assert.deepEqual(calls.at(-1), ['setView', viewRequest])
   await Promise.resolve()
   dispose()
   assert.equal(new Set(removed).size, 8)

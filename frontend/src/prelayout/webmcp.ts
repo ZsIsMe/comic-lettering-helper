@@ -13,7 +13,7 @@ export type PrelayoutHost = {
   undo: (args: { token: string }) => Promise<unknown>
   save: (args: { token: string; reviewed?: boolean; advance?: boolean }) => Promise<unknown>
   navigate: (args: { token: string; page_id: string }) => Promise<unknown>
-  setView: (args: { token: string; comparison?: boolean; difference_highlight?: boolean; fullscreen?: boolean; zoom?: number }) => Promise<unknown>
+  setView: (args: { token: string; mode?: 'overlay' | 'original' | 'final'; comparison?: boolean; clean?: boolean; difference_highlight?: boolean; show_text?: boolean; difference_color?: string; difference_opacity?: number; fullscreen?: boolean; zoom?: number }) => Promise<unknown>
 }
 
 type Schema = Record<string, unknown>
@@ -141,7 +141,7 @@ export function prelayoutToolDefinitions(host: PrelayoutHost): Tool[] {
     ['prelayout_undo_page', 'Undo the latest draft edit on the current page.', object({ token }, ['token']), 'undo', false],
     ['prelayout_save_page', 'Save the current draft using the page editor. reviewed:true marks the page complete; reviewed:false clears completion; omitting reviewed only saves. advance:true saves, marks complete, then opens the next unfinished page in scope.', object({ token, reviewed: { type: 'boolean' }, advance: { type: 'boolean' } }, ['token']), 'save', false],
     ['prelayout_navigate_page', 'Save as required by the page editor and navigate to a page by its stable page ID.', object({ token, page_id: { type: 'string', minLength: 1 } }, ['token', 'page_id']), 'navigate', false],
-    ['prelayout_set_view', 'Set original comparison, difference highlight, fullscreen, or zoom without changing page content.', object({ token, comparison: { type: 'boolean' }, difference_highlight: { type: 'boolean' }, fullscreen: { type: 'boolean' }, zoom: { type: 'number', minimum: 0.1, maximum: 8 } }, ['token']), 'setView', false],
+    ['prelayout_set_view', 'Switch overlay, original, or final review mode; optionally set visible text, background, highlight color/opacity, comparison, fullscreen, or zoom. Modes preserve comparison, zoom, and scroll geometry. No page content changes.', object({ token, mode: { type: 'string', enum: ['overlay', 'original', 'final'] }, comparison: { type: 'boolean' }, clean: { type: 'boolean' }, difference_highlight: { type: 'boolean' }, show_text: { type: 'boolean' }, difference_color: { type: 'string', pattern: '^#[0-9a-fA-F]{6}$' }, difference_opacity: { type: 'number', minimum: 0, maximum: 1 }, fullscreen: { type: 'boolean' }, zoom: { type: 'number', minimum: 0.1, maximum: 8 } }, ['token']), 'setView', false],
   ]
   return entries.map(([name, description, inputSchema, method, readOnlyHint]) => ({
     name, description, inputSchema, annotations: { readOnlyHint },

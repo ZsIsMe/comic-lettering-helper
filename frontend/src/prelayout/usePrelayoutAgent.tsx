@@ -4,12 +4,14 @@ import type { PageData, Project } from './types'
 import { applyPagePatches, applyPageSplit, registerPrelayoutTools, type PrelayoutHost } from './webmcp'
 import { cropRegions, measurePage } from './layout-review'
 import { LayoutReview } from './LayoutReview'
+import { currentViewMode, resolveViewChange, type ViewState } from './view-modes'
 
 type Options = {
   controller: EditorState; project: Project; current: string; busy: boolean; fontReady: boolean;
-  interacting: RefObject<boolean>; range: [number, number]; compare: boolean; difference: boolean;
-  zoom: number; focus: boolean; clean: boolean;
-  refreshProject: () => Promise<void>; go: (id: string) => void; setCompare: (value: boolean) => void; setDifference: (value: boolean) => void;
+  interacting: RefObject<boolean>; range: [number, number]; compare: boolean; difference: boolean; showText: boolean;
+  differenceColor: string; differenceOpacity: number; zoom: number; focus: boolean; clean: boolean;
+  refreshProject: () => Promise<void>; go: (id: string) => void; setCompare: (value: boolean) => void; setClean: (value: boolean) => void; setDifference: (value: boolean) => void; setShowText: (value: boolean) => void;
+  setDifferenceColor: (value: string) => void; setDifferenceOpacity: (value: number) => void;
   setZoom: (value: number) => void; setFocus: (value: boolean) => void;
 }
 type Review = { reviewId: string; before: PageData; after: PageData; regions: number[][]; view: 'edited' | 'original' | 'before' | 'detail'; region?: number; includeOriginal: boolean }
@@ -57,7 +59,7 @@ export function usePrelayoutAgent(options: Options) {
       while (alive && Date.now() < until) {
         const node = [...document.querySelectorAll<HTMLElement>('.pl-page[data-readonly="false"]')].find(node => node.dataset.page === id)
         const imgs = node ? [...node.querySelectorAll('img')] : []
-        if (latest.current.current === id && node && imgs.length && imgs.every(img => img.complete && img.naturalWidth > 0)) {
+        if (latest.current.current === id && node && imgs.length && imgs.every(img => img.complete && img.naturalWidth > 0 && img.dataset.previewReady === 'true')) {
           const rect = node.getBoundingClientRect(), o = latest.current
           const next = [rect.x, rect.y, rect.width, rect.height, o.compare, o.zoom, o.focus].join(':')
           if (signature !== next) { signature = next; stableSince = Date.now() }
@@ -67,6 +69,31 @@ export function usePrelayoutAgent(options: Options) {
           }
         }
         await pause()
+      }
+      return false
+    }
+    async function readyView(id: string, page: PageData, desired: ViewState, comparison: boolean, zoom: number, focus: boolean) {
+      const until = Date.now() + 8000
+      while (alive && Date.now() < until) {
+        await pause()
+        const o = latest.current
+        if (o.current !== id) return false
+        if (o.clean !== desired.clean || o.difference !== desired.difference || o.showText !== desired.showText ||
+          o.differenceColor !== desired.differenceColor || o.differenceOpacity !== desired.differenceOpacity ||
+          o.compare !== comparison || o.zoom !== zoom || o.focus !== focus) continue
+        const node = [...document.querySelectorAll<HTMLElement>('.pl-page[data-readonly="false"]')].find(value => value.dataset.page === id)
+        const background = node?.querySelector<HTMLImageElement>('img.pl-background')
+        const expectedBackground = desired.clean && !!page.clean ? 'clean' : 'original'
+        if (!node || !background || background.dataset.previewReady !== 'true' || background.dataset.backgroundKind !== expectedBackground || !background.complete || !background.naturalWidth) continue
+        if (desired.showText ? page.items.length && node.querySelectorAll('.pl-text').length !== page.items.length : node.querySelector('.pl-text')) continue
+        const overlay = node.querySelector<HTMLCanvasElement>('canvas.pl-difference-overlay')
+        if (desired.difference && page.clean) {
+          if (!overlay || overlay.dataset.ready !== 'true' || overlay.dataset.color !== desired.differenceColor || Number(overlay.style.opacity) !== desired.differenceOpacity) continue
+        } else if (overlay) continue
+        if (await ready(id)) {
+          await new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())))
+          return true
+        }
       }
       return false
     }
@@ -84,7 +111,10 @@ export function usePrelayoutAgent(options: Options) {
         token: version, project_id: o.project.id, page_id: id, page_number: pages.find(p => p.page_id === id)?.number,
         width: page.width, height: page.height, revision: page.revision, dirty: state.dirty, saving: state.saving,
         reviewed: !state.dirty && page.reviewed_revision === page.revision, range: o.range, pages,
-        view: { comparison: o.compare, difference_highlight: o.difference, zoom: o.zoom, fullscreen: o.focus },
+        view: { mode: currentViewMode({ clean: o.clean, difference: o.difference, showText: o.showText, differenceColor: o.differenceColor, differenceOpacity: o.differenceOpacity }, !!page.clean),
+          comparison: o.compare, clean: o.clean, clean_available: !!page.clean, effective_background: o.clean && page.clean ? 'clean' : 'original',
+          difference_highlight: o.difference, difference_visible: o.difference && !!page.clean, show_text: o.showText,
+          difference_color: o.differenceColor, difference_opacity: o.differenceOpacity, zoom: o.zoom, fullscreen: o.focus },
         risks: measurement.risks, risk_note: '邊界框相交是提示，需看圖確認。',
         rule: '保持譯文字元；字級以原文為準；位置允許時，換行次數不要超過對應原文。來源行數未知時須看原圖確認。',
         items: page.items.map(item => {
@@ -191,16 +221,23 @@ export function usePrelayoutAgent(options: Options) {
         return { rendered, ...await inspect() }
       },
       setView: async args => {
-        const { id } = await checked(args.token)
+        const { id, state } = await checked(args.token)
         const o = latest.current
-        for (const value of [args.comparison, args.difference_highlight, args.fullscreen]) if (value !== undefined && typeof value !== 'boolean') throw new Error('顯示開關必須是布林值。')
+        for (const value of [args.comparison, args.fullscreen]) if (value !== undefined && typeof value !== 'boolean') throw new Error('顯示開關必須是布林值。')
         if (args.zoom !== undefined && (!Number.isFinite(args.zoom) || args.zoom < .1 || args.zoom > 8)) throw new Error('縮放必須介於 0.1 與 8。')
+        const next = resolveViewChange({ clean: o.clean, difference: o.difference, showText: o.showText,
+          differenceColor: o.differenceColor, differenceOpacity: o.differenceOpacity }, args, !!state.data.clean)
+        if (next.clean !== o.clean) o.setClean(next.clean)
+        if (next.difference !== o.difference) o.setDifference(next.difference)
+        if (next.showText !== o.showText) o.setShowText(next.showText)
+        if (next.differenceColor !== o.differenceColor) o.setDifferenceColor(next.differenceColor)
+        if (next.differenceOpacity !== o.differenceOpacity) o.setDifferenceOpacity(next.differenceOpacity)
         if (args.comparison !== undefined) o.setCompare(args.comparison)
-        if (args.difference_highlight !== undefined) o.setDifference(args.difference_highlight)
         if (args.fullscreen !== undefined) o.setFocus(args.fullscreen)
         if (args.zoom !== undefined) o.setZoom(args.zoom)
-        setReview(null); await ready(id)
-        return inspect()
+        setReview(null)
+        const rendered = await readyView(id, state.data, next, args.comparison ?? o.compare, args.zoom ?? o.zoom, args.fullscreen ?? o.focus)
+        return { rendered, ...await inspect() }
       },
     }
     // Serialize tool calls without preventing the user's normal editor interactions.

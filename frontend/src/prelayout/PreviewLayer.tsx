@@ -7,7 +7,7 @@ import type { VisibleRegion } from './geometry'
 type Tile = { x: number; y: number; w: number; h: number; key: string }
 function TileImage({ tile }: { tile: Tile }) {
   const image = usePreview(tile.key)
-  return image.url ? <img className="pl-detail-tile" data-tile src={image.url} draggable={false} alt="" style={{ left: tile.x, top: tile.y, width: tile.w, height: tile.h }} /> : null
+  return image.url ? <img className="pl-detail-tile" data-tile data-preview-ready={image.key === tile.key} src={image.url} draggable={false} alt="" style={{ left: tile.x, top: tile.y, width: tile.w, height: tile.h }} /> : null
 }
 export const PreviewLayer = memo(function PreviewLayer({ project, page, edge, scale, clean, region, detailed, interacting }: {
   project: string; page: Page; edge: number; scale: number; clean: boolean; region: VisibleRegion | null; detailed: boolean; interacting: boolean;
@@ -36,7 +36,7 @@ export const PreviewLayer = memo(function PreviewLayer({ project, page, edge, sc
   const [started, setStarted] = useState(false)
   useEffect(() => { const timer = setTimeout(() => setStarted(true), 1000); return () => clearTimeout(timer) }, [])
   return <>
-    {image.url && <img className="pl-background" src={image.url} draggable={false} alt={page.name} width={page.width} height={page.height} />}
+    {image.url && <img className="pl-background" src={image.url} data-preview-ready={image.key === snapshot.current.key} data-background-kind={clean ? 'clean' : 'original'} draggable={false} alt={page.name} width={page.width} height={page.height} />}
     {snapshot.current.tiles.map(tile => <TileImage key={tile.key} tile={tile} />)}
     {(!image.url && (started || image.error)) && <div className="pl-image-error" style={{ transform: `scale(${1 / scale})`, transformOrigin: 'top left' }}>
       {image.error || '底圖載入中…'} {image.error && <button onClick={event => { event.stopPropagation(); setRetry(value => value + 1) }}>重試圖片</button>}

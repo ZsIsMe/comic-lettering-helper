@@ -1,4 +1,4 @@
-import { memo, useEffect, useRef } from 'react'
+import { memo, useEffect, useRef, useState } from 'react'
 import { previewUrl } from './api'
 import { usePreview } from './preview-cache'
 import { paintDifferencePixels } from './difference-mask'
@@ -20,18 +20,25 @@ export const DifferenceOverlay = memo(function DifferenceOverlay({ project, page
 }) {
   const canvas = useRef<HTMLCanvasElement>(null)
   const completedMask = useRef<HTMLCanvasElement | null>(null)
+  const completedMaskKey = useRef('')
+  const [painted, setPainted] = useState({ key: '', color: '' })
   const latestColor = useRef(color); latestColor.current = color
-  const source = usePreview(previewUrl(project, page, edge, false), interacting)
-  const clean = usePreview(previewUrl(project, page, edge, true), interacting)
+  const sourceUrl = previewUrl(project, page, edge, false), cleanUrl = previewUrl(project, page, edge, true)
+  const source = usePreview(sourceUrl, interacting)
+  const clean = usePreview(cleanUrl, interacting)
+  const key = `${sourceUrl}|${cleanUrl}`
 
   useEffect(() => {
-    if (canvas.current && completedMask.current) drawMask(canvas.current, completedMask.current, color)
-  }, [color])
+    if (canvas.current && completedMask.current && completedMaskKey.current === key) {
+      drawMask(canvas.current, completedMask.current, color)
+      setPainted({ key, color })
+    }
+  }, [color, key])
 
   useEffect(() => {
     const target = canvas.current
     const before = source.image, after = clean.image
-    if (!target || !before || !after) return
+    if (!target || !before || !after || source.key !== sourceUrl || clean.key !== cleanUrl) return
     let cancelled = false
     let frame = 0
     if (before.naturalWidth !== after.naturalWidth || before.naturalHeight !== after.naturalHeight) return
@@ -65,12 +72,14 @@ export const DifferenceOverlay = memo(function DifferenceOverlay({ project, page
       // the transparent intermediate strips.
       if (!cancelled) {
         completedMask.current = resultCanvas
+        completedMaskKey.current = key
         drawMask(target, resultCanvas, latestColor.current)
+        setPainted({ key, color: latestColor.current })
       }
     }
     paint()
     return () => { cancelled = true; cancelAnimationFrame(frame) }
-  }, [clean.image, source.image])
+  }, [clean.image, clean.key, cleanUrl, source.image, source.key, sourceUrl, key])
 
-  return <canvas ref={canvas} className="pl-difference-overlay" style={{ opacity }} role="img" aria-label="原圖與去字圖差異高亮，彩色區域為已修改像素" />
+  return <canvas ref={canvas} className="pl-difference-overlay" data-ready={painted.key === key && painted.color === color && !!canvas.current?.width} data-color={painted.color} style={{ opacity }} role="img" aria-label="原圖與去字圖差異高亮，彩色區域為已修改像素" />
 })

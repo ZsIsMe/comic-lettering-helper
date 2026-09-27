@@ -103,7 +103,7 @@ function Workspace({ project: initial, promptDetection, onExit, onReadyToLeave }
   const [focus, setFocus] = useState(false)
   const [view] = useState(() => { try { return JSON.parse(localStorage.getItem(`pl-view-${initial.id}`) || '{}') } catch { return {} } })
   const [differenceStyle] = useState(differenceStylePreference)
-  const [current, setCurrent] = useState(initial.pages[0].id), [zoom, setZoom] = useState<number>(Math.max(.5, Math.min(3, Number(view.zoom) || 1))), [compare, setCompare] = useState(view.compare !== false), [clean, setClean] = useState(view.clean !== false), [difference, setDifference] = useState(view.difference === true), [showMeasure, setShowMeasure] = useState(view.showMeasure !== false)
+  const [current, setCurrent] = useState(initial.pages[0].id), [zoom, setZoom] = useState<number>(Math.max(.5, Math.min(3, Number(view.zoom) || 1))), [compare, setCompare] = useState(view.compare !== false), [clean, setClean] = useState(view.clean !== false), [difference, setDifference] = useState(view.difference === true), [showText, setShowText] = useState(view.showText !== false), [showMeasure, setShowMeasure] = useState(view.showMeasure !== false)
   const [differenceColor, setDifferenceColor] = useState(differenceStyle.color), [differenceOpacity, setDifferenceOpacity] = useState(differenceStyle.opacity)
   const [jump, setJump] = useState<{ id: string; version: number; y?: number } | null>(null), [error, setError] = useState(''), [busy, setBusy] = useState(false)
   const [pendingOnly, setPendingOnly] = useState(false)
@@ -134,7 +134,7 @@ function Workspace({ project: initial, promptDetection, onExit, onReadyToLeave }
   }, [busy, controller, onReadyToLeave])
   const fileInput = useRef<HTMLInputElement>(null), importKind = useRef('bt')
   const state = controller.pages.get(selection.page)
-  const selected = state?.data.items.filter(item => selection.ids.includes(item._id)) || []
+  const selected = showText ? state?.data.items.filter(item => selection.ids.includes(item._id)) || [] : []
   const first = selected[0]
   const groupNames = (project.template?.groupList || []).map(group => group.name).filter(name => typeof name === 'string')
   const selectedGroupIds = new Set(selected.map(item => typeof item.groupId === 'number' ? item.groupId : -1))
@@ -143,7 +143,8 @@ function Workspace({ project: initial, promptDetection, onExit, onReadyToLeave }
   const errors = [...controller.pages.values()].map(state => state.error).filter(Boolean)
   const saving = [...controller.pages.values()].some(state => state.saving)
   useEffect(() => { try { localStorage.setItem(`pl-review-range-${initial.id}`, JSON.stringify(range)) } catch { /* Optional range preference. */ } }, [initial.id, range])
-  useEffect(() => { try { localStorage.setItem(`pl-view-${initial.id}`, JSON.stringify({ zoom, compare, clean, difference, showMeasure })) } catch { /* Optional view preferences. */ } }, [initial.id, zoom, compare, clean, difference, showMeasure])
+  useEffect(() => { try { localStorage.setItem(`pl-view-${initial.id}`, JSON.stringify({ zoom, compare, clean, difference, showText, showMeasure })) } catch { /* Optional view preferences. */ } }, [initial.id, zoom, compare, clean, difference, showText, showMeasure])
+  useEffect(() => { if (!showText) { pointer.current = null; setSelection(value => value.ids.length ? { ...value, ids: [] } : value) } }, [showText])
   useEffect(() => { try { localStorage.setItem('pl-difference-style', JSON.stringify({ color: differenceColor, opacity: differenceOpacity })) } catch { /* Optional browser preference. */ } }, [differenceColor, differenceOpacity])
   useEffect(() => {
     void request<Item[]>(`${base}/preferences`).then(setClipboard).catch(e => setError(e.message))
@@ -217,10 +218,11 @@ function Workspace({ project: initial, promptDetection, onExit, onReadyToLeave }
     }
   }
   const patch = useCallback((changes: Partial<Item>) => {
+    if (!showText) return
     const state = controller.pages.get(selection.page)
     if (!state) return
     controller.edit(selection.page, state.data.items.map(item => selection.ids.includes(item._id) ? { ...item, ...changes, match_status: 'manual' } : item))
-  }, [controller, selection])
+  }, [controller, selection, showText])
   const moveSelected = (axis: 'x' | 'y', value: number | null) => {
     if (value === null || !Number.isFinite(value) || !state || !first) return
     const delta = value - first[axis] * (axis === 'x' ? state.data.width : state.data.height)
@@ -288,7 +290,7 @@ function Workspace({ project: initial, promptDetection, onExit, onReadyToLeave }
     return busy || interacting.current || event.defaultPrevented || !!document.querySelector('.ant-modal-wrap:not([style*="display: none"])') || editing(event.target) || editing(document.activeElement)
   }
   useFrameClipboard({
-    blocked: shortcutBlocked,
+    blocked: event => !showText || shortcutBlocked(event),
     selectionCount: selection.ids.length,
     selected,
     selectedPage: project.pages.find(page => page.id === selection.page),
@@ -305,6 +307,7 @@ function Workspace({ project: initial, promptDetection, onExit, onReadyToLeave }
     },
   })
   function adjust(adjustment: TextAdjustment, continuing = false) {
+    if (!showText) return false
     const state = controller.pages.get(selection.page)
     if (!state || !selection.ids.length) return false
     const items = adjustedItems(state.data.items, selection.ids, adjustment, state.data.width, state.data.height)
@@ -333,6 +336,7 @@ function Workspace({ project: initial, promptDetection, onExit, onReadyToLeave }
         if (page) go(page.id)
         return
       }
+      if (!showText) return
       const state = controller.pages.get(selection.page)
       if (!state) return
       if (event.key === 'F1' && first) { event.preventDefault(); setMemory(structuredClone(first)); return }
@@ -374,8 +378,8 @@ function Workspace({ project: initial, promptDetection, onExit, onReadyToLeave }
     const size = measure.font_size || first?.['font-size'] || 40
     patch({ x: center[0], y: center[1], xyxy_pixel: box, 'font-size': size, orientation: measure.orientation === 'horizontal' ? 'horizontal' : 'vertical', ...measureStyle(measure, size) })
   }, [controller, first, patch, selection, notices])
-  const agent = usePrelayoutAgent({ controller, project, current, busy, fontReady, interacting, range, compare, difference, zoom, focus, clean,
-    go, setCompare, setDifference, setZoom, setFocus, refreshProject: async () => setProject(await request<Project>(projectPath(project.id))) })
+  const agent = usePrelayoutAgent({ controller, project, current, busy, fontReady, interacting, range, compare, difference, showText, differenceColor, differenceOpacity, zoom, focus, clean,
+    go, setCompare, setClean, setDifference, setShowText, setDifferenceColor, setDifferenceOpacity, setZoom, setFocus, refreshProject: async () => setProject(await request<Project>(projectPath(project.id))) })
   return <main className={`pl-shell pl-workspace ${focus ? 'pl-focus-mode' : ''}`}>{modalContext}{noticesContext}{agent.review}
     <Modal title="預排版快捷鍵與滑鼠操作" open={shortcutOpen} onCancel={() => setShortcutOpen(false)} width="calc(100vw - 32px)" centered className="pl-shortcut-modal" footer={<Button onClick={() => setShortcutOpen(false)}>關閉</Button>}>
       <ShortcutHelp collapsible={false} />
@@ -409,10 +413,10 @@ function Workspace({ project: initial, promptDetection, onExit, onReadyToLeave }
     <div className="pl-tool-row"><Space wrap>
       {(['bt', 'labelplus', 'clean'] as const).filter((kind): boolean => kind !== 'clean' || showCleanUpload).map(kind => <Button key={kind} disabled={busy} onClick={() => { importKind.current = kind; if (fileInput.current) { fileInput.current.accept = kind === 'bt' ? '.json' : kind === 'labelplus' ? '.txt' : '.png,.jpg,.jpeg'; fileInput.current.multiple = kind === 'clean'; fileInput.current.click() } }}>{kind === 'bt' ? '開啟 Meo.json' : kind === 'labelplus' ? '匯入LP.txt' : '上傳去字圖'}</Button>)}
       <input hidden ref={fileInput} type="file" onChange={e => { const list = files(e.target.files); e.target.value = ''; void execute(() => importFile(list)) }} />
-      <Button onClick={() => add()}>新增文字</Button><Button onClick={() => void execute(openGroupOrganizer)}>整理分組</Button><Button onClick={() => controller.undo(selection.page)}>撤銷</Button><Button onClick={() => controller.undo(selection.page, true)}>重做</Button>
+      <Button disabled={!showText} onClick={() => add()}>新增文字</Button><Button onClick={() => void execute(openGroupOrganizer)}>整理分組</Button><Button onClick={() => controller.undo(selection.page)}>撤銷</Button><Button onClick={() => controller.undo(selection.page, true)}>重做</Button>
       <Button disabled={!agent.hasReview} onClick={() => void agent.openReview().catch(e => setError(e.message))}>局部前後對比</Button>
       <Select aria-label="縮放" title="相對適合寬度的縮放比例" value={zoom} onChange={setZoom} options={[...new Set([.5, .75, 1, 1.5, 2, 3, zoom])].sort((a, b) => a - b).map(value => ({ value, label: value === 1 ? '適合寬度' : `${Math.round(value * 100)}%` }))} />
-      <Checkbox checked={compare} onChange={e => setCompare(e.target.checked)}>原圖對照</Checkbox><Checkbox checked={clean} onChange={e => setClean(e.target.checked)}>去字底圖</Checkbox><Checkbox checked={difference} disabled={!hasClean} title="以自訂顏色顯示原圖與去字圖的像素差異；只在記憶體計算。快捷鍵：H" onChange={e => setDifference(e.target.checked)}>差異高亮（H）</Checkbox>
+      <Checkbox checked={compare} onChange={e => setCompare(e.target.checked)}>原圖對照</Checkbox><Checkbox checked={clean} onChange={e => setClean(e.target.checked)}>去字底圖</Checkbox><Checkbox checked={showText} onChange={e => setShowText(e.target.checked)}>顯示譯文</Checkbox><Checkbox checked={difference} disabled={!hasClean} title="以自訂顏色顯示原圖與去字圖的像素差異；只在記憶體計算。快捷鍵：H" onChange={e => setDifference(e.target.checked)}>差異高亮（H）</Checkbox>
       <label className="pl-difference-setting" title="差異高亮顏色">顏色<input aria-label="差異高亮顏色" type="color" value={differenceColor} disabled={!hasClean} onChange={event => setDifferenceColor(event.target.value)} /></label>
       <label className="pl-difference-setting pl-difference-opacity" title="差異高亮透明度">透明度<input aria-label="差異高亮透明度" type="range" min="0" max="100" step="1" value={Math.round(differenceOpacity * 100)} disabled={!hasClean} onChange={event => setDifferenceOpacity(Number(event.target.value) / 100)} /><output>{Math.round(differenceOpacity * 100)}%</output></label>
       <Checkbox checked={showMeasure} onChange={e => setShowMeasure(e.target.checked)}>偵測框</Checkbox>
@@ -421,7 +425,7 @@ function Workspace({ project: initial, promptDetection, onExit, onReadyToLeave }
     <PageNavigation pages={project.pages} current={current} range={range} onRange={setRange} onGo={go} reviewed={isReviewed}
       onReview={reviewed => void execute(() => setReviewed(reviewed))} onFinishAndNext={() => void execute(finishAndNext)} busy={busy || saving} focus={focus} onFocus={setFocus} />
     <div className="pl-layout">
-      <ContinuousPages project={project} controller={controller} selection={selection} onSelect={select} zoom={zoom} onZoom={setZoom} compare={compare} clean={clean} difference={difference} differenceColor={differenceColor} differenceOpacity={differenceOpacity} showMeasure={showMeasure} jump={jump} onCurrent={currentPage} onMeasure={onMeasure} onPointer={pointerChanged} onFontWheel={fontWheel} onInteractionChange={interactionChanged} />
+      <ContinuousPages project={project} controller={controller} selection={selection} onSelect={select} zoom={zoom} onZoom={setZoom} compare={compare} clean={clean} difference={difference} differenceColor={differenceColor} differenceOpacity={differenceOpacity} showText={showText} showMeasure={showMeasure} jump={jump} onCurrent={currentPage} onMeasure={onMeasure} onPointer={pointerChanged} onFontWheel={fontWheel} onInteractionChange={interactionChanged} />
       <aside className="pl-inspector">
         <div className="pl-inspector-title"><h2>文字編輯</h2><Tooltip title="雙擊頁面文字可原位編輯；Mac 也可用 ⌘＋單擊，並支援直排。Enter 換行；⌘／Ctrl＋Enter 完成；Esc 保存並結束編輯。"><button type="button" className="pl-help" aria-label="文字編輯說明">?</button></Tooltip></div>{state?.conflict && <Space wrap><Button onClick={() => void execute(() => controller.resolve(selection.page, true))}>保留我的草稿</Button><Button onClick={() => void execute(() => controller.resolve(selection.page, false))}>載入伺服器版</Button></Space>}
         <details open className="pl-groups-top"><summary>分組</summary><Space wrap>{groupNames.map((name, index) => <Tooltip key={`${index}-${name}`} title={selected.length ? `切換選取文字至「${name}」` : '請先選取文字'}><Button size="small" type={selectedGroupIds.size === 1 && selectedGroupId === index ? 'primary' : 'default'} disabled={!selected.length} onClick={() => patch({ groupId: index })}><GroupName name={name} index={index} /></Button></Tooltip>)}{!groupNames.length && <span className="pl-muted">尚無分組</span>}<Button size="small" onClick={() => void execute(openGroupOrganizer)}>整理分組</Button></Space></details>
