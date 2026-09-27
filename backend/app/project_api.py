@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import re
 import shutil
 import tempfile
 import uuid
@@ -11,6 +12,7 @@ from pathlib import Path
 from fastapi import APIRouter, Body, File, Form, HTTPException, UploadFile
 from fastapi.responses import StreamingResponse
 from PIL import Image
+import numpy as np
 from starlette.concurrency import run_in_threadpool
 from starlette.background import BackgroundTask
 
@@ -124,6 +126,104 @@ def _remap(value, mapping):
     return value
 
 
+def _validate_round_composition(stage: Path, project: dict, runs: dict, verify_asset) -> None:
+    path = stage / 'compositions' / 'rounds' / 'selection.json'
+    if not path.is_file():
+        return
+    state = json.loads(path.read_text())
+    if (not isinstance(state, dict) or state.get('version') != 2
+            or not isinstance(state.get('revision'), int) or state['revision'] < 0
+            or not isinstance(state.get('workflow_codes'), dict)
+            or not isinstance(state.get('candidates'), list)
+            or not isinstance(state.get('pages'), dict)):
+        raise ValueError('輪次合成記錄格式無效')
+    project_pages = {page['id']: page for page in project['pages']}
+    if set(state['pages']) != set(project_pages):
+        raise ValueError('輪次合成頁面與項目不一致')
+    codes = state['workflow_codes']
+    if any(type(code) is not int or not 2 <= code <= 65535 for code in codes.values()) or len(set(codes.values())) != len(codes):
+        raise ValueError('輪次合成候選代碼無效')
+    candidates = {}
+    for candidate in state['candidates']:
+        if not isinstance(candidate, dict):
+            raise ValueError('輪次合成候選無效')
+        run_id, workflow = candidate.get('run_id'), candidate.get('workflow')
+        if not isinstance(run_id, str) or not isinstance(workflow, str):
+            raise ValueError('輪次合成候選引用無效')
+        linked = runs.get(run_id)
+        if linked is None:
+            raise ValueError('輪次合成候選引用未知修復任務')
+        run, record, snapshot = linked
+        key = f'{run_id}:{workflow}'
+        if (workflow not in run['workflows'] or workflow not in record.workflows
+                or candidate.get('snapshot_id') != run['snapshot_id']
+                or candidate.get('code') != codes.get(key) or key in candidates
+                or type(candidate.get('selected')) is not bool
+                or not isinstance(candidate.get('page_errors'), dict)
+                or any(page_id not in {page['page_id'] for page in snapshot['pages']} or not isinstance(error, str)
+                       for page_id, error in candidate['page_errors'].items())
+                or not (record.state.value == 'completed' or
+                        (record.state.value == 'failed' and record.partial_results_accepted))):
+            raise ValueError('輪次合成候選與修復任務不一致')
+        candidates[key] = candidate
+    if set(candidates) != set(codes):
+        raise ValueError('輪次合成候選代碼與清單不一致')
+    candidate_by_code = {item['code']: item for item in candidates.values()}
+    for page_id, frozen in state['pages'].items():
+        page = project_pages[page_id]
+        if (not isinstance(frozen, dict) or frozen.get('stem') != page['stem']
+                or frozen.get('width') != page['width'] or frozen.get('height') != page['height']
+                or type(frozen.get('confirmed')) is not bool
+                or type(frozen.get('passthrough')) is not bool
+                or type(frozen.get('mask_ready')) is not bool):
+            raise ValueError('輪次合成凍結頁面與項目不一致')
+        base_rel = f'base/{page_id}.png'
+        mask_rel = f'masks/{page_id}.png'
+        assignment_rel = frozen.get('assignment')
+        if (frozen.get('base') != base_rel
+                or frozen.get('mask') not in (None, mask_rel)
+                or not isinstance(assignment_rel, str)
+                or re.fullmatch(rf'assignments/{re.escape(page_id)}\.(0|[1-9][0-9]*)\.png', assignment_rel) is None
+                or int(assignment_rel.rsplit('.', 2)[1]) > state['revision']):
+            raise ValueError('輪次合成凍結資產路徑無效')
+        base_path = verify_asset(f'compositions/rounds/{base_rel}')
+        if digest_file(base_path) != frozen.get('base_sha256'):
+            raise ValueError('輪次合成凍結底圖校驗失敗')
+        with Image.open(base_path) as image:
+            if image.format != 'PNG' or image.mode != 'RGB' or image.size != (page['width'], page['height']):
+                raise ValueError('輪次合成凍結底圖無效')
+            base_pixels = np.asarray(image).copy()
+        if frozen['mask'] is not None:
+            with Image.open(verify_asset(f'compositions/rounds/{mask_rel}')) as image:
+                if image.format != 'PNG' or image.mode != 'L' or image.size != (page['width'], page['height']):
+                    raise ValueError('輪次合成凍結 Mask 無效')
+                image.verify()
+        with Image.open(verify_asset(f'compositions/rounds/{assignment_rel}')) as image:
+            if image.format != 'PNG' or image.size != (page['width'], page['height']):
+                raise ValueError('輪次合成像素來源圖無效')
+            assignment = np.asarray(image)
+            if assignment.dtype != np.uint16:
+                raise ValueError('輪次合成像素來源圖必須為 uint16')
+            used_codes = {int(code) for code in np.unique(assignment)} - {0, 1}
+        if not used_codes <= set(candidate_by_code):
+            raise ValueError('輪次合成像素來源代碼無效')
+        if frozen['passthrough'] and used_codes:
+            raise ValueError('輪次合成直通頁面包含候選像素')
+        for code in used_codes:
+            candidate = candidate_by_code[code]
+            run, _, snapshot = runs[candidate['run_id']]
+            snapshot_page = next((item for item in snapshot['pages'] if item['page_id'] == page_id), None)
+            if snapshot_page is None or page_id in candidate['page_errors']:
+                raise ValueError('輪次合成像素來源不適用於此頁')
+            with Image.open(verify_asset(f"runs/{run['id']}/inpaint_workflows/{candidate['workflow']}/{page['stem']}.png")) as image:
+                if image.format != 'PNG' or image.size != (page['width'], page['height']):
+                    raise ValueError('輪次合成候選圖片無效')
+                image.verify()
+            with Image.open(verify_asset(snapshot_page['source'])) as image:
+                if not np.array_equal(np.asarray(image.convert('RGB')), base_pixels):
+                    raise ValueError('輪次合成候選底圖與凍結底圖不一致')
+
+
 def import_project(store: ProjectStore, repository, archive_path: Path, max_bytes: int) -> dict:
     """Validate every byte and relative reference before creating any persistent ID."""
     with tempfile.TemporaryDirectory(prefix='comic-project-import-') as temporary:
@@ -213,6 +313,7 @@ def import_project(store: ProjectStore, repository, archive_path: Path, max_byte
             page['thumbnail'] = thumbnail_relative
         mapping = {project['id']: uuid.uuid4().hex}
         jobs = []
+        run_records = {}
         for run in project.get('runs', []):
             old_id = run['id']
             if len(relative_path(run['snapshot_id']).parts) != 1:
@@ -222,11 +323,23 @@ def import_project(store: ProjectStore, repository, archive_path: Path, max_byte
                 raise ValueError('修復記錄 ID 無效或重複')
             snapshot_path = verify_asset(f"inputs/{run['snapshot_id']}/manifest.json")
             snapshot = json.loads(snapshot_path.read_text())
-            if {p['page_id'] for p in snapshot['pages']} != page_ids:
-                raise ValueError('輸入快照頁面不完整')
+            project_pages = {page['id']: page for page in project['pages']}
+            snapshot_pages = snapshot.get('pages')
+            if (snapshot.get('id') != run['snapshot_id'] or not isinstance(snapshot_pages, list)
+                    or not snapshot_pages or any(not isinstance(page, dict) for page in snapshot_pages)):
+                raise ValueError('輸入快照頁面無效')
+            selected_ids = [page.get('page_id') for page in snapshot_pages]
+            if (any(not isinstance(page_id, str) or page_id not in page_ids for page_id in selected_ids)
+                    or len(selected_ids) != len(set(selected_ids))
+                    or selected_ids != [page['id'] for page in project['pages'] if page['id'] in selected_ids]):
+                raise ValueError('輸入快照頁面無效或順序不一致')
             for page in snapshot['pages']:
+                if page.get('stem') != project_pages[page['page_id']]['stem']:
+                    raise ValueError('輸入快照頁面檔名不一致')
                 for key in ['source', 'mask']:
-                    if relative_path(page[key]).parts[:3] != ('inputs', run['snapshot_id'], 'export_pair'):
+                    expected = (f"inputs/{run['snapshot_id']}/export_pair/"
+                                f"{'other_mask/' if key == 'mask' else ''}{page['stem']}.png")
+                    if page.get(key) != expected:
                         raise ValueError('快照資產超出該次輸入範圍')
                     path = verify_asset(page[key])
                     if digest_file(path) != page[f'{key}_sha256']:
@@ -234,13 +347,25 @@ def import_project(store: ProjectStore, repository, archive_path: Path, max_byte
             record = JobRecord.model_validate_json(verify_asset(f'runs/{old_id}/job.json').read_text())
             if record.id != old_id or record.state.value in ACTIVE_STATES:
                 raise ValueError('封存含未完成的執行中任務')
+            if (record.snapshot_id not in (None, run['snapshot_id'])
+                    or record.pair_count != len(snapshot_pages)
+                    or record.total_runs != len(snapshot_pages) * len(record.workflows)
+                    or (record.page_ids and record.page_ids != selected_ids)):
+                raise ValueError('修復記錄與輸入快照不一致')
             if record.state.value == 'completed':
                 for workflow in record.workflows:
                     names = record.results.get(workflow, [])
-                    if set(names) != {f'{stem}.png' for stem in stems}:
+                    expected_names = {f"{page['stem']}.png" for page in snapshot_pages}
+                    result_dir = stage / 'runs' / old_id / 'inpaint_workflows' / workflow
+                    actual_names = {path.name for path in result_dir.iterdir() if path.is_file()} if result_dir.is_dir() else set()
+                    if len(names) != len(snapshot_pages) or set(names) != expected_names or actual_names != expected_names:
                         raise ValueError('已完成修復記錄缺少頁面結果')
                     for name in names:
                         with Image.open(verify_asset(f'runs/{old_id}/inpaint_workflows/{workflow}/{name}')) as image:
+                            stem = name[:-4]
+                            page_info = next(project_pages[page['page_id']] for page in snapshot_pages if page['stem'] == stem)
+                            if image.format != 'PNG' or image.size != (page_info['width'], page_info['height']):
+                                raise ValueError('已完成修復結果格式或尺寸不一致')
                             image.verify()
             selection_path = stage / 'compositions' / old_id / 'selection.json'
             if selection_path.is_file():
@@ -252,6 +377,8 @@ def import_project(store: ProjectStore, repository, archive_path: Path, max_byte
                     verify_asset(f'compositions/{old_id}/{assignment}')
             mapping[old_id] = uuid.uuid4().hex
             jobs.append(record)
+            run_records[old_id] = (run, record, snapshot)
+        _validate_round_composition(stage, project, run_records, verify_asset)
         new_project = _remap(project, mapping)
         new_project['state'] = 'ready'
         new_project.pop('detection_id', None)
@@ -270,7 +397,13 @@ def import_project(store: ProjectStore, repository, archive_path: Path, max_byte
                     if old_composition.is_dir():
                         old_composition.rename(old_composition.with_name(new_id))
             for path in (destination / 'compositions').glob('*/selection.json'):
-                atomic_json(path, _remap(json.loads(path.read_text()), mapping))
+                selection = _remap(json.loads(path.read_text()), mapping)
+                if path.parent.name == 'rounds' and selection.get('version') == 2:
+                    selection['workflow_codes'] = {
+                        f"{candidate['run_id']}:{candidate['workflow']}": candidate['code']
+                        for candidate in selection['candidates']
+                    }
+                atomic_json(path, selection)
             for record in jobs:
                 old_id = record.id
                 new_id = mapping[old_id]
@@ -473,6 +606,8 @@ def create_project_router(settings, repository, manager, store: ProjectStore, co
             workflows = body.get('workflows', [])
             if not workflows or len(set(workflows)) != len(workflows) or any(item not in ORDER for item in workflows):
                 raise ValueError('工作流選擇無效')
+            if 'page_ids' in body and not isinstance(body['page_ids'], list):
+                raise ValueError('頁面選擇無效')
             if any(record.state.value in ACTIVE_STATES for record in repository.list(limit=None)):
                 raise ProjectConflict('已有修復任務等待恢復或正在運行')
             claimed = manager.gpu_gate.claim(job_id)
@@ -482,7 +617,7 @@ def create_project_router(settings, repository, manager, store: ProjectStore, co
                 with store.lock(pid):
                     project = store.read(pid)
                     store.require_idle(project, repository)
-                    snapshot = store.snapshot(pid, body.get('expected_revision'))
+                    snapshot = store.snapshot(pid, body.get('expected_revision'), body.get('page_ids'))
                     job_dir = repository.job_dir(job_id)
                     geometry = {page['stem']: page['repair_rect'] for page in snapshot['pages'] if 'repair_rect' in page}
                     if geometry:
@@ -494,7 +629,7 @@ def create_project_router(settings, repository, manager, store: ProjectStore, co
                             shutil.copyfile(store.asset_path(pid, page[key]), destination)
                     from datetime import datetime
                     timestamp = now_iso()
-                    record = JobRecord(id=job_id, name=f"{project['name']}_{datetime.now().astimezone().strftime('%m%d_%H%M%S')}", project_id=pid, snapshot_id=snapshot['id'], workflows=[item for item in ORDER if item in workflows], pair_count=len(snapshot['pages']), black_mask_count=sum(page['passthrough'] for page in snapshot['pages']), total_runs=len(snapshot['pages']) * len(workflows), created_at=timestamp, updated_at=timestamp)
+                    record = JobRecord(id=job_id, name=f"{project['name']}_{datetime.now().astimezone().strftime('%m%d_%H%M%S')}", project_id=pid, snapshot_id=snapshot['id'], page_ids=[page['page_id'] for page in snapshot['pages']], workflows=[item for item in ORDER if item in workflows], pair_count=len(snapshot['pages']), black_mask_count=sum(page['passthrough'] for page in snapshot['pages']), total_runs=len(snapshot['pages']) * len(workflows), created_at=timestamp, updated_at=timestamp)
                     record.workflow_progress = {workflow: WorkflowProgress(total=record.pair_count) for workflow in record.workflows}
                     repository.write(record)
                     project['runs'].append({'id': job_id, 'snapshot_id': snapshot['id'], 'workflows': record.workflows, 'created_at': timestamp})

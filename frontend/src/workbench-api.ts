@@ -39,8 +39,14 @@ export interface Run {
 }
 export interface CompositionPage {
   page_id: string; stem: string; width: number; height: number; confirmed: boolean; passthrough: boolean
-  warnings: string[]; candidates: { workflow: Workflow; code: number; available: boolean; error?: string }[]
+  warnings: string[]; candidates: { run_id?: string; workflow: Workflow; code: number; available: boolean; error?: string }[]
   base_url: string; preview_url: string; assignment_url: string
+}
+export interface RoundComposition {
+  revision: number
+  settings: Composition['settings']
+  candidates: { run_id: string; workflow: Workflow; code: number; selected: boolean; target_count?: number; available_count?: number }[]
+  pages: CompositionPage[]
 }
 export interface Composition {
   revision: number; run_id: string; snapshot_id: string; workflow_codes: Record<string, number>

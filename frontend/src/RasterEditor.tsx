@@ -31,10 +31,12 @@ interface Props {
   compareLayout?: 'multi' | 'context' | 'cards'
   viewState?: { current: ComposeView }
   onPreviewReady?: () => Promise<void>
+  canConfirmPreview?: boolean
   width: number; height: number; baseUrl: string; mode: 'edit' | 'compose'
   overlayUrl?: string; otherUrl?: string; editedUrl?: string
   detectedTextUrl?: string
   assignmentRle?: number[][]; candidates?: Candidate[]
+  visibleCandidateCodes?: number[]
   onSave: (data: RasterSave) => Promise<void>
   onDirty?: (dirty: boolean) => void
   onRepairMaskChange?: (hasMask: boolean) => void
@@ -434,12 +436,12 @@ export const RasterEditor = forwardRef<RasterHandle, Props>(function RasterEdito
         await new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())))
         if (cancelled || targetVersion !== version.current || persisted.current !== version.current || gesture.current) return
         confirming.current = true
-        const task = previewCallback.current?.()
+        const task = props.canConfirmPreview === false ? undefined : previewCallback.current?.()
         if (task) { const pending = task.then(() => true); saving.current = pending; try { await pending } finally { if (saving.current === pending) saving.current = null; confirming.current = false } } else confirming.current = false
       }).catch(err => { if (!cancelled) setError(`成品載入或確認失敗：${String(err)}`) })
     }
     return () => { cancelled = true }
-  }, [mode, props.previewUrl, width, height, loading, previewRetry])
+  }, [mode, props.previewUrl, props.canConfirmPreview, width, height, loading, previewRetry])
   useEffect(() => {
     if (loading) return
     const views = [...viewRefs.current.values()]
@@ -754,6 +756,7 @@ export const RasterEditor = forwardRef<RasterHandle, Props>(function RasterEdito
   }
   const regional = mode === 'compose' && props.compareLayout && props.compareLayout !== 'multi'
   const regionCandidates = useMemo(() => loading ? [] : [...candidates.current].map(([code,value]) => ({...value,code,label:initial.current.candidates?.find(c=>c.code===code)?.label || String(code)})), [loading])
+  const visibleCandidate = (code: number) => !props.visibleCandidateCodes || props.visibleCandidateCodes.includes(code)
   const categoryName = category === 'solid' ? '純色填充' : '待修補'
   const historyControls = <div className="editor-history-controls">
     <Button size="small" disabled={disabled || !historyState[0]} onClick={() => undo()}>撤銷</Button>
@@ -763,7 +766,7 @@ export const RasterEditor = forwardRef<RasterHandle, Props>(function RasterEdito
   </div>
   const zoomControls = <div className="editor-zoom-controls" onClickCapture={() => { if (props.viewState) props.viewState.current.fit = false }} onChangeCapture={() => { if (props.viewState) props.viewState.current.fit = false }}><Button size="small" aria-label="縮小圖片" onClick={() => setZoom(z => Math.max(.05, z / 1.25))}>−</Button><Button size="small" aria-label="放大圖片" onClick={() => setZoom(z => Math.min(4, z * 1.25))}>＋</Button><Button size="small" onClick={() => setZoom(1)}>原尺寸</Button><label>縮放 <InputNumber size="small" aria-label="縮放百分比" min={5} max={400} value={Math.round(zoom * 100)} onChange={v => setZoom((v || 100) / 100)} /> %</label><Button size="small" onClick={fit}>適合視窗</Button></div>
   const panels = mode === 'edit' ? [{ code: 0, label: 'Mask / 原圖' }, { code: -1, label: '填色預覽' }]
-    : [{ code: 0, label: '合成結果' }, ...panelOrder.map(code => props.candidates!.find(c => c.code === code)!)]
+    : [{ code: 0, label: '合成結果' }, ...panelOrder.filter(visibleCandidate).map(code => props.candidates!.find(c => c.code === code)!)]
   return <div className="raster-editor" onKeyDown={event => {
     const tag = (event.target as HTMLElement).tagName
     if (mode === 'edit' && !['INPUT', 'TEXTAREA', 'SELECT'].includes(tag) && ['F1', 'F2'].includes(event.key)) { event.preventDefault(); chooseCategory(event.key === 'F1' ? 'solid' : 'other'); return }
@@ -834,16 +837,16 @@ export const RasterEditor = forwardRef<RasterHandle, Props>(function RasterEdito
     </div> : regional ? <Space wrap className="editor-toolbar">{historyControls}<span className="region-help">選擇共用同一份合成內容 · 自動保存</span></Space> : <>
       <Space wrap className="editor-toolbar">
         <Select aria-label="編輯工具" value={tool} onChange={chooseTool} options={[{value:'brush',label:'筆刷'},{value:'rectangle',label:'矩形'},{value:'pan',label:'平移'}]} />
-        <Dropdown menu={{items:[{key:'base',label:'本頁恢復為修復前底圖'},{key:'first',label:`本頁重新採用 ${props.candidates?.[0]?.label || '第一組'}`}],onClick:({key}) => adoptAll(key === 'base' ? 1 : props.candidates?.[0]?.code || 1, true)}} disabled={disabled}><Button>重設本頁 ▾</Button></Dropdown>
+        <Dropdown menu={{items:[{key:'base',label:'本頁恢復為修復前底圖'},{key:'first',label:`本頁重新採用 ${props.candidates?.find(c => visibleCandidate(c.code))?.label || '第一組'}`}],onClick:({key}) => adoptAll(key === 'base' ? 1 : props.candidates?.find(c => visibleCandidate(c.code))?.code || 1, true)}} disabled={disabled}><Button>重設本頁 ▾</Button></Dropdown>
         {tool === 'brush' && <div className="tool-settings brush-settings"><label>大小 <InputNumber size="small" disabled={disabled} aria-label="筆刷像素" min={1} max={200} value={size} onChange={v => setSize(v || 1)} /> px</label><Slider ariaLabelForHandle="筆刷大小" min={1} max={200} value={size} disabled={disabled} onChange={setSize} /><span className="brush-shortcut-hint">[ 縮小 · ] 放大</span></div>}
         {historyControls}
       </Space>
       <Space wrap className="editor-toolbar">{zoomControls}<Checkbox checked={showSources} onChange={e => setShowSources(e.target.checked)}>M 顯示選區（深色已採用／淡色未採用）</Checkbox></Space>
     <small className="compose-hint">左鍵框選／筆刷採用所在候選 · 右鍵固定拖框保留底圖 · 中鍵／Cmd＋左鍵拖動 · 滾輪上下移動 · Cmd／Ctrl＋滾輪左右移動 · Option／Alt＋滾輪縮放 · [／] 調筆刷 · 拖動黃色分隔線比較原圖</small></>}
-    {regional ? (!loading && base.current && pixels.current ? <RegionComparison layout={props.compareLayout as 'context' | 'cards'} base={base.current} preview={savedPreview.current && previewVersion.current === version.current && persisted.current === version.current ? savedPreview.current : null} candidates={regionCandidates} assignment={pixels.current.assignment} disabled={!!disabled} onAdopt={adoptRegion}/> : <div className="region-loading"><Spin /></div>) : <div className={`canvas-panels ${mode}${mode === 'edit' ? ` preview-${previewLayout}` : ''}`} aria-busy={loading} ref={node => { if (node && loading) node.scrollLeft = initialView.current.panelScroll || 0 }} onScroll={event => { if (props.viewState && event.target === event.currentTarget) props.viewState.current.panelScroll = event.currentTarget.scrollLeft }}>
+    {regional ? (!loading && base.current && pixels.current ? <RegionComparison layout={props.compareLayout as 'context' | 'cards'} base={base.current} preview={savedPreview.current && previewVersion.current === version.current && persisted.current === version.current ? savedPreview.current : null} candidates={regionCandidates} visibleCodes={props.visibleCandidateCodes} assignment={pixels.current.assignment} disabled={!!disabled} onAdopt={adoptRegion}/> : <div className="region-loading"><Spin /></div>) : <div className={`canvas-panels ${mode}${mode === 'edit' ? ` preview-${previewLayout}` : ''}`} aria-busy={loading} ref={node => { if (node && loading) node.scrollLeft = initialView.current.panelScroll || 0 }} onScroll={event => { if (props.viewState && event.target === event.currentTarget) props.viewState.current.panelScroll = event.currentTarget.scrollLeft }}>
       {panels.map(panel => <section key={panel.code} hidden={mode === 'edit' && panel.code === -1 && previewLayout === 'hidden'} className={mode === 'compose' ? 'compare-panel' : undefined} style={mode === 'compose' && initialView.current.widths?.[panel.code] ? {width: initialView.current.widths[panel.code]} : undefined} onPointerUp={event => { if (props.viewState && event.currentTarget.style.width) { props.viewState.current.widths ||= {}; props.viewState.current.widths[panel.code] = event.currentTarget.style.width } }}>
-        {mode === 'compose' && panel.code === 0 && <div className="candidate-controls result-controls">{loading ? '載入中…' : previewReady !== props.previewUrl || saveState !== '已保存' ? '更新中…' : '與輸出一致 · 顯示即確認'}</div>}
-        {mode === 'compose' && panel.code > 1 && <Space wrap className="candidate-controls"><Select aria-label={`比較面板 ${panel.code} 的來源`} value={panel.code} options={(props.candidates || []).map(c => ({value:c.code,label:c.label}))} onChange={next => setPanelOrder(order => order.map(c => c === panel.code ? next : c === next ? panel.code : c))} /><Button disabled={disabled} onClick={() => adoptAll(panel.code)}>本頁全部採用</Button></Space>}
+        {mode === 'compose' && panel.code === 0 && <div className="candidate-controls result-controls">{loading ? '載入中…' : previewReady !== props.previewUrl || saveState !== '已保存' ? '更新中…' : props.canConfirmPreview === false ? '本頁缺少候選，待補跑' : '與輸出一致 · 顯示即確認'}</div>}
+        {mode === 'compose' && panel.code > 1 && <Space wrap className="candidate-controls"><Select aria-label={`比較面板 ${panel.code} 的來源`} value={panel.code} options={(props.candidates || []).filter(c => visibleCandidate(c.code)).map(c => ({value:c.code,label:c.label}))} onChange={next => setPanelOrder(order => order.map(c => c === panel.code ? next : c === next ? panel.code : c))} /><Button disabled={disabled} onClick={() => adoptAll(panel.code)}>本頁全部採用</Button></Space>}
         <strong>{panel.label}{mode === 'edit' && <span className="panel-note">{panel.code === 0 ? `正在編輯：${categoryName}` : computing ? '更新中…' : '背景更新'}</span>}</strong>
         {mode === 'compose' && <div className="compare-image-controls">{panel.code > 1 ? <><span>原圖</span><Slider aria-label={`${panel.label} 原圖顯示範圍`} value={compare} onChange={setCompare}/><span>{Math.round(compare)}%</span></> : <span>合成結果 · 原圖比例只影響候選預覽</span>}</div>}
         {mode === 'edit' && panel.code === 0 && <div className="panel-controls">

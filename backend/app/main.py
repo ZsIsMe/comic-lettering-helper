@@ -23,6 +23,7 @@ from .storage import save_uploads, validate_pairs
 from .projects import ProjectStore
 from .project_api import create_project_router, project_download
 from .composition import build_composition_router
+from .round_composition import build_round_composition_router
 from .detection import DetectionManager, create_detection_router
 from .prelayout.store import PrelayoutStore
 from .prelayout.detection import PrelayoutDetection
@@ -320,6 +321,7 @@ def download_job(job_id: str) -> FileResponse:
 app.include_router(create_comfy_cleanup_router(comfy_cleanup))
 app.include_router(create_project_router(settings, repository, manager, project_store, comfy_cleanup))
 app.include_router(build_composition_router(project_store, repository))
+app.include_router(build_round_composition_router(project_store, repository))
 app.include_router(create_detection_router(detection_manager))
 app.include_router(prelayout_router(prelayout_store, prelayout_detection, settings.max_upload_mb * 1024 * 1024))
 app.include_router(create_edgewhite_router(settings, manager.gpu_gate))

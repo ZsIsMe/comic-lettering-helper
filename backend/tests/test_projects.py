@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import io
 import json
 import zipfile
 from pathlib import Path
 
 import pytest
+import numpy as np
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from PIL import Image
@@ -15,6 +17,7 @@ from app.config import Settings
 from app.project_api import create_project_router, export_project, import_project
 from app.projects import ProjectConflict, ProjectStore
 from app.repository import JobRepository, now_iso
+from app.round_composition import RoundCompositionService
 from app.schemas import JobRecord
 
 
@@ -26,6 +29,21 @@ def make_project(tmp_path, *, masks=True):
     Image.new('L', (6, 4), 0).save(mask)
     project = store.create('測試漫畫', {'01': original}, {'01': mask} if masks else None)
     return store, project
+
+
+def make_three_page_project(tmp_path, *, ready_stems=('01', '03')):
+    store = ProjectStore(tmp_path / 'projects')
+    sources = {}
+    masks = {}
+    for stem in ('01', '02', '03'):
+        source = tmp_path / f'{stem}.png'
+        Image.new('RGB', (6, 4), (20, 30, 40)).save(source)
+        sources[stem] = source
+        if stem in ready_stems:
+            mask = tmp_path / f'{stem}-mask.png'
+            Image.new('L', (6, 4), 255).save(mask)
+            masks[stem] = mask
+    return store, store.create('多頁漫畫', sources, masks)
 
 
 def test_project_requires_original_and_missing_mask_is_not_black(tmp_path):
@@ -159,6 +177,189 @@ def test_project_api_submit_snapshots_and_locks_delete(tmp_path):
         assert manager.enqueued == [job['id']]
         assert client.delete(f"/api/projects/{project['id']}?confirm=true").status_code == 409
         assert client.post(f"/api/projects/{project['id']}/jobs", json={'workflows': ['firered'], 'expected_revision': 1}).status_code == 409
+
+
+def test_subset_submission_keeps_project_order_and_only_uploads_selected_pages(tmp_path):
+    store, project = make_three_page_project(tmp_path)
+    repository = JobRepository(tmp_path / 'jobs')
+    manager = Manager()
+    app = FastAPI()
+    app.include_router(create_project_router(Settings(data_root=tmp_path), repository, manager, store))
+    first, _, third = (page['id'] for page in project['pages'])
+    with TestClient(app) as client:
+        response = client.post(f"/api/projects/{project['id']}/jobs", json={
+            'workflows': ['firered', 'flux2klein_lanpaint'],
+            'expected_revision': 0,
+            'page_ids': [third, first],
+        })
+    assert response.status_code == 202, response.text
+    job = response.json()
+    assert job['page_ids'] == [first, third]
+    assert job['pair_count'] == 2
+    assert job['total_runs'] == 4
+    assert job['workflows'] == ['flux2klein_lanpaint', 'firered']
+    assert {key: value['total'] for key, value in job['workflow_progress'].items()} == {
+        'firered': 2, 'flux2klein_lanpaint': 2,
+    }
+    assert sorted(path.name for path in (repository.job_dir(job['id']) / 'uploads' / 'pair').iterdir()) == ['01.png', '03.png']
+    snapshot = json.loads((store.project_dir(project['id']) / 'inputs' / job['snapshot_id'] / 'manifest.json').read_text())
+    assert [page['page_id'] for page in snapshot['pages']] == [first, third]
+    assert store.read(project['id'])['revision'] == 1
+    assert manager.enqueued == [job['id']]
+
+
+@pytest.mark.parametrize('selection', [[], ['duplicate', 'duplicate'], ['unknown'], [42], [None], [''], None, '01', {}])
+def test_subset_submission_rejects_invalid_page_ids_without_reserving_gpu(tmp_path, selection):
+    store, project = make_three_page_project(tmp_path)
+    repository = JobRepository(tmp_path / 'jobs')
+    manager = Manager()
+    app = FastAPI()
+    app.include_router(create_project_router(Settings(data_root=tmp_path), repository, manager, store))
+    selected = [project['pages'][0]['id']] * 2 if selection == ['duplicate', 'duplicate'] else selection
+    with TestClient(app) as client:
+        response = client.post(f"/api/projects/{project['id']}/jobs", json={
+            'workflows': ['firered'], 'expected_revision': 0, 'page_ids': selected,
+        })
+    assert response.status_code == 400, response.text
+    assert manager.gpu_gate.owner is None
+    assert manager.enqueued == []
+    assert repository.list() == []
+    assert store.read(project['id'])['revision'] == 0
+
+
+def test_subset_snapshot_requires_mask_only_for_selected_pages(tmp_path):
+    store, project = make_three_page_project(tmp_path)
+    first, missing, third = (page['id'] for page in project['pages'])
+    assert [page['page_id'] for page in store.snapshot(project['id'], 0, [third, first])['pages']] == [first, third]
+    with pytest.raises(ValueError, match='尚未準備 Mask'):
+        store.snapshot(project['id'], 0, [missing])
+    with pytest.raises(ValueError, match='尚未準備 Mask'):
+        store.snapshot(project['id'], 0)
+
+
+def test_subset_archive_roundtrip_keeps_only_selected_outputs(tmp_path):
+    store, project = make_three_page_project(tmp_path)
+    repository = JobRepository(tmp_path / 'jobs')
+    selected = [project['pages'][0]['id'], project['pages'][2]['id']]
+    snapshot = store.snapshot(project['id'], 0, selected)
+    timestamp = now_iso()
+    record = JobRecord(id='subsetrun', name='subset', project_id=project['id'], snapshot_id=snapshot['id'],
+                       page_ids=selected, workflows=['firered'], pair_count=2, total_runs=2,
+                       created_at=timestamp, updated_at=timestamp, state='completed', download_ready=True,
+                       results={'firered': ['01.png', '03.png']})
+    repository.write(record)
+    for stem in ('01', '03'):
+        result = repository.job_dir(record.id) / 'inpaint_workflows' / 'firered' / f'{stem}.png'
+        result.parent.mkdir(parents=True, exist_ok=True)
+        Image.new('RGB', (6, 4), (100, 110, 120)).save(result)
+    project['runs'] = [{'id': record.id, 'snapshot_id': snapshot['id'], 'workflows': record.workflows}]
+    project['current_run_id'] = record.id
+    store.write(project)
+    archive = export_project(store, repository, project['id'])
+    imported_store = ProjectStore(tmp_path / 'imported' / 'projects')
+    imported_repository = JobRepository(tmp_path / 'imported' / 'jobs')
+    imported = import_project(imported_store, imported_repository, archive, 1000000)
+    imported_run = imported_repository.read(imported['current_run_id'])
+    assert imported_run.page_ids == selected
+    assert imported_run.pair_count == 2
+    assert imported_run.results['firered'] == ['01.png', '03.png']
+    assert imported['pages'][1]['mask_ready'] is False
+    with zipfile.ZipFile(archive) as handle:
+        assert 'ctd_inpainted/export_pair/02.png' not in handle.namelist()
+        assert 'ctd_inpainted/export_pair/inpaint_workflows/firered/02.png' not in handle.namelist()
+
+
+def make_round_composition_archive(tmp_path):
+    store, project = make_three_page_project(tmp_path)
+    repository = JobRepository(tmp_path / 'jobs')
+    pid = project['id']
+    snapshot = store.snapshot(pid, 0, [project['pages'][0]['id'], project['pages'][2]['id']])
+    timestamp = now_iso()
+    record = JobRecord(id='round-old', name='round', project_id=pid, snapshot_id=snapshot['id'],
+                       workflows=['firered'], pair_count=2, total_runs=2,
+                       created_at=timestamp, updated_at=timestamp, state='completed',
+                       results={'firered': ['01.png', '03.png']})
+    repository.write(record)
+    for stem in ('01', '03'):
+        result = repository.job_dir(record.id) / 'inpaint_workflows' / 'firered' / f'{stem}.png'
+        result.parent.mkdir(parents=True, exist_ok=True)
+        Image.new('RGB', (6, 4), (100, 110, 120)).save(result)
+    project['runs'] = [{'id': record.id, 'snapshot_id': snapshot['id'], 'workflows': record.workflows}]
+    project['current_run_id'] = record.id
+    store.write(project)
+    state, _, _ = RoundCompositionService(store, repository).initialize(pid)
+    assert state['workflow_codes'] == {'round-old:firered': 2}
+    return store, repository, project, export_project(store, repository, pid)
+
+
+def rewrite_round_archive(source, destination, mutate):
+    with zipfile.ZipFile(source) as archive:
+        contents = {name: archive.read(name) for name in archive.namelist()}
+    state_path = 'compositions/rounds/selection.json'
+    state = json.loads(contents[state_path])
+    mutate(state)
+    contents[state_path] = json.dumps(state).encode()
+    archive_manifest = json.loads(contents['archive.json'])
+    archive_manifest['files'][state_path] = hashlib.sha256(contents[state_path]).hexdigest()
+    contents['archive.json'] = json.dumps(archive_manifest).encode()
+    with zipfile.ZipFile(destination, 'w') as archive:
+        for name, content in contents.items():
+            archive.writestr(name, content)
+
+
+def test_round_composition_archive_remaps_candidate_and_workflow_code_keys(tmp_path):
+    _, _, project, archive = make_round_composition_archive(tmp_path)
+    imported_store = ProjectStore(tmp_path / 'imported' / 'projects')
+    imported_repository = JobRepository(tmp_path / 'imported' / 'jobs')
+    imported = import_project(imported_store, imported_repository, archive, 1000000)
+    state = json.loads((imported_store.project_dir(imported['id']) / 'compositions' / 'rounds' / 'selection.json').read_text())
+    new_run = imported['current_run_id']
+    assert new_run != 'round-old'
+    assert state['workflow_codes'] == {f'{new_run}:firered': 2}
+    assert state['candidates'][0]['run_id'] == new_run
+    assert state['candidates'][0]['snapshot_id'] == imported['runs'][0]['snapshot_id']
+    assert set(state['pages']) == {page['id'] for page in project['pages']}
+    assert RoundCompositionService(imported_store, imported_repository).describe(imported['id'])['candidates'][0]['run_id'] == new_run
+
+
+@pytest.mark.parametrize('mutate', [
+    lambda state: state['candidates'][0].update(run_id='unknown-run'),
+    lambda state: state['candidates'][0].update(snapshot_id='unknown-snapshot'),
+    lambda state: state['workflow_codes'].update({'round-old:firered': 3}),
+    lambda state: state['pages'][next(iter(state['pages']))].update(base='../outside.png'),
+])
+def test_round_composition_archive_rejects_tampered_references(tmp_path, mutate):
+    _, _, _, archive = make_round_composition_archive(tmp_path)
+    tampered = tmp_path / 'tampered-round.zip'
+    rewrite_round_archive(archive, tampered, mutate)
+    imported_store = ProjectStore(tmp_path / 'imported' / 'projects')
+    imported_repository = JobRepository(tmp_path / 'imported' / 'jobs')
+    with pytest.raises(ValueError, match='輪次合成'):
+        import_project(imported_store, imported_repository, tampered, 1000000)
+    assert imported_store.list() == []
+
+
+def test_round_composition_archive_rejects_unknown_assignment_code(tmp_path):
+    _, _, _, source = make_round_composition_archive(tmp_path)
+    tampered = tmp_path / 'unknown-code.zip'
+    with zipfile.ZipFile(source) as archive:
+        contents = {name: archive.read(name) for name in archive.namelist()}
+    state = json.loads(contents['compositions/rounds/selection.json'])
+    page_id, page = next(iter(state['pages'].items()))
+    assignment_path = f"compositions/rounds/{page['assignment']}"
+    data = io.BytesIO()
+    Image.fromarray(np.full((4, 6), 999, dtype=np.uint16)).save(data, 'PNG')
+    contents[assignment_path] = data.getvalue()
+    archive_manifest = json.loads(contents['archive.json'])
+    archive_manifest['files'][assignment_path] = hashlib.sha256(contents[assignment_path]).hexdigest()
+    contents['archive.json'] = json.dumps(archive_manifest).encode()
+    with zipfile.ZipFile(tampered, 'w') as archive:
+        for name, content in contents.items():
+            archive.writestr(name, content)
+    imported_store = ProjectStore(tmp_path / 'imported' / 'projects')
+    imported_repository = JobRepository(tmp_path / 'imported' / 'jobs')
+    with pytest.raises(ValueError, match='輪次合成像素來源代碼無效'):
+        import_project(imported_store, imported_repository, tampered, 1000000)
 
 
 def png_upload(mode, color):

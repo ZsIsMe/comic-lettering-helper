@@ -10,6 +10,21 @@ export function selectionFromPages(ids: readonly string[], allIds: readonly stri
   return selected.length === allIds.length ? { mode: 'all' } : { mode: 'pages', pageIds: selected }
 }
 
+/** Resolve against the latest project so a stale selection cannot enter a job. */
+export function executionPlan(pages: readonly { id: string; filename: string; mask_ready?: boolean }[], selection: ExecutionSelection) {
+  const pageIds = executionPageIds(selection, pages.map(page => page.id))
+  const chosen = pages.filter(page => pageIds.includes(page.id))
+  return { pageIds, missingMasks: chosen.filter(page => !page.mask_ready).map(page => page.filename) }
+}
+
+export function executionJobRequest(pages: readonly { id: string; filename: string; mask_ready?: boolean }[], selection: ExecutionSelection,
+  workflows: readonly string[], expectedRevision: number) {
+  const plan = executionPlan(pages, selection)
+  if (!plan.pageIds.length) throw new Error('請至少選擇一張執行圖片')
+  if (plan.missingMasks.length) throw new Error(`所選圖片的 Mask 尚未備妥：${plan.missingMasks.join('、')}`)
+  return { workflows: [...workflows], expected_revision: expectedRevision, page_ids: plan.pageIds }
+}
+
 export function addPageToNextRound(selection: ExecutionSelection, pageId: string, allIds: readonly string[]): ExecutionSelection {
   if (!allIds.includes(pageId)) return selection
   const selected = executionPageIds(selection, allIds)

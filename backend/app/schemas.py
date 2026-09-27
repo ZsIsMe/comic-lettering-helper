@@ -61,6 +61,7 @@ class JobRecord(BaseModel):
     archive_path: str | None = None
     project_id: str | None = None
     snapshot_id: str | None = None
+    page_ids: list[str] = Field(default_factory=list)
 
 
 class HealthResponse(BaseModel):

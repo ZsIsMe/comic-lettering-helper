@@ -4,6 +4,8 @@
 
 狀態：已在 `codex/project-workbench` 完成本機第一版整合；P3 真實 CUDA 驗收及目標鏡像驗收尚未完成，未部署。實際驗證見 [本機驗證記錄](WORKBENCH_LOCAL_VALIDATION.md)。以下保留已確認的範圍與驗收條件。
 
+2026-09-26 擴充：原先下文「每次快照涵蓋全部頁面、Composition 僅綁一個 run、不同快照不得混用」描述第一版契約。新選頁任務允許每輪只快照所選頁；舊單 run 合成仍保持原契約，新增項目級輪次合成以凍結全頁底圖為基準，只接納底圖像素及尺寸一致的不同輪次候選。詳見 [目前架構](ARCHITECTURE.md#選頁任務與項目級輪次合成)。
+
 ## 1. 已確認的範圍
 
 - 唯一開發倉庫：`/Users/zhongsheng/Documents/Sourcetree/comic-lettering-helper`。前後端、影像核心、配置與文件全部在此維護。

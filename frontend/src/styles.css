@@ -319,6 +319,17 @@ footer { padding: 20px 0; color: #746e63; font-size: 12px; }
 .page-untouched { color: #77736d; }
 .page-complete { color: #27833c; }
 .page-needs-repair { color: #a46b00; }
+.round-history-heading { display:flex; justify-content:space-between; align-items:center; gap:16px; flex-wrap:wrap; margin-top:24px; }
+.round-history-heading h4 { margin:0; }
+.round-history { margin-top:12px; border:1px solid #d8d1c5; border-radius:10px; overflow:hidden; }
+.round-history-row { display:flex; justify-content:space-between; align-items:center; gap:12px; padding:14px 18px; border-bottom:1px solid #e3dcd0; background:#faf7f0; }
+.round-history-row:last-child { border-bottom:0; }
+.round-history-row.selected { background:#fff0e6; box-shadow:inset 4px 0 #da4f2a; }
+.round-history-row > div { display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+.round-history-row strong { font-variant-numeric:tabular-nums; }
+.round-compare-controls { display:flex; gap:10px; align-items:center; flex-wrap:wrap; margin-bottom:14px; }
+.round-compare-controls .ant-select { flex:1; min-width:220px; }
+.round-missing { margin:12px 0; }
 .page-status-legend { font-size: 11px; padding: 8px 2px; }
 .canvas-scroll { min-width: 0; max-width: 100%; }
 .canvas-scroll canvas { max-width: none; max-height: none; flex-shrink: 0; }

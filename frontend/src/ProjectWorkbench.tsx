@@ -6,14 +6,17 @@ import { DetectionSettings } from './DetectionSettings'
 import { createMaskPlan } from './create-mask-plan'
 import { runTiming } from './run-timing'
 import { WorkflowProgressSummary } from './WorkflowProgressSummary'
+import { ExecutionImagePicker } from './ExecutionImagePicker'
+import { addPageToNextRound, executionJobRequest, executionPlan, type ExecutionSelection } from './execution-selection'
+import { canConfirmRoundPage, pageRoundView, roundRows, roundSelectionChanges } from './round-comparison'
 import { friendlyWorkflowText } from './workflow-progress'
 import { RasterEditor, type RasterHandle, type ComposeView, type RasterSave } from './RasterEditor'
 import { RasterWorkerOwner } from './raster-worker-owner'
-import type { ScopeUpdate } from './repair-scope'
+import { defaultRepairRect, type ScopeUpdate } from './repair-scope'
 import { baselinePageLoad } from './page-load-options'
 import { startPageLoad, type PageLoadTrace } from './page-load-performance'
 import { clearSourceImageCache, scheduleSourceImagePreload, type SourceImageRequest } from './source-image-cache'
-import { active, api, assetUrl, defaultDetectionOptions, json, projectUrl, workflowOptions, type Composition, type DetectionOptions, type Project, type Run, type Workflow } from './workbench-api'
+import { active, api, assetUrl, defaultDetectionOptions, json, projectUrl, workflowOptions, type DetectionOptions, type Project, type RoundComposition, type Run, type Workflow } from './workbench-api'
 
 const { Title, Text } = Typography
 const remember = 'comic-workbench-project'
@@ -161,8 +164,10 @@ function ProjectWorkspace({ initial, initialError, gpuOwner, onExit, onReadyToLe
   })
   const [pageIndex, setPageIndex] = useState(0); const [step, setStep] = useState(0)
   const [workflow, setWorkflow] = useState<Workflow[]>(['flux2klein_lanpaint', 'firered'])
+  const [executionSelection, setExecutionSelection] = useState<ExecutionSelection>({ mode: 'all' })
+  const [executionPickerOpen, setExecutionPickerOpen] = useState(false)
   const [run, setRun] = useState<Run | null>(null); const [runId, setRunId] = useState(initial.current_run_id)
-  const [composition, setComposition] = useState<Composition | null>(null)
+  const [composition, setComposition] = useState<RoundComposition | null>(null)
   const [assignment, setAssignment] = useState<number[][] | null>(null)
   const [busy, setBusy] = useState(false); const [error, setError] = useState(initialError); const [dirty, setDirty] = useState(false)
   const [editorKey, setEditorKey] = useState(0)
@@ -185,6 +190,13 @@ function ProjectWorkspace({ initial, initialError, gpuOwner, onExit, onReadyToLe
   const navigating = useRef(false)
   const wasDetecting = useRef(initial.state === 'detecting')
   const page = project.pages[pageIndex]
+  const selectedExecution = executionPlan(project.pages, executionSelection)
+  const executionPages = useMemo(() => project.pages.map(item => ({
+    id: item.id, filename: item.filename, maskReady: !!item.mask_ready,
+    sourceUrl: assetUrl(project.id, item.source), overlayUrl: `${assetUrl(project.id, item.overlay)}?v=${item.edit_revision}`,
+    maskUrl: `${assetUrl(project.id, item.other)}?v=${item.edit_revision}`,
+    scopeRect: project.repair_scope?.enabled ? project.repair_scope.pages[item.id] || defaultRepairRect(item.width, item.height) : undefined,
+  })), [project])
   const pageStatus = (item: Project['pages'][number]) => !(liveRepair[item.id] !== undefined || item.mask_ready) ? 'untouched' : (liveRepair[item.id] ?? item.has_repair_mask) ? 'repair' : 'complete'
   const visiblePages = project.pages.map((item, index) => ({item, index})).filter(({item}) => step === 2 ? compareFilter === 'all' || (composition?.pages.find(p => p.page_id === item.id)?.confirmed ? 'confirmed' : 'pending') === compareFilter : pageFilter === 'all' || pageStatus(item) === pageFilter)
   const adjacentPage = (direction: number) => direction > 0 ? visiblePages.find(({index}) => index > pageIndex)?.index : visiblePages.slice().reverse().find(({index}) => index < pageIndex)?.index
@@ -201,7 +213,7 @@ function ProjectWorkspace({ initial, initialError, gpuOwner, onExit, onReadyToLe
   }, [liveRepair, pageFilter, pageIndex, project.id, project.pages, step])
   const currentPageId = useRef(page.id); currentPageId.current = page.id
   const url = projectUrl(project.id)
-  const compUrl = `${url}/compositions/${runId}`
+  const compUrl = `${url}/round-composition`
   const detecting = project.state === 'detecting' || !!(detection && detectionActive(detection.state))
   const running = !!(run && active(run.state))
   const detectionReady = !!(availability?.available ?? availability?.ready)
@@ -227,11 +239,10 @@ function ProjectWorkspace({ initial, initialError, gpuOwner, onExit, onReadyToLe
   }, [onReadyToLeave])
   async function reloadProject() { const p = await api<Project>(url); setProject(p); return p }
   const loadComposition = useCallback(async () => {
-    if (!runId) return
-    const c = await api<Composition>(`${projectUrl(initial.id)}/compositions/${runId}`)
+    const c = await api<RoundComposition>(`${projectUrl(initial.id)}/round-composition`)
     compositionRevision.current = c.revision; setComposition(c); setFeather(c.settings.feather_px)
     return c
-  }, [initial.id, runId])
+  }, [initial.id])
 
   useEffect(() => {
     void api<typeof availability>('/api/detection/availability').then(value => {
@@ -266,7 +277,7 @@ function ProjectWorkspace({ initial, initialError, gpuOwner, onExit, onReadyToLe
     return () => { live = false; clearInterval(timer) }
   }, [url])
   useEffect(() => {
-    if (step !== 2 || !runId) return
+    if (step !== 2) return
     let live = true
     void (async () => {
       await loadComposition()
@@ -274,13 +285,23 @@ function ProjectWorkspace({ initial, initialError, gpuOwner, onExit, onReadyToLe
       if (live) { compositionRevision.current = a.revision; setAssignment(a.assignment_rle) }
     })().catch(err => { if (live) setError(String(err)) })
     return () => { live = false }
-  }, [step, runId, page.id, compUrl, loadComposition, editorKey])
+  }, [step, page.id, compUrl, loadComposition, editorKey])
+  useEffect(() => {
+    if (step !== 1 || !project.runs.length) return
+    void loadComposition().catch(err => {
+      const detail = err instanceof Error ? err.message : String(err)
+      if (!detail.includes('尚無已完成的修復輪次')) setError(detail)
+    })
+  }, [step, run?.state, project.runs.length, loadComposition])
 
-  async function navigate(nextStep: number, nextPage = pageIndex, accepted = false) {
+  async function navigate(nextStep: number, nextPage = pageIndex) {
     const trace = nextStep === 0 ? startPageLoad(project.pages[nextPage].id, 'navigate') : undefined
     try {
       if (!await (trace ? trace.measure('save.wait', () => flush(trace)) : flush())) { trace?.finish('cancelled'); return }
-      if (nextStep === 2 && run?.state !== 'completed' && !run?.partial_results_accepted && !accepted) { message.info('修復完成後即可比較合成'); return }
+      if (nextStep === 2) {
+        const latest = await loadComposition()
+        if (!latest.candidates.some(item => item.selected)) { message.info('請先選擇要比較的工作流輪次'); return }
+      }
       const p = await (trace ? trace.measure('project.reload', reloadProject) : reloadProject())
       editRevision.current = p.pages[nextPage].edit_revision
       if (nextStep === 2) {
@@ -325,7 +346,7 @@ function ProjectWorkspace({ initial, initialError, gpuOwner, onExit, onReadyToLe
     return p.repair_scope!
   }
   async function saveComposition(data: RasterSave) {
-    const c = await api<Composition>(`${compUrl}/pages/${page.id}`, json('PUT', {
+    const c = await api<RoundComposition>(`${compUrl}/pages/${page.id}`, json('PUT', {
       revision: compositionRevision.current, assignment_rle: data.assignment_rle, confirmed: false, settings: { ...composition!.settings, feather_px: feather },
     }))
     compositionRevision.current = c.revision; setComposition(c); setAssignment(data.assignment_rle)
@@ -351,20 +372,21 @@ function ProjectWorkspace({ initial, initialError, gpuOwner, onExit, onReadyToLe
     await execute(async () => {
       if (!await flush()) return
       const p = await reloadProject()
-      const next = await api<Run>(`${url}/jobs`, json('POST', { workflows: workflow, expected_revision: p.revision }))
+      const next = await api<Run>(`${url}/jobs`, json('POST', executionJobRequest(p.pages, executionSelection, workflow, p.revision)))
       setRun(next); setRunId(next.id); setStep(1); await reloadProject()
     })
   }
   async function confirmDisplayedPage() {
-    if (!composition || composition.pages.find(p => p.page_id === page.id)?.confirmed) return
-    const c = await api<Composition>(`${compUrl}/pages/${page.id}`, json('PUT', { revision: compositionRevision.current, assignment_rle: assignment, confirmed: true, settings: composition.settings }))
+    const current = composition?.pages.find(item => item.page_id === page.id)
+    if (!composition || !canConfirmRoundPage(current) || current?.confirmed) return
+    const c = await api<RoundComposition>(`${compUrl}/pages/${page.id}`, json('PUT', { revision: compositionRevision.current, assignment_rle: assignment, confirmed: true, settings: composition.settings }))
     compositionRevision.current = c.revision; setComposition(c)
   }
   async function saveFeather(value: number, changes: Record<string, number> = {}) {
     await execute(async () => {
       if (!await flush() || !composition) return
       const a = await api<{ assignment_rle: number[][] }>(`${compUrl}/pages/${page.id}/assignment`)
-      const c = await api<Composition>(`${compUrl}/pages/${page.id}`, json('PUT', { revision: compositionRevision.current,
+      const c = await api<RoundComposition>(`${compUrl}/pages/${page.id}`, json('PUT', { revision: compositionRevision.current,
         assignment_rle: a.assignment_rle, confirmed: false, settings: { ...composition.settings, feather_px: value, ...changes } }))
       compositionRevision.current = c.revision; setComposition(c); setFeather(value); setEditorKey(k => k + 1)
     })
@@ -376,9 +398,7 @@ function ProjectWorkspace({ initial, initialError, gpuOwner, onExit, onReadyToLe
   async function exportResults() {
     await execute(async () => {
       if (!await flush()) return
-      if (run?.state !== 'completed' && !run?.partial_results_accepted) { message.info('修復完成後即可導出結果圖片'); return }
       const latest = await loadComposition()
-      if (!latest) return
       const pending = latest.pages.filter(item => !item.confirmed)
       if (pending.length) {
         const nextPage = project.pages.findIndex(item => item.id === pending[0].page_id)
@@ -392,14 +412,43 @@ function ProjectWorkspace({ initial, initialError, gpuOwner, onExit, onReadyToLe
       window.location.assign(result.download_url)
     })
   }
+  async function selectRound(code: number, selected: boolean) {
+    await execute(async () => {
+      if (!await flush()) return
+      const latest = await loadComposition()
+      const next = await api<RoundComposition>(`${compUrl}/candidates/${code}`, json('PUT', { revision: latest.revision, selected }))
+      compositionRevision.current = next.revision; setComposition(next); setEditorKey(key => key + 1)
+    })
+  }
+  async function selectRounds(codes: number[]) {
+    const shownCodes = new Set(rounds.map(item => item.code))
+    await execute(async () => {
+      if (!await flush()) return
+      let current = await loadComposition()
+      for (const change of roundSelectionChanges(current.candidates.filter(item => shownCodes.has(item.code)), codes)) {
+        current = await api<RoundComposition>(`${compUrl}/candidates/${change.code}`, json('PUT', { revision: current.revision, selected: change.selected }))
+      }
+      compositionRevision.current = current.revision; setComposition(current); setEditorKey(key => key + 1)
+    })
+  }
+  async function addCurrentToNextRound() {
+    await execute(async () => {
+      if (!await flush()) return
+      const p = await reloadProject()
+      setExecutionSelection(selection => addPageToNextRound(selection, page.id, p.pages.map(item => item.id)))
+      setStep(1); setDirty(false)
+      message.success(`${page.filename} 已加入下一輪`)
+    })
+  }
   const pendingExportCount = step === 2 ? composition?.pages.filter(item => !item.confirmed).length : undefined
   const cp = composition?.pages.find(item => item.page_id === page.id)
-  const candidateOptions = cp?.candidates.filter(item => item.available).map(item => ({ code: item.code,
-    label: workflowOptions.find(w => w.value === item.workflow)!.label,
-    url: `${compUrl}/pages/${page.id}/image?source=${item.workflow}`, diffUrl: `${compUrl}/pages/${page.id}/image?source=diff:${item.workflow}&revision=${composition?.revision}`,
-  })) || []
+  const rounds = roundRows(composition, project.runs)
+  const pageRounds = pageRoundView(compUrl, page.id, composition?.revision || 0, rounds, cp?.candidates || [])
+  const candidateOptions = pageRounds.options
+  const selectedRoundCodes = pageRounds.selectedCodes
   return <main ref={workspaceRoot} className={`app-shell project-workspace${step === 0 ? ' compact-edit' : ''}`}>
     {modalHolder}
+    {executionPickerOpen && <ExecutionImagePicker pages={executionPages} value={executionSelection} onApply={selection => { setExecutionSelection(selection); setExecutionPickerOpen(false) }} onCancel={() => setExecutionPickerOpen(false)} />}
     <Modal title="自動檢測設定" width={600} open={detectConfirmOpen} onCancel={() => { if (!busy) setDetectConfirmOpen(false) }}
       onOk={() => void detect()} okText="覆蓋並重新檢測" cancelText="取消" confirmLoading={busy}
       okButtonProps={{ danger: true, disabled: !!gpuOwner || detecting || !chosenDetectionReady }} cancelButtonProps={{ disabled: busy }} closable={!busy} maskClosable={!busy} keyboard={!busy}>
@@ -416,7 +465,7 @@ function ProjectWorkspace({ initial, initialError, gpuOwner, onExit, onReadyToLe
         <div className="result-export-action"><Button type="primary" disabled={busy || !!gpuOwner || detecting} onClick={() => void exportResults()}>導出結果</Button>{!!pendingExportCount && <span>尚有 {pendingExportCount} 頁待確認 · 點擊前往</span>}</div>
       </Space></header>
     {error && <Alert type="error" showIcon closable onClose={() => setError('')} message={error} />}
-    <Steps size="small" responsive={false} current={step} onChange={value => void execute(() => navigate(value))} items={[{ title: '準備與編輯' }, { title: '批量修復' }, { title: '比較合成', disabled: run?.state !== 'completed' && !run?.partial_results_accepted }]} />
+    <Steps size="small" responsive={false} current={step} onChange={value => void execute(() => navigate(value))} items={[{ title: '準備與編輯' }, { title: '批量修復' }, { title: '比較合成', disabled: !rounds.some(item => item.selected) }]} />
     <div className={`project-body${step !== 1 ? ' pages-collapsed' : ''}`}><aside id="editing-page-list" className="page-list" hidden={step !== 1}>
       <div className="page-status-legend"><span className="page-untouched">{step === 2 ? '待確認' : '未處理'}</span> · <span className="page-complete">{step === 2 ? '已確認' : '完成'}</span>{step !== 2 && <> · <span className="page-needs-repair">待修補</span></>}</div><List dataSource={project.pages} renderItem={(item, index) => <List.Item className={index === pageIndex ? 'selected' : ''} onClick={() => void execute(() => navigate(step, index))}>
         <strong className={step === 2 ? (composition?.pages.find(p => p.page_id === item.id)?.confirmed ? 'page-complete' : 'page-untouched') : (liveRepair[item.id] !== undefined || item.mask_ready) ? ((liveRepair[item.id] ?? item.has_repair_mask) ? 'page-needs-repair' : 'page-complete') : 'page-untouched'} title={(liveRepair[item.id] !== undefined || item.mask_ready) ? ((liveRepair[item.id] ?? item.has_repair_mask) ? '仍有待修補區域' : '已完成塗白，無待修補區域') : '尚未處理'}>{item.filename}</strong>
@@ -445,22 +494,35 @@ function ProjectWorkspace({ initial, initialError, gpuOwner, onExit, onReadyToLe
         {detection?.error && <Alert type="error" message="自動檢測未完成，請重試；若持續失敗，請聯絡管理員查看檢測日誌。" />}
       </>}
       {step === 1 && <>
-        <Title level={3}>批量修復</Title><p>確認後固定本次底圖與 Mask。全黑 Mask 直接沿用底圖，最終仍輸出全部 {project.pages.length} 頁。</p>
-        {project.runs.length > 0 && <Select className="run-select" aria-label="修復記錄" value={runId} onChange={id => { setRunId(id); setComposition(null) }} options={project.runs.map(r => ({ value: r.id, label: `${new Date(r.created_at).toLocaleString()} · ${r.workflows.length} 套流程` }))} />}
-        {run && <Card title={run.name} className="run-card"><Tag>{run.state}</Tag><p role="timer" aria-live="off">{runTiming(run, clock).text}</p><p><Text type="secondary">從任務建立時計算，包含準備、模型載入、生成及打包。</Text></p><Progress percent={Math.round(run.completed_total / Math.max(1, run.total_runs) * 100)} /><p>{friendlyWorkflowText(run.message)}</p><WorkflowProgressSummary workflows={run.workflows} progress={run.workflow_progress} />{run.error && <Alert type="error" message={friendlyWorkflowText(run.error)} />}
+        <Title level={3}>批量修復</Title><p>確認後固定所選圖片的本次底圖與 Mask。全黑 Mask 直接沿用底圖，本輪只輸出所選圖片。</p>
+        {project.runs.length > 0 && <Select className="run-select" aria-label="修復記錄" value={runId} onChange={setRunId} options={project.runs.map(r => ({ value: r.id, label: `${new Date(r.created_at).toLocaleString()} · ${r.workflows.length} 套流程` }))} />}
+        {run && <Card title={run.name} className="run-card"><Tag>{run.state}</Tag><Tag>本輪執行 {run.pair_count} / {project.pages.length} 張</Tag><p role="timer" aria-live="off">{runTiming(run, clock).text}</p><p><Text type="secondary">從任務建立時計算，包含準備、模型載入、生成及打包。</Text></p><Progress percent={Math.round(run.completed_total / Math.max(1, run.total_runs) * 100)} /><p>{friendlyWorkflowText(run.message)}</p><WorkflowProgressSummary workflows={run.workflows} progress={run.workflow_progress} />{run.error && <Alert type="error" message={friendlyWorkflowText(run.error)} />}
           <Space wrap>{run.download_ready && <Button disabled={!!gpuOwner} href={`/api/jobs/${run.id}/download`}>下載候選結果</Button>}
             {run.state === 'failed' && <><Button disabled={!run.completed_total || !!gpuOwner} href={`/api/jobs/${run.id}/download-current`}>下載目前結果</Button><Button disabled={!!gpuOwner} onClick={() => modal.confirm({ title: '續跑未完成圖片？', content: '使用原任務的圖片與 Mask，保留已完成結果。請先確認 ComfyUI 已就緒。', onOk: async () => { setRun(await api<Run>(`/api/jobs/${run.id}/resume`, { method: 'POST' })) } })}>續跑未完成圖片</Button></>}
             {running && <><Button disabled={!run.completed_total} href={`/api/jobs/${run.id}/download-current`}>下載目前結果</Button><Button danger onClick={() => modal.confirm({ title: '放棄修復任務？', content: '已完成圖片會保留。', onOk: async () => { setRun(await api<Run>(`/api/jobs/${run.id}/abandon`, { method: 'POST' })) } })}>放棄任務</Button></>}
-            {run.state === 'failed' && !run.partial_results_accepted && <Button disabled={!run.completed_total || !!gpuOwner} onClick={() => modal.confirm({ title: '使用已有結果進下一步？', content: '缺少的候選會標示。完全沒有候選的待修補頁，仍需補跑才能完成導出。', onOk: async () => { setRun(await api<Run>(`/api/jobs/${run.id}/use-results`, { method: 'POST' })); await execute(() => navigate(2, pageIndex, true)) } })}>使用已有結果進下一步</Button>}
-            {(run.state === 'completed' || run.partial_results_accepted) && <Button type="primary" onClick={() => void execute(() => navigate(2))}>比較與局部合成 →</Button>}
+            {run.state === 'failed' && !run.partial_results_accepted && <Button disabled={!run.completed_total || !!gpuOwner} onClick={() => modal.confirm({ title: '使用已有結果進下一步？', content: '缺少的候選會標示。完全沒有候選的待修補頁，仍需補跑才能完成導出。', onOk: async () => { setRun(await api<Run>(`/api/jobs/${run.id}/use-results`, { method: 'POST' })); await loadComposition() } })}>使用已有結果進下一步</Button>}
           </Space>{run.archive_path && <p className="server-path">伺服器下載路徑：{run.archive_path}</p>}
         </Card>}
         {!running && <Card title="建立新的修復版本"><Checkbox.Group value={workflow} onChange={values => setWorkflow(values as Workflow[])} options={workflowOptions} />
-          <p>{project.pages.filter(p => p.mask_ready).length} / {project.pages.length} 頁 Mask 已備妥</p>
-          <Button type="primary" loading={busy} disabled={!!gpuOwner || detecting || !workflow.length || project.pages.some(p => !p.mask_ready)} onClick={() => void submit()}>開始批量修復</Button>
+          <p><Button disabled={busy || detecting} onClick={() => setExecutionPickerOpen(true)}>選擇執行圖片</Button> 已選 {selectedExecution.pageIds.length} / {project.pages.length} 張{executionSelection.mode === 'pages' && selectedExecution.pageIds.length > 0 && `：${project.pages.filter(item => selectedExecution.pageIds.includes(item.id)).map(item => item.filename).join('、')}`}</p>
+          <p>所選圖片 {selectedExecution.pageIds.length - selectedExecution.missingMasks.length} / {selectedExecution.pageIds.length} 頁 Mask 已備妥</p>
+          {selectedExecution.missingMasks.length > 0 && <Alert type="warning" showIcon message={`所選圖片缺少 Mask：${selectedExecution.missingMasks.join('、')}`} />}
+          <Button type="primary" loading={busy} disabled={!!gpuOwner || detecting || !workflow.length || !selectedExecution.pageIds.length || !!selectedExecution.missingMasks.length} onClick={() => void submit()}>開始批量修復</Button>
         </Card>}
+        <div className="round-history-heading"><Title level={4}>工作流輪次</Title><Button type="primary" size="large" className="workbench-next-step" disabled={!rounds.some(item => item.selected) || busy} onClick={() => void execute(() => navigate(2))}>前往比較合成 →</Button></div>
+        <div className="round-history" aria-label="工作流輪次">
+          {[...rounds].reverse().map(item => {
+            return <div key={item.code} className={`round-history-row${item.selected ? ' selected' : ''}`}>
+              <div><strong>{item.label}</strong><Text type="secondary">已生成 {item.generatedCount}{item.targetCount === undefined ? '' : ` / ${item.targetCount}`} 張 · {workflowOptions.find(option => option.value === item.workflow)?.label}</Text></div>
+              <Button type={item.selected ? 'primary' : 'default'} aria-pressed={item.selected} disabled={busy} onClick={() => void selectRound(item.code, !item.selected)}>{item.selected ? '✓ 已選中' : '加入比較'}</Button>
+            </div>
+          })}
+          {!rounds.length && <Empty description="尚無可比較的工作流輪次" />}
+        </div>
       </>}
       {step === 2 && <>
+        <div className="round-compare-controls"><Button onClick={() => void addCurrentToNextRound()}>＋ 加入下一輪</Button><Tag>下一輪：已選 {selectedExecution.pageIds.length} / {project.pages.length} 張</Tag><Select mode="multiple" aria-label="選擇比較工作流輪次" value={selectedRoundCodes} optionFilterProp="label" maxTagCount="responsive" options={rounds.map(item => ({ value: item.code, label: item.label }))}
+          onChange={codes => void selectRounds(codes)} /></div>
         <Space wrap size={6} className="editor-toolbar compare-page-navigation">
           <Select size="small" aria-label="比較模式" value={compareLayout} disabled={busy || !assignment} onChange={value => void changeCompareLayout(value)} options={[{value:'multi',label:'多圖對比'},{value:'context',label:'整體＋局部'},{value:'cards',label:'區域卡片'}]}/>
 
@@ -476,9 +538,10 @@ function ProjectWorkspace({ initial, initialError, gpuOwner, onExit, onReadyToLe
           <label>羽化 <InputNumber disabled={busy || !composition} min={0} max={8} value={feather} onChange={v => void saveFeather(v || 0)} /> px</label>
           {composition && <><label>Mask 擴大 <InputNumber min={0} max={80} value={composition.settings.expand_px} onChange={v => void saveFeather(feather, {expand_px:v ?? 5})} /></label><label>差異閾值 <InputNumber min={1} max={255} value={composition.settings.threshold} onChange={v => void saveFeather(feather, {threshold:v ?? 12})} /></label><label>最小區域 <InputNumber min={1} max={10000} value={composition.settings.min_area} onChange={v => void saveFeather(feather, {min_area:v ?? 16})} /></label><Button disabled={busy} onClick={() => void saveFeather(feather)}>重算 Mask</Button></>}
         </Space>
+        {pageRounds.missing.length > 0 && <div className="round-missing">{pageRounds.missing.map(item => <Tag key={item.code}>{item.label}：本輪未生成這張圖片</Tag>)}</div>}
         {cp?.warnings.map(w => <Alert key={w} type="warning" message={w} />)}
-        {assignment && cp ? <RasterEditor key={`${runId}-${page.id}-${editorKey}`} ref={editor} width={page.width} height={page.height} mode="compose" compareLayout={compareLayout} viewState={composeView} onPreviewReady={confirmDisplayedPage} baseUrl={cp.base_url} previewUrl={`${cp.preview_url}&revision=${composition?.revision}`}
-          candidates={candidateOptions} assignmentRle={assignment} onSave={saveComposition} onDirty={setDirty} disabled={busy || cp.passthrough} /> : <div className="compose-loading"><Spin /></div>}
+        {assignment && cp ? <RasterEditor key={`${page.id}-${editorKey}`} ref={editor} width={page.width} height={page.height} mode="compose" compareLayout={compareLayout} viewState={composeView} onPreviewReady={confirmDisplayedPage} canConfirmPreview={canConfirmRoundPage(cp)} baseUrl={cp.base_url} previewUrl={`${cp.preview_url}&revision=${composition?.revision}`}
+          candidates={candidateOptions} visibleCandidateCodes={selectedRoundCodes} assignmentRle={assignment} onSave={saveComposition} onDirty={setDirty} disabled={busy || cp.passthrough} /> : <div className="compose-loading"><Spin /></div>}
       </>}
     </section></div>
   </main>

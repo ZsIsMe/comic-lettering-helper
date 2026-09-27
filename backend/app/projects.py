@@ -262,19 +262,30 @@ class ProjectStore:
             self.write(project)
             return project
 
-    def snapshot(self, project_id: str, expected_revision: int) -> dict:
+    def snapshot(self, project_id: str, expected_revision: int, page_ids: list[str] | None = None) -> dict:
         with self.lock(project_id):
             project = self.read(project_id)
             if project['revision'] != expected_revision:
                 raise ProjectConflict('項目已更新，請重新確認輸入')
-            if any(not page.get('mask_ready') for page in project['pages']):
+            if page_ids is None:
+                pages = project['pages']
+            else:
+                if (not isinstance(page_ids, list) or not page_ids
+                        or any(not isinstance(page_id, str) or not page_id for page_id in page_ids)
+                        or len(set(page_ids)) != len(page_ids)):
+                    raise ValueError('頁面選擇無效')
+                selected = set(page_ids)
+                pages = [page for page in project['pages'] if page['id'] in selected]
+                if len(pages) != len(selected):
+                    raise ValueError('頁面選擇包含未知頁面')
+            if any(not page.get('mask_ready') for page in pages):
                 raise ValueError('部分頁面尚未準備 Mask；缺少 Mask 不等於全黑 Mask')
             snapshot_id = uuid.uuid4().hex
             root = self.project_dir(project_id)
             pair_root = root / 'inputs' / snapshot_id / 'export_pair'
             (pair_root / 'other_mask').mkdir(parents=True)
             manifest = {'version': 1, 'id': snapshot_id, 'project_revision': project['revision'], 'created_at': now_iso(), 'pages': []}
-            for page in project['pages']:
+            for page in pages:
                 scope = project['repair_scope']
                 rect = validate_rect(scope['pages'].get(page['id'], default_rect(page['width'], page['height'])), page['width'], page['height']) if scope['enabled'] else None
                 with Image.open(self.asset_path(project_id, page['source'])) as original, Image.open(self.asset_path(project_id, page['overlay'])) as overlay, Image.open(self.asset_path(project_id, page['other'])) as mask:

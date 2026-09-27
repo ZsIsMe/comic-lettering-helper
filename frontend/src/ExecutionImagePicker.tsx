@@ -1,11 +1,73 @@
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Button, Empty, Input, Modal, Space, Tag } from 'antd'
 import { CheckOutlined, SearchOutlined } from '@ant-design/icons'
 import { executionPageIds, selectionFromPages, type ExecutionSelection } from './execution-selection'
+import type { RepairRect } from './repair-scope'
 import './execution-image-picker.css'
 
 export interface ExecutionPage {
-  id: string; filename: string; maskPreviewUrl: string; maskReady: boolean
+  id: string; filename: string; maskPreviewUrl?: string; maskReady: boolean
+  sourceUrl?: string; overlayUrl?: string; maskUrl?: string
+  scopeRect?: RepairRect
+}
+
+function PagePreview({ page }: { page: ExecutionPage }) {
+  const container = useRef<HTMLSpanElement>(null)
+  const canvas = useRef<HTMLCanvasElement>(null)
+  const [failed, setFailed] = useState(false)
+  const [visible, setVisible] = useState(() => typeof IntersectionObserver === 'undefined')
+  useEffect(() => {
+    if (page.maskPreviewUrl || visible || !container.current) return
+    const observer = new IntersectionObserver(entries => {
+      if (entries.some(entry => entry.isIntersecting)) { setVisible(true); observer.disconnect() }
+    }, { rootMargin: '160px' })
+    observer.observe(container.current)
+    return () => observer.disconnect()
+  }, [page.maskPreviewUrl, visible])
+  useEffect(() => {
+    if (!visible || page.maskPreviewUrl || !page.sourceUrl || !page.overlayUrl || !page.maskUrl) return
+    let cancelled = false
+    const load = (url: string) => new Promise<HTMLImageElement>((resolve, reject) => {
+      const image = new Image()
+      image.onload = () => resolve(image)
+      image.onerror = () => reject(new Error('圖片預覽載入失敗'))
+      image.src = url
+    })
+    void Promise.all([load(page.sourceUrl), load(page.overlayUrl), load(page.maskUrl)]).then(([source, overlay, mask]) => {
+      if (cancelled || !canvas.current) return
+      const scale = Math.min(180 / source.naturalWidth, 240 / source.naturalHeight, 1)
+      const width = Math.max(1, Math.round(source.naturalWidth * scale))
+      const height = Math.max(1, Math.round(source.naturalHeight * scale))
+      const element = canvas.current
+      element.width = width; element.height = height
+      const context = element.getContext('2d', { willReadFrequently: true })
+      if (!context) throw new Error('Canvas 不可用')
+      context.drawImage(mask, 0, 0, width, height)
+      const tint = context.getImageData(0, 0, width, height)
+      for (let index = 0; index < tint.data.length; index += 4) {
+        const strength = tint.data[index] // Current other-mask is an opaque grayscale PNG.
+        tint.data[index] = 255; tint.data[index + 1] = 80; tint.data[index + 2] = 148
+        tint.data[index + 3] = Math.round(strength * 0.55)
+      }
+      const tintCanvas = document.createElement('canvas')
+      tintCanvas.width = width; tintCanvas.height = height
+      tintCanvas.getContext('2d')?.putImageData(tint, 0, 0)
+      context.clearRect(0, 0, width, height)
+      context.drawImage(source, 0, 0, width, height)
+      context.drawImage(overlay, 0, 0, width, height)
+      if (page.scopeRect) {
+        context.save()
+        context.beginPath()
+        context.rect(page.scopeRect.x * scale, page.scopeRect.y * scale, page.scopeRect.width * scale, page.scopeRect.height * scale)
+        context.clip()
+      }
+      context.drawImage(tintCanvas, 0, 0)
+      if (page.scopeRect) context.restore()
+    }).catch(() => { if (!cancelled) setFailed(true) })
+    return () => { cancelled = true }
+  }, [visible, page.sourceUrl, page.overlayUrl, page.maskUrl, page.maskPreviewUrl, page.scopeRect])
+  if (page.maskPreviewUrl) return <img src={page.maskPreviewUrl} alt={`${page.filename} 原圖與粉紅 Mask`} loading="lazy" />
+  return <span ref={container} className="execution-page-preview">{failed ? <span role="status">預覽載入失敗</span> : <canvas ref={canvas} role="img" aria-label={`${page.filename} 原圖與粉紅 Mask`} />}</span>
 }
 
 /** Mount when opened so cancel always discards the modal's draft. */
@@ -29,7 +91,7 @@ export function ExecutionImagePicker({ pages, value, onApply, onCancel }: {
         className={`execution-page${selected.includes(page.id) ? ' selected' : ''}`}
         onClick={() => setSelected(ids => ids.includes(page.id) ? ids.filter(id => id !== page.id) : [...ids, page.id])}>
         <span className="execution-check">{selected.includes(page.id) && <CheckOutlined />}</span>
-        <img src={page.maskPreviewUrl} alt={`${page.filename} 原圖與粉紅 Mask`} loading="lazy" />
+        <PagePreview page={page} />
         <span className="execution-page-caption"><strong>{page.filename}</strong>{!page.maskReady && <Tag color="orange">Mask 未備妥</Tag>}</span>
       </button>)}
     </div>
