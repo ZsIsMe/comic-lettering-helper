@@ -4,7 +4,7 @@ import { previewUrl } from './api'
 import { textStyle } from './layout-review'
 import type { Item, PageData } from './types'
 import './layout-review.css'
-import { displayText } from './display-text'
+import { DisplayText } from './DisplayText'
 
 type View = 'before' | 'original' | 'edited' | 'detail'
 type Props = {
@@ -23,7 +23,7 @@ function ReviewPanel({ project, page, region, scale, mode, cleanBackground }: { 
     <div className="pl-review-crop" style={{ width: width * scale, height: height * scale }}>
       <div className="pl-review-scene pl-shell" style={{ width, height, transform: `scale(${scale})` }}>
         <img className="pl-review-image" src={src} width={width} height={height} alt={`${page.name} ${label}`} draggable={false} />
-        {mode !== 'original' && page.items.map((item: Item) => <div key={item._id} className="pl-text pl-review-text" style={{ ...textStyle(item, page), left: item.x * page.width - x1, top: item.y * page.height - y1 }}>{displayText(item.text, item.orientation) || '\u200b'}</div>)}
+        {mode !== 'original' && page.items.map((item: Item) => <div key={item._id} className="pl-text pl-review-text" style={{ ...textStyle(item, page), left: item.x * page.width - x1, top: item.y * page.height - y1 }}>{<DisplayText text={item.text} orientation={item.orientation} />}</div>)}
       </div>
     </div>
     <p>{x1}, {y1} → {x2}, {y2} · 原圖像素</p>

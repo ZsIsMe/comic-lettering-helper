@@ -4,7 +4,7 @@ import type { EditorState } from './editor-state'
 import { moveVerticalCaret, resetVerticalCaret } from './caret-navigation'
 import { readEditableText } from './editable-text'
 import { splitTextItem, splitTextParts, type TextBounds } from './split-text'
-import { displayText } from './display-text'
+import { setDisplayText } from './display-runs'
 
 // The browser owns this DOM while typing, including its selection and IME range.
 // Never reconcile editable children on React renders or during composition.
@@ -63,12 +63,13 @@ export function InlineTextEditor({ item, page, controller, point, onFinish, page
       const probe = node.cloneNode(false) as HTMLElement
       const computed = getComputedStyle(node)
       probe.removeAttribute('contenteditable'); probe.removeAttribute('role'); probe.removeAttribute('aria-label')
-      probe.textContent = displayText(text, original.orientation)
+      setDisplayText(probe, text, original.orientation)
       Object.assign(probe.style, {
         position: 'fixed', left: '-10000px', top: '0', visibility: 'hidden', pointerEvents: 'none', transform: 'none',
         width: 'max-content', height: 'max-content', font: computed.font, fontFamily: computed.fontFamily,
         fontSize: computed.fontSize, fontWeight: computed.fontWeight, lineHeight: computed.lineHeight,
         letterSpacing: computed.letterSpacing, writingMode: computed.writingMode, whiteSpace: 'pre',
+        fontVariantLigatures: computed.fontVariantLigatures, fontFeatureSettings: computed.fontFeatureSettings,
       })
       document.body.append(probe)
       const bounds = probe.getBoundingClientRect()

@@ -30,7 +30,11 @@
 
 ## 獨立資料的網頁預排版
 
-文字畫布、局部對比、WebMCP 幾何量測與分割後文字尺寸量測共用 `display-text.ts` 的純顯示轉換：`「」→｢｣`、`“”→‶〟`、ASCII 標點全形、僅直排 ASCII 數字全形。轉換不修剪空白或改換行，也不使用舊版逐字座標偏移。原位編輯、側欄、剪貼、批量替換、EditorState 與 JSON 匯出維持原文，顯示轉換不建立修訂或撤銷紀錄。
+預覽保留原始引號、標點、數字、空格與換行；已停用 `「」→｢｣`、`“”→‶〟`、ASCII 標點轉全形及直排數字轉全形等字元替換。直排預覽僅對 `“”` 設定正向樣式，其他字元保持原有方向。畫布、局部對比及尺寸量測共用顯示設定；原位編輯保留瀏覽器的原生純文字 DOM 和方向處理，不在輸入或組字期間插入格式節點。保存及 Meo.json 匯出維持原文。
+
+`COMIC_PRELAYOUT_DISPLAY_FONT` 獨立選擇 `/api/prelayout/font` 的 TTF／OTF；未設定時使用原 Noto。availability 的 `display_font_available` 與 `font_version` 描述顯示字型，版本識別不暴露本機路徑；`assets.font` 仍表示 OCR Noto，OCR 可用性與校準 metrics 不依賴顯示字型。前端以 `Prelayout CJK` 載入、匹配畫布的 500 字重，`textStyle` 統一啟用 `discretionary-ligatures`；隱藏量測同步此設定，原位分割 probe 明確複製連字和 feature 設定，避免 font shorthand 清掉繼承值。
+
+預覽同時預設啟用 OpenType `onum` 舊樣式；橫排啟用 `palt` 比例間距、關閉 `vpal`，直排啟用 `vpal` 比例間距、關閉 `palt`。畫布、原位編輯、局部對比和離屏量測共用設定；實際字形及壓縮幅度依字型實作，不修改 JSON 或自動調整既有中心、字級。
 
 `TextPage` 雙擊文字或 ⌘＋單擊文字時掛載 `InlineTextEditor`，沿用同一文字層的 writing-mode、縮放、旋轉與樣式。純文字 contenteditable 的 DOM、選取與組字區間由瀏覽器管理，React 更新不覆寫輸入內容；原生游標命中測試定位點擊位置。編輯期間隱藏拖曳控制點並隔離鍵盤事件。完成／失焦時只更新該條文字與手動狀態，記一次撤銷；Esc 提交文字、結束編輯並立即 flush 保存。`EditorState` 登記未完成的文字草稿，使離頁提醒識別未保存輸入，並在 flush（保存／匯出／跨工作區）及撤銷前提交。只有完成編輯後才進入既有 IndexedDB 與伺服器自動保存流程。
 

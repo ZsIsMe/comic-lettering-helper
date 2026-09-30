@@ -20,26 +20,26 @@ function modules(document) {
 }
 const { displayText } = modules()('display-text')
 
-test('corner and curly quotes use desktop display glyphs in both orientations', () => {
+test('all quotes preserve their original characters', () => {
   for (const orientation of ['horizontal', 'vertical']) {
-    assert.equal(displayText('「你好」“新篇”『保留』', orientation), '｢你好｣‶新篇〟『保留』')
+    assert.equal(displayText('「你好」“新篇”『保留』', orientation), '「你好」“新篇”『保留』')
   }
 })
 
-test('all 32 ASCII punctuation symbols become fullwidth, with letters and horizontal digits unchanged', () => {
+test('ASCII punctuation, letters, and digits preserve their original characters', () => {
   const punctuation = Array.from({ length: 95 }, (_, index) => index + 32)
     .filter(code => code >= 33 && code <= 47 || code >= 58 && code <= 64 || code >= 91 && code <= 96 || code >= 123 && code <= 126)
   assert.equal(punctuation.length, 32)
-  assert.equal(displayText(String.fromCharCode(...punctuation), 'horizontal'), String.fromCharCode(...punctuation.map(code => code + 0xFEE0)))
+  assert.equal(displayText(String.fromCharCode(...punctuation), 'horizontal'), String.fromCharCode(...punctuation))
   assert.equal(displayText('ABC xyz 0123456789', 'horizontal'), 'ABC xyz 0123456789')
-  assert.equal(displayText('ABC xyz 0123456789', 'vertical'), 'ABC xyz ０１２３４５６７８９')
+  assert.equal(displayText('ABC xyz 0123456789', 'vertical'), 'ABC xyz 0123456789')
 })
 
 test('spacing, newlines, Unicode, and UTF-16 offsets survive display preparation', () => {
   const text = ' \t「甲😀」\r\n乙\r丙\n丁\\n  …—（全形）｢｣‶〟'
   for (const orientation of ['horizontal', 'vertical']) {
     const displayed = displayText(text, orientation)
-    assert.equal(displayed, ' \t｢甲😀｣\r\n乙\r丙\n丁＼n  …—（全形）｢｣‶〟')
+    assert.equal(displayed, text)
     assert.equal(displayed.length, text.length)
     assert.equal(displayed.indexOf('😀'), text.indexOf('😀'))
     assert.equal(displayText(displayed, orientation), displayed)
@@ -63,7 +63,38 @@ test('measurement inserts prepared display text without mutating saved items', a
   const page = { width: 800, height: 1000, items: [item, { ...item, _id: 'horizontal', orientation: 'horizontal' }, { ...item, _id: 'empty', text: '' }] }
   const snapshot = JSON.stringify(page)
   await modules(document)('layout-review').measurePage(page)
-  assert.deepEqual(created.slice(1).map(node => node.textContent), ['｢第１２話！｣', '｢第12話！｣', '\u200b'])
+  assert.deepEqual(created.slice(1).map(node => node.textContent), ['「第12話!」', '「第12話!」', '\u200b'])
+  assert(created.slice(1).every(node => node.style.fontVariantLigatures === 'discretionary-ligatures'))
+  assert.deepEqual(created.slice(1).map(node => node.style.fontFeatureSettings), ['"onum" 1, "palt" 0, "vpal" 1', '"onum" 1, "palt" 1, "vpal" 0', '"onum" 1, "palt" 0, "vpal" 1'])
   assert.equal(created[0].removed, true)
   assert.equal(JSON.stringify(page), snapshot)
+})
+
+test('only curly quotes are upright in vertical display, preserving surrounding shaping and raw text', () => {
+  const { displayRuns } = modules()('display-runs')
+  const text = 'AB！？“甲”\n“” CD'
+  const vertical = displayRuns(text, 'vertical')
+  assert.deepEqual(vertical, [
+    { text: 'AB！？', upright: false }, { text: '“', upright: true },
+    { text: '甲', upright: false }, { text: '”', upright: true },
+    { text: '\n', upright: false }, { text: '“”', upright: true }, { text: ' CD', upright: false },
+  ])
+  assert.equal(vertical.map(run => run.text).join(''), text)
+  assert.deepEqual(displayRuns(text, 'horizontal'), [{ text, upright: false }])
+  assert.deepEqual(displayRuns('ABC！？', 'vertical'), [{ text: 'ABC！？', upright: false }])
+})
+
+test('DOM measurement uses upright quote spans without converting quotes or inserting extra characters', () => {
+  const document = {
+    createElement(tag) { return { tag, style: {}, textContent: '' } },
+    createTextNode(text) { return { textContent: text } },
+  }
+  const { setDisplayText } = modules(document)('display-runs')
+  const node = { textContent: '', children: [], appendChild(child) { this.children.push(child) } }
+  setDisplayText(node, 'ABC“甲”！？\n乙', 'vertical')
+  assert.equal(node.children.map(child => child.textContent).join(''), 'ABC“甲”！？\n乙')
+  assert.deepEqual(node.children.filter(child => child.tag === 'span').map(child => [child.textContent, child.style.textOrientation]), [['“', 'upright'], ['”', 'upright']])
+  const horizontal = { textContent: '', appendChild() { throw Error('horizontal quotes must stay in normal text') } }
+  setDisplayText(horizontal, '“甲”ABC', 'horizontal')
+  assert.equal(horizontal.textContent, '“甲”ABC')
 })

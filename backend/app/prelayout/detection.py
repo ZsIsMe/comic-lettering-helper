@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import os
 import signal
 import shutil
@@ -21,6 +22,8 @@ class PrelayoutDetection:
     def __init__(self, settings, store, gate):
         self.settings, self.store, self.gate = settings, store, gate
         self.models = Path(os.getenv('COMIC_PRELAYOUT_MODEL_ROOT', '/root/models/comic-prelayout'))
+        display_font = os.getenv('COMIC_PRELAYOUT_DISPLAY_FONT', '').strip()
+        self.display_font = Path(display_font).expanduser() if display_font else self.models / 'NotoSansCJKjp-Medium.otf'
         self.python = os.getenv('COMIC_PRELAYOUT_PYTHON', '')
         self.device = os.getenv('COMIC_PRELAYOUT_DEVICE', 'cuda').strip().lower()
         self.tasks, self.processes = {}, {}
@@ -30,18 +33,24 @@ class PrelayoutDetection:
                  'font': 'NotoSansCJKjp-Medium.otf', 'metrics': 'NotoSansCJKjp-Medium.ink-metrics.json'}
         present = {key: (self.models / value).is_file() for key, value in files.items()}
         runtime = bool(self.python and Path(self.python).is_file() and os.access(self.python, os.X_OK))
-        font = self.models / files['font']
+        display_font_available = self.display_font.is_file()
         try:
-            stat = font.stat()
-            font_version = f'{stat.st_mtime_ns}-{stat.st_size}'
+            stat = self.display_font.stat() if display_font_available else None
+            # The path distinguishes different fonts with identical size and timestamps,
+            # while the hash keeps server filesystem paths out of the public response.
+            font_version = hashlib.sha256(
+                f'{self.display_font.resolve()}\0{stat.st_mtime_ns}\0{stat.st_size}'.encode()
+            ).hexdigest() if stat else ''
         except OSError:
+            display_font_available = False
             font_version = ''
         supported = self.device in ('cuda', 'mps')
         return {'assets': present, 'runtime': runtime, 'device': self.device,
                 'methods': {'fixed': supported and runtime and present['ctd'],
                             'single_char': supported and runtime and present['ctd'],
                             'ocr_aligned': supported and runtime and all(present.values())}, 'gpu_owner': self.gate.owner,
-                'font_version': font_version, 'message': '模型只供偵測與字級計算；人工編輯不需要模型。'}
+                'display_font_available': display_font_available, 'font_version': font_version,
+                'message': '模型只供偵測與字級計算；人工編輯不需要模型。'}
 
     def status(self, pid, recover=False):
         self.store.read(pid)

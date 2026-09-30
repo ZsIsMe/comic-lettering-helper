@@ -87,10 +87,11 @@ def router(store, detector, max_bytes):
 
     @api.get('/font')
     def font():
-        path = detector.models / 'NotoSansCJKjp-Medium.otf'
+        path = detector.display_font
         if not path.is_file():
             raise HTTPException(404, '尚未準備預覽字型')
-        return FileResponse(path, media_type='font/otf', headers={'Cache-Control': 'private, max-age=86400'})
+        media_type = 'font/ttf' if path.suffix.lower() == '.ttf' else 'font/otf'
+        return FileResponse(path, media_type=media_type, headers={'Cache-Control': 'private, max-age=86400'})
 
     @api.get('/projects')
     def projects():

@@ -157,13 +157,13 @@ function Workspace({ project: initial, promptDetection, onExit, onReadyToLeave }
     return () => { clearInterval(timer); window.removeEventListener('beforeunload', unload); controller.dispose() }
   }, [controller, initial.id])
   useEffect(() => {
-    if (!availability?.assets.font) return
-    let live = true
     setFontReady(false)
-    const font = new FontFace('Prelayout CJK', `url(${base}/font?v=${encodeURIComponent(availability.font_version || '')})`)
-    void font.load().then(loaded => { if (live) { document.fonts.add(loaded); setFontReady(true) } }).catch(() => setError('預覽字型載入失敗，請準備 README 指定字型。'))
+    if (!(availability?.display_font_available ?? availability?.assets.font)) return
+    let live = true
+    const font = new FontFace('Prelayout CJK', `url(${base}/font?v=${encodeURIComponent(availability.font_version || '')})`, { weight: '500' })
+    void font.load().then(loaded => { if (live) { document.fonts.add(loaded); setFontReady(true) } }).catch(() => { if (live) setError('預覽字型載入失敗，請檢查服務的預覽字型設定。') })
     return () => { live = false; document.fonts.delete(font) }
-  }, [availability?.assets.font, availability?.font_version])
+  }, [availability?.assets.font, availability?.display_font_available, availability?.font_version])
   useEffect(() => {
     if (task?.state !== 'completed' || task.id === completedDetection.current || refreshingDetection.current) return
     refreshingDetection.current = true

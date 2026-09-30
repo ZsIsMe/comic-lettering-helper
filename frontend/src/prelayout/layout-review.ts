@@ -1,7 +1,7 @@
 import type { CSSProperties } from 'react'
 import { color, transform } from './geometry'
 import type { Item, PageData } from './types'
-import { displayText } from './display-text'
+import { setDisplayText } from './display-runs'
 
 export type TextRect = [number, number, number, number]
 export type PageMeasurement = { rects: Record<string, TextRect>; risks: string[] }
@@ -11,6 +11,8 @@ export function textStyle(item: Item, page: Pick<PageData, 'width' | 'height'>):
   return {
     left: item.x * page.width, top: item.y * page.height, transform: transform(item),
     fontSize: item['font-size'], writingMode: item.orientation === 'vertical' ? 'vertical-rl' : 'horizontal-tb',
+    fontVariantLigatures: 'discretionary-ligatures',
+    fontFeatureSettings: item.orientation === 'vertical' ? '"onum" 1, "palt" 0, "vpal" 1' : '"onum" 1, "palt" 1, "vpal" 0',
     color: color(item.color), WebkitTextStroke: `${item['stroke-weight']}px ${color(item['stroke-color'])}`,
   }
 }
@@ -37,9 +39,11 @@ export async function measurePage(page: PageData): Promise<PageMeasurement> {
     node.style.fontSize = `${style.fontSize}px`
     node.style.transform = String(style.transform)
     node.style.writingMode = String(style.writingMode)
+    node.style.fontVariantLigatures = String(style.fontVariantLigatures)
+    node.style.fontFeatureSettings = String(style.fontFeatureSettings)
     node.style.color = String(style.color)
     node.style.webkitTextStroke = String(style.WebkitTextStroke)
-    node.textContent = displayText(item.text, item.orientation) || '\u200b'
+    setDisplayText(node, item.text, item.orientation)
     root.appendChild(node)
     nodes.set(item._id, node)
   }
