@@ -1,6 +1,7 @@
 import type { CSSProperties } from 'react'
 import { color, transform } from './geometry'
 import type { Item, PageData } from './types'
+import { displayText } from './display-text'
 
 export type TextRect = [number, number, number, number]
 export type PageMeasurement = { rects: Record<string, TextRect>; risks: string[] }
@@ -38,7 +39,7 @@ export async function measurePage(page: PageData): Promise<PageMeasurement> {
     node.style.writingMode = String(style.writingMode)
     node.style.color = String(style.color)
     node.style.webkitTextStroke = String(style.WebkitTextStroke)
-    node.textContent = item.text || '\u200b'
+    node.textContent = displayText(item.text, item.orientation) || '\u200b'
     root.appendChild(node)
     nodes.set(item._id, node)
   }

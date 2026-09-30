@@ -11,6 +11,7 @@ import { InlineTextEditor } from './InlineTextEditor'
 import { fontLabel, quickControlLabel, textInfoLabel, type QuickControlKind } from './text-control-labels'
 import { GroupName } from './GroupName'
 import { DifferenceOverlay } from './DifferenceOverlay'
+import { displayText } from './display-text'
 
 const noCharacters: CharacterBox[] = []
 
@@ -160,7 +161,7 @@ export const TextPage = memo(function TextPage({ project, page, scale, edge, cle
           }
           if (editing?.id !== item._id) down(event, item)
         }} onPointerMove={move} onPointerUp={event => end(event)} onPointerCancel={event => end(event, true)} onDoubleClick={event => { beginInlineEdit(event, item) }}>
-        {editing?.id === item._id ? <InlineTextEditor key={item._id} item={item} page={page.id} controller={controller} point={editing} pageWidth={page.width} scale={scale} onSplit={ids => onSelect({ page: page.id, ids: [ids.at(-1)!] })} onFinish={() => setEditing(current => current?.id === item._id ? null : current)} /> : item.text || '\u200b'}
+        {editing?.id === item._id ? <InlineTextEditor key={item._id} item={item} page={page.id} controller={controller} point={editing} pageWidth={page.width} scale={scale} onSplit={ids => onSelect({ page: page.id, ids: [ids.at(-1)!] })} onFinish={() => setEditing(current => current?.id === item._id ? null : current)} /> : displayText(item.text, item.orientation) || '\u200b'}
         <span className="pl-font-label pl-current-font" aria-label={`分組與字號 ${textInfoLabel(item, groupNames)}`} title={textInfoLabel(item, groupNames)} style={{ fontSize: 11 / scale, padding: `${2 / scale}px ${4 / scale}px`, bottom: -19 / scale, transform: `rotate(${item.rotation}deg)`, transformOrigin: 'top right' }}>{typeof item.groupId === 'number' && groupNames[item.groupId] ? <><GroupName name={groupNames[item.groupId]} index={item.groupId} />，{fontLabel(item['font-size'])}</> : <>未分組，{fontLabel(item['font-size'])}</>}</span>
         {selected.includes(item._id) && editing?.id !== item._id && <>
           {frameControls.map(corner => <button key={`${corner.x}-${corner.y}`} type="button" className="pl-text-step" aria-label={corner.label} title={`${corner.hint}（套用所有選取文字）`} style={{
