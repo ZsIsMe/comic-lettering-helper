@@ -617,8 +617,8 @@ PDF 中文字型：支援 `CJK_FONT_PATH` 及腳本旁 `fonts/SourceHanSansTC-Re
 
 ### 獨立預覽字型與自由連字
 
-更新後端及正式前端構建；將 TTF／OTF 放在服務可讀的外部資產目錄，以 `COMIC_PRELAYOUT_DISPLAY_FONT` 指向它。本機設定放 `var/local/start.env`，由 `scripts/start-local.sh` 傳入；個人絕對路徑與字型檔不進 Git 或應用更新包。空設定沿用原 Noto；明確指定但缺失的檔案回報不可用，font API 回傳 404。OCR Noto 與 ink-metrics 保留原檔，不需重新生成。依活動任務檢查流程只重啟 6008，不涉及 6006。
+更新後端及正式前端構建。網頁預設使用內建工具箱黑體簡繁 DemiBold v2.7；完整 TTF 隨 Git 和 `frontend/dist/assets/` 進入更新包，不需另裝字型或提供 OCR Noto。Vite 檔名包含內容雜湊以更新瀏覽器快取。若要覆蓋內建字型，將外部 TTF／OTF 放在服務可讀目錄並設定 `COMIC_PRELAYOUT_DISPLAY_FONT`；本機設定放 `var/local/start.env`，由 `scripts/start-local.sh` 傳入，個人絕對路徑及其他自訂字型不進 Git。空設定使用內建字型；明確指定但缺失的檔案回報不可用，font API 回傳 404。OCR Noto 與 ink-metrics 保留原檔，不需重新生成。依活動任務檢查流程只重啟 6008，不涉及 6006。
 
 預覽同時預設啟用 OpenType `onum` 舊樣式；橫排啟用 `palt` 比例間距、關閉 `vpal`，直排啟用 `vpal` 比例間距、關閉 `palt`。畫布、原位編輯、局部對比和離屏量測共用設定；實際字形及壓縮幅度依字型實作，不修改 JSON 或自動調整既有中心、字級。
 
-验收指定字型下載的 bytes、MIME、版本快取與載入狀態；以支援 `dlig` 的字型核對橫／直排 `！！`、`！？`、`？！`、`？？`，以及主畫面、原位編輯、局部對比和分割量測。啟用連字可能改變字形佔位；既有文字、中心、字級及 JSON 不自動改動。未收錄字形沿用字型堆疊的後備字型。
+验收無外部字型及無 OCR 字型時的內建資產下載、載入與 OpenType 效果，以及指定外部字型的 bytes、MIME、版本快取與載入狀態；以支援 `dlig` 的字型核對橫／直排 `！！`、`！？`、`？！`、`？？`，以及主畫面、原位編輯、局部對比和分割量測。啟用連字可能改變字形佔位；既有文字、中心、字級及 JSON 不自動改動。未收錄字形沿用字型堆疊的後備字型。

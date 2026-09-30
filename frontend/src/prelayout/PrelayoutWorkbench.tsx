@@ -13,6 +13,8 @@ import { GroupName } from './GroupName'
 import { PageNavigation, type PageRange } from './PageNavigation'
 import { usePrelayoutAgent } from './usePrelayoutAgent'
 import { TextReplacementModal } from './TextReplacementModal'
+import bundledFontUrl from '../assets/fonts/toolbox-demibold-v2.7.ttf?url'
+import { displayFontUrl } from './display-font'
 import './styles.css'
 
 const showCleanUpload = false
@@ -156,14 +158,15 @@ function Workspace({ project: initial, promptDetection, onExit, onReadyToLeave }
     window.addEventListener('beforeunload', unload)
     return () => { clearInterval(timer); window.removeEventListener('beforeunload', unload); controller.dispose() }
   }, [controller, initial.id])
+  const fontSource = availability ? displayFontUrl(bundledFontUrl, availability) : null
   useEffect(() => {
     setFontReady(false)
-    if (!(availability?.display_font_available ?? availability?.assets.font)) return
+    if (!fontSource) return
     let live = true
-    const font = new FontFace('Prelayout CJK', `url(${base}/font?v=${encodeURIComponent(availability.font_version || '')})`, { weight: '500' })
+    const font = new FontFace('Prelayout CJK', `url(${fontSource})`, { weight: '500' })
     void font.load().then(loaded => { if (live) { document.fonts.add(loaded); setFontReady(true) } }).catch(() => { if (live) setError('預覽字型載入失敗，請檢查服務的預覽字型設定。') })
     return () => { live = false; document.fonts.delete(font) }
-  }, [availability?.assets.font, availability?.display_font_available, availability?.font_version])
+  }, [fontSource])
   useEffect(() => {
     if (task?.state !== 'completed' || task.id === completedDetection.current || refreshingDetection.current) return
     refreshingDetection.current = true
@@ -472,7 +475,7 @@ function Workspace({ project: initial, promptDetection, onExit, onReadyToLeave }
           })}>匹配譯文</Button>
         </details>
         <p className="pl-muted pl-shortcuts">方向鍵移動 · Shift 加速<br />⌘／Ctrl＋＋／－ 調字級<br />⌘／Ctrl＋[／] 旋轉<br />加 Option／Alt 可大步調整字級與角度<br />完整說明見頂部「快捷鍵」</p>
-        {!fontReady && <p className="pl-muted">目前使用系統替代字型。鏡像準備固定預覽字型後，可取得一致的文字外觀。</p>}
+        {!fontReady && <p className="pl-muted">預覽字型尚未載入，目前暫用系統字型。</p>}
       </aside>
     </div>
   </main>

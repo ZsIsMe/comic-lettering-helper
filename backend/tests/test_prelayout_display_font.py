@@ -47,6 +47,7 @@ def test_unconfigured_display_font_uses_existing_noto(font_environment, monkeypa
     with client(value) as api:
         status = api.get('/api/prelayout/availability').json()
         assert status['display_font_available'] is True
+        assert status['display_font_custom'] is False
         assert status['assets']['font'] is True
         assert status['methods']['ocr_aligned'] is True
         assert re.fullmatch('[0-9a-f]{64}', status['font_version'])
@@ -68,6 +69,7 @@ def test_display_font_api_serves_configured_font_independently_of_ocr_assets(
     with client(detector()) as api:
         status = api.get('/api/prelayout/availability').json()
         assert status['display_font_available'] is True
+        assert status['display_font_custom'] is True
         assert status['assets']['font'] is False
         assert status['methods']['ocr_aligned'] is False
         assert status['methods']['single_char'] is True
@@ -90,6 +92,7 @@ def test_missing_configured_font_does_not_fallback_or_disable_ocr(
     with client(detector()) as api:
         status = api.get('/api/prelayout/availability').json()
         assert status['display_font_available'] is False
+        assert status['display_font_custom'] is True
         assert status['font_version'] == ''
         assert status['assets']['font'] is True
         assert status['methods']['ocr_aligned'] is True

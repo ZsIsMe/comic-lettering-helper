@@ -41,7 +41,7 @@ RF、MangaLens、CTD、OCR 的用途、下載地址、配套字表／字型、�
 
 預覽保留原始引號、標點、數字、空格與換行；已停用 `「」→｢｣`、`“”→‶〟`、ASCII 標點轉全形及直排數字轉全形等字元替換。直排預覽僅對 `“”` 設定正向樣式，其他字元保持原有方向。畫布、局部對比及尺寸量測共用顯示設定；原位編輯保留瀏覽器的原生純文字 DOM 和方向處理，不在輸入或組字期間插入格式節點。保存及 Meo.json 匯出維持原文。
 
-漫畫文字預設啟用 OpenType 自由連字（`dlig`），實際連字由字型提供。可用 `COMIC_PRELAYOUT_DISPLAY_FONT` 指定外部 TTF／OTF，留空沿用 Noto；本機路徑設於不進 Git 的 `var/local/start.env`，修改後重啟 6008 並重載已保存的頁面。預覽字型與 OCR 的 Noto／ink-metrics 分開，缺少指定預覽檔不會悄悄改用 Noto。畫布、原位編輯、局部對比及文字尺寸量測沿用相同字型與連字設定；字型與連字不寫入 JSON。
+網頁內建工具箱黑體簡繁 DemiBold v2.7，完整字型隨 Git、正式前端及應用更新包發布；無需在電腦安裝字型或配置外部檔案。漫畫文字預設啟用 OpenType 自由連字（`dlig`），實際連字由字型提供。可用 `COMIC_PRELAYOUT_DISPLAY_FONT` 指定外部 TTF／OTF 覆蓋內建字型，留空使用內建字型；本機路徑設於不進 Git 的 `var/local/start.env`，修改後重啟 6008 並重載已保存的頁面。預覽字型與 OCR 的 Noto／ink-metrics 分開，缺少明確指定的外部字型會提示載入失敗。畫布、原位編輯、局部對比及文字尺寸量測沿用相同字型與連字設定；字型與連字不寫入 JSON。
 
 預覽同時預設啟用 OpenType `onum` 舊樣式；橫排啟用 `palt` 比例間距、關閉 `vpal`，直排啟用 `vpal` 比例間距、關閉 `palt`。畫布、原位編輯、局部對比和離屏量測共用設定；實際字形及壓縮幅度依字型實作，不修改 JSON 或自動調整既有中心、字級。
 
@@ -101,7 +101,7 @@ Option／Alt＋滾輪也可增減字級 2；普通滾輪上下捲動，⌘／Ctr
 
 ### 預排版模型與配套資產
 
-權重、模型快取、字型與推理環境不加入工程或 Git。製作鏡像時，把下列五項資產直接放到工程外的 `/root/models/comic-prelayout/`，或透過 `COMIC_PRELAYOUT_MODEL_ROOT` 指定另一外部目錄。此表中的來源相對路徑均相對於使用者提供的 `/Users/zhongsheng/Projects/comic-text-detector`；維護者可從該工程已有資產準備鏡像，應用不自動下載。
+權重、模型快取、OCR 校準字型與推理環境不加入工程或 Git；網頁顯示用工具箱字型隨前端內建。製作鏡像時，把下列五項資產直接放到工程外的 `/root/models/comic-prelayout/`，或透過 `COMIC_PRELAYOUT_MODEL_ROOT` 指定另一外部目錄。此表中的來源相對路徑均相對於使用者提供的 `/Users/zhongsheng/Projects/comic-text-detector`；維護者可從該工程已有資產準備鏡像，應用不自動下載。
 
 | 鏡像內檔名 | 已有來源相對路徑 | SHA-256（已讀取本機檔案核對） |
 | --- | --- | --- |
@@ -111,7 +111,7 @@ Option／Alt＋滾輪也可增減字級 2；普通滾輪上下捲動，⌘／Ctr
 | `NotoSansCJKjp-Medium.otf` | `assets/fonts/NotoSansCJKjp-Medium.otf` | `dd523e580e3413c480b2d701bf64e534c20f8419e3cfb6a44c2bdcd8d2a6c052` |
 | `NotoSansCJKjp-Medium.ink-metrics.json` | `assets/fonts/NotoSansCJKjp-Medium.ink-metrics.json` | `29a0af82d3501eab9bf8bb0f8de8294b972927eb7d6e863b7cfd2d165ce28a56` |
 
-CTD 單字框方法需要 CTD 權重；OCR 對齊字級方法需要全部五項。網頁預覽使用同一固定字型，透過同源 `/api/prelayout/font` 載入並帶版本快取鍵。缺少字型時提示系統替代字型，人工編輯仍可用；不同系統的替代字型外觀不保證一致。缺少模型時僅停用對應偵測方法，不自動切換演算法或 CPU 推理。
+CTD 單字框方法需要 CTD 權重；OCR 對齊字級方法需要全部五項。網頁預覽預設載入隨前端交付的工具箱字型，不依賴這五項資產；僅明確配置外部顯示字型時使用 `/api/prelayout/font`。內建字型原附說明限定個人學習、非商業用途，完整保留於 `frontend/public/fonts/toolbox/usage-guide.png` 與來源 `NOTICE.md`。字型載入失敗時提示暫用系統字型，人工編輯仍可用；不同替代字型的外觀不保證一致。缺少模型時僅停用對應偵測方法，不自動切換演算法或 CPU 推理。
 
 `backend/requirements-prelayout.txt` 記錄已驗證可載入核心的本機依賴版本。參考環境為 Python 3.14.6、PyTorch 2.13.0、torchvision 0.28.0、macOS arm64；這不是 Linux CUDA 鎖定環境。鏡像須另建外部 Python 環境，選定相容的 PyTorch／torchvision CUDA wheels，完成下列預檢及真實 GPU 測試後，保存最終依賴清單。不要把新依賴裝進 ComfyUI 的 Python。
 

@@ -32,7 +32,7 @@
 
 預覽保留原始引號、標點、數字、空格與換行；已停用 `「」→｢｣`、`“”→‶〟`、ASCII 標點轉全形及直排數字轉全形等字元替換。直排預覽僅對 `“”` 設定正向樣式，其他字元保持原有方向。畫布、局部對比及尺寸量測共用顯示設定；原位編輯保留瀏覽器的原生純文字 DOM 和方向處理，不在輸入或組字期間插入格式節點。保存及 Meo.json 匯出維持原文。
 
-`COMIC_PRELAYOUT_DISPLAY_FONT` 獨立選擇 `/api/prelayout/font` 的 TTF／OTF；未設定時使用原 Noto。availability 的 `display_font_available` 與 `font_version` 描述顯示字型，版本識別不暴露本機路徑；`assets.font` 仍表示 OCR Noto，OCR 可用性與校準 metrics 不依賴顯示字型。前端以 `Prelayout CJK` 載入、匹配畫布的 500 字重，`textStyle` 統一啟用 `discretionary-ligatures`；隱藏量測同步此設定，原位分割 probe 明確複製連字和 feature 設定，避免 font shorthand 清掉繼承值。
+`frontend/src/assets/fonts/toolbox-demibold-v2.7.ttf` 經 Vite URL import 產生帶內容雜湊的靜態字型資產，隨 `frontend/dist` 和應用更新包交付。前端預設載入內建字型，不依賴後端 Noto 或本機字型安裝；availability 的 `display_font_custom` 為 true 時才使用 `COMIC_PRELAYOUT_DISPLAY_FONT` 指定的 `/api/prelayout/font`。舊版後端沒有此欄位時仍使用內建字型。`display_font_available` 與 `font_version` 描述 font API 的資產，未配置該 API 沿用原 Noto，版本識別不暴露本機路徑；`assets.font` 仍表示 OCR Noto，OCR 可用性與校準 metrics 不依賴顯示字型。前端以 `Prelayout CJK` 載入、匹配畫布的 500 字重，`textStyle` 統一啟用 `discretionary-ligatures`；隱藏量測同步此設定，原位分割 probe 明確複製連字和 feature 設定，避免 font shorthand 清掉繼承值。
 
 預覽同時預設啟用 OpenType `onum` 舊樣式；橫排啟用 `palt` 比例間距、關閉 `vpal`，直排啟用 `vpal` 比例間距、關閉 `palt`。畫布、原位編輯、局部對比和離屏量測共用設定；實際字形及壓縮幅度依字型實作，不修改 JSON 或自動調整既有中心、字級。
 
