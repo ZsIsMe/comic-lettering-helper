@@ -6,9 +6,35 @@ import re
 
 from fastapi import APIRouter, Body, File, Form, HTTPException, UploadFile
 from fastapi.responses import FileResponse, Response
+from pydantic import BaseModel, ConfigDict, Field, StrictInt, StrictStr
 from starlette.concurrency import run_in_threadpool
 
 from .store import Conflict
+
+
+class ReplacementPreview(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    find: StrictStr = Field(min_length=1, max_length=50000)
+    replacement: StrictStr = Field(max_length=50000)
+
+
+class ReplacementSelection(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    page_id: StrictStr
+    item_id: StrictStr
+
+
+class ReplacementApply(ReplacementPreview):
+    expected_revision: StrictInt = Field(ge=0)
+    selected: list[ReplacementSelection]
+    operation_id: StrictStr = Field(min_length=1, max_length=100)
+
+
+class ReplacementUndo(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    operation_id: StrictStr = Field(min_length=1, max_length=100)
+    expected_revision: StrictInt = Field(ge=0)
+    undo_operation_id: StrictStr = Field(min_length=1, max_length=100)
 
 
 class ArchiveResponse(FileResponse):
@@ -85,6 +111,30 @@ def router(store, detector, max_bytes):
     @api.get('/projects/{pid}')
     def project(pid: str):
         return call(store.read, pid)
+
+    @api.post('/projects/{pid}/text-replacements/preview')
+    def preview_replacements(pid: str, data: ReplacementPreview):
+        return call(store.preview_text_replacements, pid, data.find, data.replacement)
+
+    @api.post('/projects/{pid}/text-replacements/apply')
+    def apply_replacements(pid: str, data: ReplacementApply):
+        with store.lock(pid):
+            if call(detector.busy, pid):
+                raise HTTPException(409, '此項目正在偵測，請等待完成或取消')
+            return call(store.apply_text_replacements, pid, data.find, data.replacement,
+                        data.expected_revision, [key.model_dump() for key in data.selected], data.operation_id)
+
+    @api.get('/projects/{pid}/text-replacements/latest')
+    def latest_replacement(pid: str):
+        return call(store.latest_text_replacement, pid)
+
+    @api.post('/projects/{pid}/text-replacements/undo')
+    def undo_replacement(pid: str, data: ReplacementUndo):
+        with store.lock(pid):
+            if call(detector.busy, pid):
+                raise HTTPException(409, '此項目正在偵測，請等待完成或取消')
+            return call(store.undo_text_replacement, pid, data.operation_id,
+                        data.expected_revision, data.undo_operation_id)
 
     @api.patch('/projects/{pid}')
     def rename(pid: str, data: dict = Body(...)):

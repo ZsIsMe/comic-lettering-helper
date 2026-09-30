@@ -12,6 +12,7 @@ import { ShortcutHelp } from './ShortcutHelp'
 import { GroupName } from './GroupName'
 import { PageNavigation, type PageRange } from './PageNavigation'
 import { usePrelayoutAgent } from './usePrelayoutAgent'
+import { TextReplacementModal } from './TextReplacementModal'
 import './styles.css'
 
 const showCleanUpload = false
@@ -111,6 +112,7 @@ function Workspace({ project: initial, promptDetection, onExit, onReadyToLeave }
   const [detectOpen, setDetectOpen] = useState(promptDetection)
   const [shortcutOpen, setShortcutOpen] = useState(false)
   const [groupOpen, setGroupOpen] = useState(false), [groupDraft, setGroupDraft] = useState<string[]>([]), [newGroupName, setNewGroupName] = useState('')
+  const [replacementOpen, setReplacementOpen] = useState(false)
   const [groupRevision, setGroupRevision] = useState<number | null>(null), [groupError, setGroupError] = useState('')
   const [method, setMethod] = useState('ocr_aligned'), [fontBase, setFontBase] = useState(24), [fontStep, setFontStep] = useState(2)
   const [clipboard, setClipboard] = useState<Item[]>([]), [memory, setMemory] = useState<Item | null>(null)
@@ -381,6 +383,8 @@ function Workspace({ project: initial, promptDetection, onExit, onReadyToLeave }
   const agent = usePrelayoutAgent({ controller, project, current, busy, fontReady, interacting, range, compare, difference, showText, differenceColor, differenceOpacity, zoom, focus, clean,
     go, setCompare, setClean, setDifference, setShowText, setDifferenceColor, setDifferenceOpacity, setZoom, setFocus, refreshProject: async () => setProject(await request<Project>(projectPath(project.id))) })
   return <main className={`pl-shell pl-workspace ${focus ? 'pl-focus-mode' : ''}`}>{modalContext}{noticesContext}{agent.review}
+    <TextReplacementModal open={replacementOpen} project={project} controller={controller} onClose={() => setReplacementOpen(false)}
+      onBusyChange={setBusy} onProject={setProject} onReviewPage={go} />
     <Modal title="預排版快捷鍵與滑鼠操作" open={shortcutOpen} onCancel={() => setShortcutOpen(false)} width="calc(100vw - 32px)" centered className="pl-shortcut-modal" footer={<Button onClick={() => setShortcutOpen(false)}>關閉</Button>}>
       <ShortcutHelp collapsible={false} />
     </Modal>
@@ -414,6 +418,10 @@ function Workspace({ project: initial, promptDetection, onExit, onReadyToLeave }
       {(['bt', 'labelplus', 'clean'] as const).filter((kind): boolean => kind !== 'clean' || showCleanUpload).map(kind => <Button key={kind} disabled={busy} onClick={() => { importKind.current = kind; if (fileInput.current) { fileInput.current.accept = kind === 'bt' ? '.json' : kind === 'labelplus' ? '.txt' : '.png,.jpg,.jpeg'; fileInput.current.multiple = kind === 'clean'; fileInput.current.click() } }}>{kind === 'bt' ? '開啟 Meo.json' : kind === 'labelplus' ? '匯入LP.txt' : '上傳去字圖'}</Button>)}
       <input hidden ref={fileInput} type="file" onChange={e => { const list = files(e.target.files); e.target.value = ''; void execute(() => importFile(list)) }} />
       <Button disabled={!showText} onClick={() => add()}>新增文字</Button><Button onClick={() => void execute(openGroupOrganizer)}>整理分組</Button><Button onClick={() => controller.undo(selection.page)}>撤銷</Button><Button onClick={() => controller.undo(selection.page, true)}>重做</Button>
+      <Button disabled={busy || saving || activeDetection(task)} onClick={() => void execute(async () => {
+        if (!await controller.flush()) throw new Error('文字尚未保存，請先處理保存錯誤或版本衝突。')
+        setReplacementOpen(true)
+      })}>批量替換</Button>
       <Button disabled={!agent.hasReview} onClick={() => void agent.openReview().catch(e => setError(e.message))}>局部前後對比</Button>
       <Select aria-label="縮放" title="相對適合寬度的縮放比例" value={zoom} onChange={setZoom} options={[...new Set([.5, .75, 1, 1.5, 2, 3, zoom])].sort((a, b) => a - b).map(value => ({ value, label: value === 1 ? '適合寬度' : `${Math.round(value * 100)}%` }))} />
       <Checkbox checked={compare} onChange={e => setCompare(e.target.checked)}>原圖對照</Checkbox><Checkbox checked={clean} onChange={e => setClean(e.target.checked)}>去字底圖</Checkbox><Checkbox checked={showText} onChange={e => setShowText(e.target.checked)}>顯示譯文</Checkbox><Checkbox checked={difference} disabled={!hasClean} title="以自訂顏色顯示原圖與去字圖的像素差異；只在記憶體計算。快捷鍵：H" onChange={e => setDifference(e.target.checked)}>差異高亮（H）</Checkbox>

@@ -18,6 +18,7 @@ from PIL import Image
 
 from prelayout_core.data import identifier, read_json, validate_items, validate_measure, parse_translation, export_item, match_translation
 from prelayout_core.characters import character_pages
+from .text_replacements import replacement, validate_request
 
 
 class Conflict(ValueError):
@@ -242,6 +243,181 @@ class PrelayoutStore:
             project['revision'] += 1
             self.write(project)
             return self.page(pid, page_id)
+
+    @staticmethod
+    def _replacement_summary(changes):
+        return {'pages': len({change['page_id'] for change in changes}),
+                'items': len(changes), 'occurrences': sum(change.get('occurrences', 1) for change in changes)}
+
+    def _replacement_candidates(self, pid, project, find, substitute):
+        matches = []
+        root = self.directory(pid)
+        for number, page in enumerate(project['pages'], 1):
+            state = read_json((root / page['state']).read_bytes())
+            for item in state['items']:
+                before = item['text']
+                after, count = replacement(before, find, substitute)
+                if not count or before == after:
+                    continue
+                if len(after) > 50000:
+                    raise ValueError('替換後文字超過每框 50,000 個字元')
+                matches.append({'page_number': number, 'page_name': page['name'],
+                                'page_id': page['id'], 'item_id': item['_id'],
+                                'before': before, 'after': after, 'occurrences': count})
+        return matches
+
+    def preview_text_replacements(self, pid, find, substitute):
+        validate_request(find, substitute)
+        with self.lock(pid):
+            project = self.read(pid)
+            matches = self._replacement_candidates(pid, project, find, substitute)
+            return {'project_revision': project['revision'], 'matches': matches,
+                    'summary': self._replacement_summary(matches)}
+
+    @staticmethod
+    def _validate_operation_id(value):
+        if not isinstance(value, str) or not value.strip() or len(value) > 100:
+            raise ValueError('操作 ID 須為 1 至 100 個字元')
+
+    def _replacement_record(self, pid, entry):
+        return read_json((self.directory(pid) / entry['record']).read_bytes())
+
+    def _replacement_entry(self, project, operation_id):
+        return next((entry for entry in project.get('text_replacements', [])
+                     if entry['operation_id'] == operation_id), None)
+
+    def _record_path(self, operation_id):
+        return f'text-replacements/{hashlib.sha256(operation_id.encode()).hexdigest()}.json'
+
+    def _publish_text_changes(self, pid, project, changes, entry, record):
+        """Write immutable pages and operation record before the one manifest publication."""
+        root = self.directory(pid)
+        grouped = {}
+        for change in changes:
+            grouped.setdefault(change['page_id'], {})[change['item_id']] = change
+        for page in project['pages']:
+            selected = grouped.get(page['id'])
+            if not selected:
+                continue
+            state = read_json((root / page['state']).read_bytes())
+            items = copy.deepcopy(state['items'])
+            for item in items:
+                change = selected.get(item['_id'])
+                if change:
+                    item['text'] = change['after']
+            # Also checks the resulting text cap and all existing item constraints.
+            items = validate_items(items, page['width'], page['height'])
+            revision = page['revision'] + 1
+            relative = f'pages/{page["id"]}/{revision}-{identifier()}.json'
+            atomic_json(root / relative, {'revision': revision, 'items': items,
+                                          'operations': state.get('operations', [])})
+            page.update(revision=revision, state=relative)
+            page.pop('reviewed_revision', None)
+        atomic_json(root / entry['record'], record)
+        project.setdefault('text_replacements', []).append(entry)
+        project['revision'] += 1
+        self.write(project)
+
+    def apply_text_replacements(self, pid, find, substitute, expected_revision, selected, operation_id):
+        validate_request(find, substitute)
+        self._validate_operation_id(operation_id)
+        if type(expected_revision) is not int or expected_revision < 0:
+            raise ValueError('預期項目修訂無效')
+        if not isinstance(selected, list) or any(not isinstance(key, dict) or
+                set(key) != {'page_id', 'item_id'} or
+                not isinstance(key['page_id'], str) or not isinstance(key['item_id'], str)
+                for key in selected):
+            raise ValueError('選取文字格式無效')
+        keys = [(key['page_id'], key['item_id']) for key in selected]
+        if len(keys) != len(set(keys)):
+            raise ValueError('選取文字不可重複')
+        request = {'find': find, 'replacement': substitute, 'expected_revision': expected_revision,
+                   'selected': [{'page_id': page_id, 'item_id': item_id} for page_id, item_id in sorted(keys)]}
+        with self.lock(pid):
+            project = self.read(pid)
+            existing = self._replacement_entry(project, operation_id)
+            if existing:
+                if existing['kind'] != 'apply' or self._replacement_record(pid, existing)['request'] != request:
+                    raise Conflict('操作 ID 已用於不同請求')
+                return {'project': project, 'operation': {'operation_id': operation_id,
+                        'summary': existing['summary']}, 'summary': existing['summary']}
+            if project['revision'] != expected_revision:
+                raise Conflict('文字替換預覽已過期，請重新預覽')
+            candidates = self._replacement_candidates(pid, project, find, substitute)
+            by_key = {(match['page_id'], match['item_id']): match for match in candidates}
+            if not set(keys).issubset(by_key):
+                raise Conflict('選取文字已變更，請重新預覽')
+            changes = [by_key[key] for key in sorted(keys)]
+            summary = self._replacement_summary(changes)
+            if changes:
+                entry = {'operation_id': operation_id, 'kind': 'apply',
+                         'record': self._record_path(operation_id), 'summary': summary}
+                record = {'kind': 'apply', 'request': request, 'changes': changes}
+                self._publish_text_changes(pid, project, changes, entry, record)
+            return {'project': project, 'operation': {'operation_id': operation_id, 'summary': summary},
+                    'summary': summary}
+
+    def _latest_text_replacement(self, project):
+        undone = {entry['target'] for entry in project.get('text_replacements', []) if entry['kind'] == 'undo'}
+        return next((entry for entry in reversed(project.get('text_replacements', []))
+                     if entry['kind'] == 'apply' and entry['operation_id'] not in undone), None)
+
+    def _check_text_undo(self, pid, project, entry):
+        record = self._replacement_record(pid, entry)
+        states = {}
+        root = self.directory(pid)
+        for page in project['pages']:
+            states[page['id']] = {item['_id']: item['text'] for item in
+                                  read_json((root / page['state']).read_bytes())['items']}
+        for change in record['changes']:
+            if states.get(change['page_id'], {}).get(change['item_id']) != change['after']:
+                raise Conflict('文字已變更或文字框已刪除，無法撤銷整批替換')
+        return record['changes']
+
+    def latest_text_replacement(self, pid):
+        with self.lock(pid):
+            project = self.read(pid)
+            entry = self._latest_text_replacement(project)
+            if entry is None:
+                return {'operation': None, 'can_undo': False}
+            try:
+                self._check_text_undo(pid, project, entry)
+                can_undo = True
+            except Conflict:
+                can_undo = False
+            request = self._replacement_record(pid, entry)['request']
+            return {'operation': {'operation_id': entry['operation_id'], 'summary': entry['summary'],
+                                  'find': request['find'], 'replacement': request['replacement']},
+                    'can_undo': can_undo}
+
+    def undo_text_replacement(self, pid, operation_id, expected_revision, undo_operation_id):
+        self._validate_operation_id(operation_id)
+        self._validate_operation_id(undo_operation_id)
+        if type(expected_revision) is not int or expected_revision < 0:
+            raise ValueError('預期項目修訂無效')
+        request = {'operation_id': operation_id, 'expected_revision': expected_revision}
+        with self.lock(pid):
+            project = self.read(pid)
+            existing = self._replacement_entry(project, undo_operation_id)
+            if existing:
+                if existing['kind'] != 'undo' or self._replacement_record(pid, existing)['request'] != request:
+                    raise Conflict('操作 ID 已用於不同請求')
+                return {'project': project, 'summary': existing['summary']}
+            if project['revision'] != expected_revision:
+                raise Conflict('項目已有更新，請重新載入後撤銷')
+            entry = self._latest_text_replacement(project)
+            if entry is None or entry['operation_id'] != operation_id:
+                raise Conflict('只能撤銷最近一次尚未撤銷的文字替換')
+            original = self._check_text_undo(pid, project, entry)
+            changes = [{**change, 'before': change['after'], 'after': change['before']}
+                       for change in original]
+            summary = entry['summary']
+            undo_entry = {'operation_id': undo_operation_id, 'kind': 'undo',
+                          'target': operation_id, 'record': self._record_path(undo_operation_id),
+                          'summary': summary}
+            self._publish_text_changes(pid, project, changes, undo_entry,
+                                       {'kind': 'undo', 'request': request, 'changes': changes})
+            return {'project': project, 'summary': summary}
 
     def review_page(self, pid, page_id, expected_revision, reviewed):
         if type(expected_revision) is not int or expected_revision < 0 or type(reviewed) is not bool:
@@ -555,6 +731,9 @@ class PrelayoutStore:
                 for cid, values in character_pages(output, project['pages'], measure.get('font_size_calculation_method')).items():
                     atomic_json(output / 'page-characters' / f'{cid}.json', values)
             project['id'] = identifier('pl')
+            # Older archives may carry a manifest index, but operation records are
+            # intentionally outside the legacy archive format.
+            project.pop('text_replacements', None)
             project['created_at'] = project['updated_at'] = now()
             project['name'] = str(project['name'])[:80]
             project['imported'] = True

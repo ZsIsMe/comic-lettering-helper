@@ -59,6 +59,10 @@ ComfyUI 修復 ──┘
 
 資料根預設 `<COMIC_DATA_ROOT>/prelayout`，禁止與修圖 projects／jobs 目錄重疊。圖片獨立上傳，沒有跨功能的引用、去重、硬連結或輸入交接。`need_inpaint` 只保存為排版欄位。BT 頂層、分組、未知欄位保留；内部穩定 ID 不寫入 BT 匯出。
 
+全項目譯文替換由 `TextReplacementModal`／`TextReplacementClient` 呼叫 `POST /api/prelayout/projects/{pid}/text-replacements/preview`、`apply`、`undo` 與 `GET .../latest`。預覽只讀全部頁面的文字修訂，不載入圖片或偵測資料；精確字面匹配、不遞迴替換，不提供跨行或正則選項。套用帶項目預期修訂、所選穩定頁面／文字框 ID 和冪等操作 ID。項目鎖內驗證後先寫不可變頁面與 `text-replacements/<operation-hash>.json` 操作紀錄，最後一次原子發布 manifest；只改所選文字及受影響頁面的修訂／完成標記。Meo.json 匯出不含操作紀錄。
+
+撤銷只處理最近一次尚未撤銷的替換，逐框核對目前文字仍等於替換結果，保留後續位置與樣式調整；文字被改動或框被刪除時整批拒絕。前端先保存草稿，套用後只刷新已快取且修訂改變的頁面，清除這些頁面的舊撤銷快照，避免舊快照帶回替換前文字。未確認結果的請求在送出前保存至 localStorage，刷新或斷線後沿用同一操作 ID 重試；伺服器已保存但畫面同步失敗時僅重新載入結果。封存匯入清除不隨既有封存輸出的操作索引。
+
 CTD 階段沿用來源核心的 OpenCV Telea 生成 `output/inpainted/<stem>.png`（RGBA 透明覆蓋層），再與該項目原圖合成至 `output/backgrounds/`。`complete.json` 的 `inpainted: true` 表示需要完整底圖驗證；發布時核對全批 RGB PNG 尺寸，將底圖複製到新的 `clean/` 資產，再一次更新 detection ID 與頁面引用（`clean_kind: inpainted`）。半成品不替換舊底圖，既有 reader 可繼續讀舊資產；文字修訂與原圖不變。底圖版本改變會更新既有預覽快取鍵，沿用分級與圖塊預覽。此 CPU 影像預處理不涉及神經網路推理後備或 ComfyUI。
 
 對照模式順序為左側編輯圖、右側原圖與偵測框，兩側沿用各自的可見區座標與同一捲動／縮放。`characters.py` 從唯讀 `measure.debug.json`／`measure_ocr.json` 提取單字框；OCR 模式沿用來源的 accepted 字元及 accepted font-fit 條件，FS 優先估算值。worker 生成逐頁 `page-characters/`；舊任務首次讀取時一次建立全批精簡快取，後續僅讀本頁，封存匯入重建派生快取。原始 measure、偵測輸出、文字修訂不改寫。前端以一條 SVG path 畫每頁的單字框；rAF 合併 hover 命中測試，重疊時取最小框，只顯示一份 W／H／FS 提示。該層不接收指標事件，拖曳期間暫停 hover，保持文字編輯與區塊套用可用。

@@ -1,5 +1,5 @@
 import { body, projectPath, request } from './api'
-import { type Item, type PageData } from './types'
+import { type Item, type PageData, type Project } from './types'
 
 type Draft = { revision: number; items: Item[] }
 type State = { data: PageData; undo: Item[][]; redo: Item[][]; dirty: boolean; version: number; error: string; saving: boolean; conflict: boolean;
@@ -187,6 +187,27 @@ export class EditorState {
       state.data = data; state.version += 1; state.pending = undefined; state.error = ''; state.conflict = false
       this.persist(id, true); this.emit(id)
     }
+  }
+  async acceptTextReplacement(project: Project) {
+    if (project.id !== this.project) throw new Error('替換結果不屬於目前項目。')
+    if (this.dirty || this.editing) throw new Error('文字已有修改，請先保存再載入替換結果。')
+    const changed = project.pages.flatMap(page => {
+      const state = this.pages.get(page.id)
+      return state && state.data.revision < page.revision ? [{ id: page.id, state, version: state.version }] : []
+    })
+    const data = await Promise.all(changed.map(page => request<PageData>(`${projectPath(this.project)}/pages/${page.id}`)))
+    if (this.dirty || this.editing || changed.some(page => this.pages.get(page.id) !== page.state || page.state.version !== page.version)) {
+      throw new Error('載入期間文字已有修改，請先處理草稿再重新載入。')
+    }
+    for (const [index, page] of changed.entries()) {
+      const state = page.state
+      clearTimeout(this.timers.get(page.id)); this.groups.delete(page.id)
+      state.data = data[index]; state.server = copy(data[index]); state.version += 1
+      // Earlier per-page snapshots must not silently reintroduce text from before a project-wide replacement.
+      state.undo = []; state.redo = []; state.pending = undefined; state.error = ''; state.conflict = false
+      this.persist(page.id, true); this.emit(page.id)
+    }
+    await Promise.all(changed.map(page => this.persistence.get(page.id)))
   }
   get dirty() { return !!this.textDraft?.changed || [...this.pages.values()].some(state => state.dirty) }
   get editing() { return this.textDraft !== null }
