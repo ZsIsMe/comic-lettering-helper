@@ -9,7 +9,7 @@ import uuid
 import zipfile
 from pathlib import Path
 
-from fastapi import APIRouter, Body, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Body, File, Form, HTTPException, Query, Response, UploadFile
 from fastapi.responses import StreamingResponse
 from PIL import Image
 import numpy as np
@@ -22,6 +22,7 @@ from .repository import now_iso
 from .schemas import JobRecord, WorkflowProgress
 from .storage import save_uploads
 from .comfy_cleanup import CleanupConflict
+from .upload_progress import UploadProgressRegistry
 
 ORDER = ['flux2klein_lanpaint', 'firered', 'qwen2511_lanpaint']
 
@@ -430,6 +431,7 @@ def import_project(store: ProjectStore, repository, archive_path: Path, max_byte
 def create_project_router(settings, repository, manager, store: ProjectStore, comfy_cleanup=None) -> APIRouter:
     router = APIRouter(prefix='/api/projects', tags=['projects'])
     max_bytes = settings.max_upload_mb * 1024 * 1024
+    upload_progress = UploadProgressRegistry()
 
     @router.get('')
     def list_projects():
@@ -441,21 +443,62 @@ def create_project_router(settings, repository, manager, store: ProjectStore, co
         return projects
 
     @router.post('', status_code=201)
-    async def create(name: str = Form('未命名項目'), source_files: list[UploadFile] = File(...), mask_files: list[UploadFile] | None = File(None), detection_options: str | None = Form(None)):
+    async def create(name: str = Form('未命名項目'), source_files: list[UploadFile] = File(...), mask_files: list[UploadFile] | None = File(None), detection_options: str | None = Form(None), progress_id: str | None = Query(None, pattern=r'^[0-9a-f]{32}$')):
+        registered = False
         try:
+            # FastAPI has parsed the multipart body before entering this handler.
+            # The browser reports transfer progress; this tracks validated files
+            # and persisted pages without changing the existing POST contract.
+            total_files = len(source_files) + len(mask_files or [])
+            if progress_id is not None:
+                upload_progress.register(progress_id, total_files)
+                registered = True
+
+            def validated(completed: int, _total: int, filename: str, *, offset: int = 0):
+                upload_progress.update(progress_id, stage='validating', completed=offset + completed,
+                                       total=total_files, filename=filename)
+
+            def created(completed: int, total: int, filename: str):
+                upload_progress.update(progress_id, stage='creating', completed=completed,
+                                       total=total, filename=filename)
+
+            def validated_mask(completed: int, total: int, filename: str):
+                validated(completed, total, filename, offset=len(source_files))
+
             options = DetectionOptions.model_validate_json(detection_options).model_dump() if detection_options is not None else None
             if manager.gpu_gate.owner is not None:
                 raise ProjectConflict('GPU 任務運行期間暫停上傳')
             with tempfile.TemporaryDirectory(prefix='comic-project-upload-') as temporary:
-                sources = await save_uploads(source_files, Path(temporary) / 'source', max_bytes)
+                sources = await save_uploads(source_files, Path(temporary) / 'source', max_bytes,
+                                             progress=validated if registered else None)
                 masks = None
                 if mask_files:
                     if any(Path(file.filename or '').suffix.lower() != '.png' for file in mask_files):
                         raise ValueError('Mask 只接受 PNG')
-                    masks = await save_uploads(mask_files, Path(temporary) / 'mask', max_bytes)
-                return await run_in_threadpool(store.create, name, sources, masks, detection_options=options)
-        except Exception as exc:
-            fail(exc)
+                    masks = await save_uploads(mask_files, Path(temporary) / 'mask', max_bytes,
+                                               progress=validated_mask if registered else None)
+                if registered:
+                    upload_progress.update(progress_id, stage='creating', completed=0, total=len(sources), filename=None)
+                project = await run_in_threadpool(store.create, name, sources, masks,
+                                                 detection_options=options, progress=created if registered else None)
+                if registered:
+                    upload_progress.update(progress_id, stage='completed', completed=len(sources),
+                                           total=len(sources), filename=None)
+                return project
+        except BaseException as exc:
+            if registered:
+                upload_progress.update(progress_id, stage='failed', error=str(exc) or '建立項目已中斷')
+            if isinstance(exc, Exception):
+                fail(exc)
+            raise
+
+    @router.get('/upload-progress/{progress_id}')
+    def get_upload_progress(progress_id: str, response: Response):
+        response.headers['Cache-Control'] = 'no-store'
+        try:
+            return upload_progress.read(progress_id)
+        except KeyError as exc:
+            raise HTTPException(404, '上傳進度尚未建立或已過期', headers={'Cache-Control': 'no-store'}) from exc
 
     @router.post('/import', status_code=201)
     async def import_archive(archive: UploadFile = File(...)):

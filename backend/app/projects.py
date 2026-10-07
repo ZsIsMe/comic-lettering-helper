@@ -7,6 +7,7 @@ import re
 import shutil
 import threading
 import uuid
+from collections.abc import Callable
 from contextlib import contextmanager
 from functools import lru_cache
 from pathlib import Path, PurePosixPath
@@ -164,7 +165,7 @@ class ProjectStore:
             with self.lock(project_id):
                 self._readers[project_id] -= 1
 
-    def create(self, name: str, sources: dict[str, Path], masks: dict[str, Path] | None = None, *, detection_options: dict | None = None) -> dict:
+    def create(self, name: str, sources: dict[str, Path], masks: dict[str, Path] | None = None, *, detection_options: dict | None = None, progress: Callable[[int, int, str], None] | None = None) -> dict:
         if not sources:
             raise ValueError('項目必須包含原圖')
         if masks is not None and not masks.keys() <= sources.keys():
@@ -177,6 +178,8 @@ class ProjectStore:
             project['detection_options'] = options
         try:
             for order, (stem, original) in enumerate(sorted(sources.items())):
+                if progress is not None:
+                    progress(order, len(sources), original.name)
                 if Path(stem).name != stem or not stem or stem in ('.', '..'):
                     raise ValueError('無效圖片檔名')
                 page_id = uuid.uuid4().hex
@@ -203,6 +206,8 @@ class ProjectStore:
                         other = mask.convert('L').point(lambda v: 255 if v >= 128 else 0)
                 other.save(assets / 'other.png')
                 project['pages'].append({'id': page_id, 'stem': stem, 'filename': original.name, 'order': order, 'width': source.width, 'height': source.height, 'original': str(destination.relative_to(root)), 'source': f'assets/{page_id}/source.png', 'thumbnail': f'assets/{page_id}/thumbnail.png', 'overlay': f'assets/{page_id}/overlay.png', 'other': f'assets/{page_id}/other.png', 'edited': f'assets/{page_id}/edited.png', 'edit_revision': 0, 'mask_ready': masks is not None and stem in masks, 'source_sha256': digest_file(assets / 'source.png'), 'original_sha256': digest_file(destination), 'normalization': 'RGB PNG; pixel orientation unchanged'})
+                if progress is not None:
+                    progress(order + 1, len(sources), original.name)
             self.write(project)
             return project
         except Exception:

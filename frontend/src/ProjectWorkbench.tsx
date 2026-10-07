@@ -2,6 +2,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Alert, Button, Card, Checkbox, Dropdown, Empty, Input, InputNumber, List, Modal, Progress, Select, Space, Spin, Steps, Tag, Typography, message } from 'antd'
 import LegacyBatch from './App'
 import { ImagePicker } from './ImagePicker'
+import { ProjectImportProgress } from './ProjectImportProgress'
+import { uploadProject, type ProjectUploadProgress } from './project-upload'
 import { DetectionSettings } from './DetectionSettings'
 import { createMaskPlan } from './create-mask-plan'
 import { runTiming } from './run-timing'
@@ -39,6 +41,8 @@ export default function ProjectWorkbench({ onReadyToLeave }: { onReadyToLeave?: 
   const [createDetectionError, setCreateDetectionError] = useState('')
   const createSettingsTouched = useRef(false)
   const [picking, setPicking] = useState(false)
+  const [importProgress, setImportProgress] = useState<ProjectUploadProgress | null>(null)
+  const creating = useRef(false)
   const [name, setName] = useState(''); const [sources, setSources] = useState<File[]>([]); const [masks, setMasks] = useState<File[]>([])
   const maskPlan = createMaskPlan(sources, masks)
   const [busy, setBusy] = useState(false); const [error, setError] = useState('')
@@ -75,14 +79,17 @@ export default function ProjectWorkbench({ onReadyToLeave }: { onReadyToLeave?: 
     finally { setBusy(false) }
   }
   async function create() {
-    await action(async () => {
+    if (creating.current || busy || picking || gpuOwner || !sources.length || maskPlan.invalid) return
+    creating.current = true
+    try { await action(async () => {
       const body = new FormData(); body.append('name', name || '未命名項目')
       body.append('detection_options', JSON.stringify(createDetectionOptions))
       for (const f of sources) body.append('source_files', f, f.name)
       for (const f of masks) body.append('mask_files', f, f.name)
-      const project = await api<Project>('/api/projects', { method: 'POST', body })
+      const project = await uploadProject<Project>(body, setImportProgress)
       setCreateDetectionError('')
       if (detectOnCreate && project.pages.some(page => !page.mask_ready)) {
+        setImportProgress({ stage: 'detecting', completed: project.pages.length, total: project.pages.length })
         try {
           await api(`${projectUrl(project.id)}/detect`, json('POST', { expected_revision: project.revision, missing_only: true, options: createDetectionOptions }))
         } catch (err) {
@@ -90,7 +97,7 @@ export default function ProjectWorkbench({ onReadyToLeave }: { onReadyToLeave?: 
         }
       }
       setCreateOpen(false); setSources([]); setMasks([]); setName(''); open(project); await reload()
-    })
+    }) } finally { creating.current = false; setImportProgress(null) }
   }
   async function importArchive(file: File) {
     await action(async () => {
@@ -118,7 +125,7 @@ export default function ProjectWorkbench({ onReadyToLeave }: { onReadyToLeave?: 
       <Button href="#/prelayout">預排版</Button>
       <Button onClick={() => setLegacy(true)}>舊版批次與歷史</Button>
       <label className={`file-picker ${busy || gpuOwner ? 'disabled' : ''}`}>匯入項目<input type="file" accept=".zip" disabled={busy || !!gpuOwner} onChange={e => { const f = e.target.files?.[0]; if (f) void importArchive(f); e.target.value = '' }} /></label>
-      <Button type="primary" disabled={!!gpuOwner} onClick={() => setCreateOpen(true)}>新建項目</Button>
+      <Button type="primary" disabled={busy || !!gpuOwner} onClick={() => { setError(''); setCreateOpen(true) }}>新建項目</Button>
     </Space></header>
     {error && <Alert type="error" showIcon message={error} closable onClose={() => setError('')} />}
     {gpuOwner && <Alert type="info" message={gpuOwner === 'unavailable' ? '無法連接服務，請稍後重試' : 'GPU 任務處理中；暫停新上傳，已保存項目仍可查看'} />}
@@ -133,9 +140,11 @@ export default function ProjectWorkbench({ onReadyToLeave }: { onReadyToLeave?: 
       <p>將刪除此項目的原圖、編輯、修復及合成結果（{bytes(deleteTarget?.storage_bytes)}）。此操作無法復原。</p>
       {deleteError && <Alert type="error" showIcon message={deleteError} />}
     </Modal>
-    <Modal title="新建漫畫項目" width={700} styles={{ body: { maxHeight: '70vh', overflowY: 'auto' } }} open={createOpen} onCancel={() => { if (!busy && !picking) setCreateOpen(false) }} onOk={() => void create()} okText="建立項目" confirmLoading={busy} okButtonProps={{ disabled: !sources.length || maskPlan.invalid || !!gpuOwner || picking }}>
+    <Modal title="新建漫畫項目" width={700} styles={{ body: { maxHeight: '70vh', overflowY: 'auto' } }} open={createOpen} onCancel={() => { if (!busy && !picking) setCreateOpen(false) }} onOk={() => void create()} okText="建立項目" confirmLoading={busy} okButtonProps={{ disabled: busy || !sources.length || maskPlan.invalid || !!gpuOwner || picking }} cancelButtonProps={{ disabled: busy || picking }} closable={!busy && !picking} maskClosable={!busy && !picking} keyboard={!busy && !picking}>
       <Space direction="vertical" size="middle" style={{ width: '100%' }}>
-        <Input aria-label="項目名稱" placeholder="項目名稱" value={name} onChange={e => setName(e.target.value)} maxLength={80} />
+        {importProgress && <ProjectImportProgress progress={importProgress} />}
+        {error && <Alert type="error" showIcon message={error} />}
+        <Input aria-label="項目名稱" placeholder="項目名稱" value={name} onChange={e => setName(e.target.value)} maxLength={80} disabled={busy || picking} />
         <div className="create-image-inputs">
         <div><p>原圖（必須）· 已選 {sources.length} 張</p><ImagePicker disabled={busy || picking || !!gpuOwner} onBusyChange={setPicking} label="原圖" onSelect={(files, folderName) => { setSources(files); if (!name) setName(folderName || files[0]?.name.replace(/\.[^.]+$/, '') || '') }} /></div>
         <div><p>Mask（可選）· 已選 {masks.length} 張</p><ImagePicker disabled={busy || picking || !!gpuOwner} onBusyChange={setPicking} label="Mask" mask onSelect={setMasks} /></div>

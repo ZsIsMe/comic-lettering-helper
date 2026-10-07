@@ -1,11 +1,13 @@
 from __future__ import annotations
 
-import hashlib
 import re
+from collections.abc import Callable
 from pathlib import Path, PurePath
+from typing import BinaryIO
 
 from fastapi import UploadFile
 from PIL import Image
+from starlette.concurrency import run_in_threadpool
 
 
 IMAGE_EXTS = {".png", ".jpg", ".jpeg"}
@@ -26,8 +28,27 @@ def basename(raw: str | None) -> str:
     return name
 
 
-async def save_uploads(files: list[UploadFile], destination: Path, max_bytes: int) -> dict[str, Path]:
-    destination.mkdir(parents=True, exist_ok=True)
+def _save_upload(source: BinaryIO, target: Path, max_bytes: int) -> int:
+    """Keep image verification and disk I/O off the ASGI event loop."""
+    target.parent.mkdir(parents=True, exist_ok=True)
+    total = 0
+    with target.open('wb') as handle:
+        while chunk := source.read(1024 * 1024):
+            total += len(chunk)
+            if total > max_bytes:
+                raise ValueError('上傳資料超過大小限制')
+            handle.write(chunk)
+    try:
+        with Image.open(target) as image:
+            image.verify()
+    except Exception as exc:
+        target.unlink(missing_ok=True)
+        raise ValueError(f'圖片無法讀取：{target.name}') from exc
+    return total
+
+
+async def save_uploads(files: list[UploadFile], destination: Path, max_bytes: int, *, progress: Callable[[int, int, str], None] | None = None) -> dict[str, Path]:
+    await run_in_threadpool(destination.mkdir, parents=True, exist_ok=True)
     indexed: dict[str, Path] = {}
     total = 0
     for upload in files:
@@ -36,21 +57,10 @@ async def save_uploads(files: list[UploadFile], destination: Path, max_bytes: in
         if stem in indexed:
             raise ValueError(f"重複頁碼／檔名 stem：{stem}")
         target = destination / name
-        digest = hashlib.sha256()
-        with target.open("wb") as handle:
-            while chunk := await upload.read(1024 * 1024):
-                total += len(chunk)
-                if total > max_bytes:
-                    raise ValueError("上傳資料超過大小限制")
-                digest.update(chunk)
-                handle.write(chunk)
-        try:
-            with Image.open(target) as image:
-                image.verify()
-        except Exception as exc:
-            target.unlink(missing_ok=True)
-            raise ValueError(f"圖片無法讀取：{name}") from exc
+        total += await run_in_threadpool(_save_upload, upload.file, target, max_bytes - total)
         indexed[stem] = target
+        if progress is not None:
+            progress(len(indexed), len(files), name)
     return indexed
 
 
