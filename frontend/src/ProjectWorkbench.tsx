@@ -3,6 +3,7 @@ import { Alert, Button, Card, Checkbox, Dropdown, Empty, Input, InputNumber, Lis
 import LegacyBatch from './App'
 import { ImagePicker } from './ImagePicker'
 import { ProjectImportProgress } from './ProjectImportProgress'
+import { RepairScopeImportReport } from './RepairScopeImportReport'
 import { uploadProject, type ProjectUploadProgress } from './project-upload'
 import { DetectionSettings } from './DetectionSettings'
 import { createMaskPlan } from './create-mask-plan'
@@ -41,6 +42,7 @@ export default function ProjectWorkbench({ onReadyToLeave }: { onReadyToLeave?: 
   const [createDetectionError, setCreateDetectionError] = useState('')
   const createSettingsTouched = useRef(false)
   const [picking, setPicking] = useState(false)
+  const [repairScopeFile, setRepairScopeFile] = useState<File | null>(null)
   const [importProgress, setImportProgress] = useState<ProjectUploadProgress | null>(null)
   const creating = useRef(false)
   const [name, setName] = useState(''); const [sources, setSources] = useState<File[]>([]); const [masks, setMasks] = useState<File[]>([])
@@ -86,6 +88,7 @@ export default function ProjectWorkbench({ onReadyToLeave }: { onReadyToLeave?: 
       body.append('detection_options', JSON.stringify(createDetectionOptions))
       for (const f of sources) body.append('source_files', f, f.name)
       for (const f of masks) body.append('mask_files', f, f.name)
+      if (repairScopeFile) body.append('repair_scope_file', repairScopeFile, repairScopeFile.name)
       const project = await uploadProject<Project>(body, setImportProgress)
       setCreateDetectionError('')
       if (detectOnCreate && project.pages.some(page => !page.mask_ready)) {
@@ -96,7 +99,7 @@ export default function ProjectWorkbench({ onReadyToLeave }: { onReadyToLeave?: 
           setCreateDetectionError(`項目已建立，但自動檢測未啟動：${err instanceof Error ? err.message : String(err)}。已匯入 Mask 保留，可按「補充缺少的 Mask」重試。`)
         }
       }
-      setCreateOpen(false); setSources([]); setMasks([]); setName(''); open(project); await reload()
+      setCreateOpen(false); setSources([]); setMasks([]); setRepairScopeFile(null); setName(''); open(project); await reload()
     }) } finally { creating.current = false; setImportProgress(null) }
   }
   async function importArchive(file: File) {
@@ -149,6 +152,13 @@ export default function ProjectWorkbench({ onReadyToLeave }: { onReadyToLeave?: 
         <div><p>原圖（必須）· 已選 {sources.length} 張</p><ImagePicker disabled={busy || picking || !!gpuOwner} onBusyChange={setPicking} label="原圖" onSelect={(files, folderName) => { setSources(files); if (!name) setName(folderName || files[0]?.name.replace(/\.[^.]+$/, '') || '') }} /></div>
         <div><p>Mask（可選）· 已選 {masks.length} 張</p><ImagePicker disabled={busy || picking || !!gpuOwner} onBusyChange={setPicking} label="Mask" mask onSelect={setMasks} /></div>
         </div>
+        <section aria-label="初始化裁切設定">
+          <Space wrap>
+            <label className={`file-picker ${busy || picking ? 'disabled' : ''}`}>導入裁切 JSON（可選）<input type="file" accept=".json,application/json" disabled={busy || picking} onChange={e => { const file = e.target.files?.[0]; if (file) setRepairScopeFile(file); e.target.value = '' }} /></label>
+            {repairScopeFile && <><Text>{repairScopeFile.name}</Text><Button size="small" disabled={busy || picking} onClick={() => setRepairScopeFile(null)}>移除 JSON</Button></>}
+          </Space>
+          <div><Text type="secondary">按圖片檔名（含副檔名）套用各頁範圍及開關；未列出的圖片使用預設範圍。未知檔名設定會略過，裁切範圍無效的圖片不匯入，完成後可查看明細。</Text></div>
+        </section>
         <Text type="secondary">可上傳全部或部分頁面的 Mask；已有 Mask（含全黑）會保留，其餘可自動檢測或人工編輯。資料夾僅匯入第一層，每次選擇整批取代。</Text>
         <section className="create-detection-settings" aria-label="新項目的自動檢測設定">
           <h3>自動檢測設定</h3>
@@ -404,6 +414,9 @@ function ProjectWorkspace({ initial, initialError, gpuOwner, onExit, onReadyToLe
     if (!await flush()) return
     window.location.assign(path)
   }
+  async function exportRepairScope() {
+    await execute(() => download(`${url}/repair-scope/export`))
+  }
   async function exportResults() {
     await execute(async () => {
       if (!await flush()) return
@@ -474,6 +487,7 @@ function ProjectWorkspace({ initial, initialError, gpuOwner, onExit, onReadyToLe
         <div className="result-export-action"><Button type="primary" disabled={busy || !!gpuOwner || detecting} onClick={() => void exportResults()}>導出結果</Button>{!!pendingExportCount && <span>尚有 {pendingExportCount} 頁待確認 · 點擊前往</span>}</div>
       </Space></header>
     {error && <Alert type="error" showIcon closable onClose={() => setError('')} message={error} />}
+    <RepairScopeImportReport report={project.repair_scope_import} />
     <Steps size="small" responsive={false} current={step} onChange={value => void execute(() => navigate(value))} items={[{ title: '準備與編輯' }, { title: '批量修復' }, { title: '比較合成', disabled: !rounds.some(item => item.selected) }]} />
     <div className={`project-body${step !== 1 ? ' pages-collapsed' : ''}`}><aside id="editing-page-list" className="page-list" hidden={step !== 1}>
       <div className="page-status-legend"><span className="page-untouched">{step === 2 ? '待確認' : '未處理'}</span> · <span className="page-complete">{step === 2 ? '已確認' : '完成'}</span>{step !== 2 && <> · <span className="page-needs-repair">待修補</span></>}</div><List dataSource={project.pages} renderItem={(item, index) => <List.Item className={index === pageIndex ? 'selected' : ''} onClick={() => void execute(() => navigate(step, index))}>
@@ -497,7 +511,7 @@ function ProjectWorkspace({ initial, initialError, gpuOwner, onExit, onReadyToLe
         {detecting ? <Alert type="info" showIcon message={detection?.progress ? `${detectionLabels[detection.state] || detectionLabels[detection.progress.stage] || '自動檢測中'} · ${detection.progress.completed} / ${detection.progress.total} 頁` : detectionLabels[detection?.state || ''] || '自動檢測中，完成後即可編輯'} action={<Button danger onClick={() => void execute(async () => { await api(`${url}/detection/${detection?.state === 'recovery_required' ? 'recover' : 'cancel'}`, { method: 'POST' }); await reloadProject(); setEditorKey(k => k + 1) })}>{detection?.state === 'recovery_required' ? '檢查恢復' : '停止偵測'}</Button>} /> : <RasterEditor key={`${page.id}-${editorKey}`} ref={editor} width={page.width} height={page.height} mode="edit" viewState={editView} pageLoadTrace={pageLoadTrace} acquireWorker={baselinePageLoad() ? undefined : editWorkerOwner.acquire}
           baseUrl={assetUrl(project.id, page.source)} overlayUrl={`${assetUrl(project.id, page.overlay)}?v=${page.edit_revision}`} otherUrl={`${assetUrl(project.id, page.other)}?v=${page.edit_revision}`} editedUrl={`${assetUrl(project.id, page.edited)}?v=${page.edit_revision}`}
           detectedTextUrl={page.detected_text ? assetUrl(project.id, page.detected_text) : undefined}
-          scopePageId={page.id} repairScope={project.repair_scope} onSaveRepairScope={saveRepairScope}
+          scopePageId={page.id} repairScope={project.repair_scope} onSaveRepairScope={saveRepairScope} onExportRepairScope={exportRepairScope}
           onSave={saveEdit} onDirty={setDirty} onRepairMaskChange={value => setLiveRepair(previous => ({ ...previous, [page.id]: value }))} disabled={busy} />}
         {project.pages.some(p => !p.mask_ready) && <Button disabled={busy || !!gpuOwner || detecting || !detectionCanConfigure} onClick={() => void detect(true)}>補充缺少的 Mask</Button>}
         {detection?.error && <Alert type="error" message="自動檢測未完成，請重試；若持續失敗，請聯絡管理員查看檢測日誌。" />}

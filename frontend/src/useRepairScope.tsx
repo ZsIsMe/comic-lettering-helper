@@ -5,10 +5,11 @@ import { defaultRepairRect, fullRepairRect, moveScopeEdge, type RepairRect, type
 interface Options {
   pageId?: string; initial?: RepairScope; width: number; height: number; disabled?: boolean
   save?: (update: ScopeUpdate) => Promise<RepairScope>
+  exportScope?: () => Promise<void>
 }
 const labels = { left: '左', right: '右', top: '上', bottom: '下' }
 
-export function useRepairScope({ pageId, initial, width, height, disabled, save }: Options) {
+export function useRepairScope({ pageId, initial, width, height, disabled, save, exportScope }: Options) {
   const [value, setValue] = useState(() => ({ enabled: initial?.enabled ?? false, rect: initial?.pages[pageId || ''] ?? defaultRepairRect(width, height) }))
   const current = useRef(value)
   const revision = useRef(initial?.revision ?? 0)
@@ -65,6 +66,7 @@ export function useRepairScope({ pageId, initial, width, height, disabled, save 
         <Button size="small" disabled={disabled} title="將當頁四條線移到圖片四邊，不影響其他頁。" onClick={() => { change({ ...current.current, rect: fullRepairRect(width, height) }, false); void flush() }}>本頁改為整張圖</Button>
         <Button size="small" disabled={disabled || status === '保存中…'} title="用目前四條線的位置覆蓋本項目所有其他頁，包括已單獨調整的範圍。" onClick={() => { applyAll.current = true; change(current.current, false); void flush() }}>將此範圍套用全部頁</Button>
       </>}
+      {exportScope && <Button size="small" disabled={disabled || status === '保存中…'} title="保存後導出全部頁面的裁切範圍，以圖片檔名對應，可在新建項目時導入。" onClick={() => void exportScope()}>導出裁切 JSON</Button>}
       <span role="status" className={status === '已保存' ? 'repair-scope-saved' : undefined}>{status}</span>
   </div>
   function overlay(editable: boolean) {

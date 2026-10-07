@@ -16,7 +16,7 @@ from PIL import Image, ImageChops
 
 from .repository import now_iso
 from .detection_options import DetectionOptions
-from .repair_scope import default_rect, validate_rect, fit_rect, scoped_mask
+from .repair_scope import default_rect, validate_rect, fit_rect, scoped_mask, validate_external_scope
 
 @lru_cache(maxsize=512)
 def _has_repair_mask(path: str, modified_ns: int, size: int) -> bool:
@@ -114,6 +114,19 @@ class ProjectStore:
             atomic_json(self.project_dir(project_id) / 'repair_scope.json', scope)
             return project
 
+    def export_repair_scope(self, project_id: str) -> dict:
+        # Copy one consistent snapshot before serializing the download response.
+        with self.lock(project_id), self.reader(project_id):
+            project = self.read(project_id)
+            scope = project['repair_scope']
+            pages = {}
+            for page in project['pages']:
+                filename = page['filename']
+                if filename in pages:
+                    raise ValueError(f'圖片檔名重複，無法匯出裁切 JSON：{filename}')
+                pages[filename] = validate_rect(scope['pages'].get(page['id'], default_rect(page['width'], page['height'])), page['width'], page['height'])
+            return {'enabled': scope['enabled'], 'revision': scope['revision'], 'pages': pages}
+
     def list(self) -> list[dict]:
         result = []
         for path in self.root.glob('*/project.json'):
@@ -165,17 +178,45 @@ class ProjectStore:
             with self.lock(project_id):
                 self._readers[project_id] -= 1
 
-    def create(self, name: str, sources: dict[str, Path], masks: dict[str, Path] | None = None, *, detection_options: dict | None = None, progress: Callable[[int, int, str], None] | None = None) -> dict:
+    def create(self, name: str, sources: dict[str, Path], masks: dict[str, Path] | None = None, *, detection_options: dict | None = None, progress: Callable[[int, int, str], None] | None = None, repair_scope: dict | None = None) -> dict:
         if not sources:
             raise ValueError('項目必須包含原圖')
         if masks is not None and not masks.keys() <= sources.keys():
             raise ValueError('Mask 必須按檔名配對已有原圖，不可包含多餘頁面')
         options = DetectionOptions.model_validate(detection_options).model_dump() if detection_options is not None else None
+        external_scope = validate_external_scope(repair_scope) if repair_scope is not None else None
+        import_report = {'skipped_images': [], 'ignored_entries': []}
+        if external_scope is not None:
+            sources_by_filename = {original.name: original for original in sources.values()}
+            if len(sources_by_filename) != len(sources):
+                raise ValueError('圖片檔名重複，無法匯入裁切 JSON')
+            valid_rects = {}
+            skipped_filenames = set()
+            # Finish filtering before allocating IDs or copying/rendering project assets.
+            for filename, rect in external_scope['pages'].items():
+                if filename not in sources_by_filename:
+                    import_report['ignored_entries'].append({'filename': filename, 'reason': '裁切 JSON 沒有對應的原圖'})
+                    continue
+                with Image.open(sources_by_filename[filename]) as original:
+                    try:
+                        valid_rects[filename] = validate_rect(rect, *original.size)
+                    except ValueError as exc:
+                        skipped_filenames.add(filename)
+                        import_report['skipped_images'].append({'filename': filename, 'reason': str(exc)})
+            sources = {stem: original for stem, original in sources.items() if original.name not in skipped_filenames}
+            if not sources:
+                reasons = '；'.join(f"{entry['filename']}：{entry['reason']}" for entry in import_report['skipped_images'])
+                raise ValueError(f'沒有可匯入的圖片；{reasons}')
+            if masks is not None:
+                masks = {stem: mask for stem, mask in masks.items() if stem in sources}
+            external_scope['pages'] = valid_rects
         project_id = uuid.uuid4().hex
         root = self.project_dir(project_id)
         project = {'version': 1, 'id': project_id, 'name': self.clean_name(name), 'revision': 0, 'state': 'ready', 'created_at': now_iso(), 'pages': [], 'runs': [], 'current_run_id': None}
         if options is not None:
             project['detection_options'] = options
+        if import_report['skipped_images'] or import_report['ignored_entries']:
+            project['repair_scope_import'] = import_report
         try:
             for order, (stem, original) in enumerate(sorted(sources.items())):
                 if progress is not None:
@@ -208,6 +249,14 @@ class ProjectStore:
                 project['pages'].append({'id': page_id, 'stem': stem, 'filename': original.name, 'order': order, 'width': source.width, 'height': source.height, 'original': str(destination.relative_to(root)), 'source': f'assets/{page_id}/source.png', 'thumbnail': f'assets/{page_id}/thumbnail.png', 'overlay': f'assets/{page_id}/overlay.png', 'other': f'assets/{page_id}/other.png', 'edited': f'assets/{page_id}/edited.png', 'edit_revision': 0, 'mask_ready': masks is not None and stem in masks, 'source_sha256': digest_file(assets / 'source.png'), 'original_sha256': digest_file(destination), 'normalization': 'RGB PNG; pixel orientation unchanged'})
                 if progress is not None:
                     progress(order + 1, len(sources), original.name)
+            if external_scope is not None:
+                pages_by_filename = {page['filename']: page for page in project['pages']}
+                scope = {'enabled': external_scope['enabled'], 'revision': 0, 'pages': {}}
+                for filename, rect in external_scope['pages'].items():
+                    page = pages_by_filename[filename]
+                    scope['pages'][page['id']] = validate_rect(rect, page['width'], page['height'])
+                atomic_json(root / 'repair_scope.json', scope)
+                project['repair_scope'] = scope
             self.write(project)
             return project
         except Exception:

@@ -23,6 +23,7 @@ from .schemas import JobRecord, WorkflowProgress
 from .storage import save_uploads
 from .comfy_cleanup import CleanupConflict
 from .upload_progress import UploadProgressRegistry
+from .repair_scope import MAX_SCOPE_BYTES, parse_external_scope
 
 ORDER = ['flux2klein_lanpaint', 'firered', 'qwen2511_lanpaint']
 
@@ -443,7 +444,7 @@ def create_project_router(settings, repository, manager, store: ProjectStore, co
         return projects
 
     @router.post('', status_code=201)
-    async def create(name: str = Form('未命名項目'), source_files: list[UploadFile] = File(...), mask_files: list[UploadFile] | None = File(None), detection_options: str | None = Form(None), progress_id: str | None = Query(None, pattern=r'^[0-9a-f]{32}$')):
+    async def create(name: str = Form('未命名項目'), source_files: list[UploadFile] = File(...), mask_files: list[UploadFile] | None = File(None), detection_options: str | None = Form(None), repair_scope_file: UploadFile | None = File(None), progress_id: str | None = Query(None, pattern=r'^[0-9a-f]{32}$')):
         registered = False
         try:
             # FastAPI has parsed the multipart body before entering this handler.
@@ -468,6 +469,7 @@ def create_project_router(settings, repository, manager, store: ProjectStore, co
             options = DetectionOptions.model_validate_json(detection_options).model_dump() if detection_options is not None else None
             if manager.gpu_gate.owner is not None:
                 raise ProjectConflict('GPU 任務運行期間暫停上傳')
+            repair_scope = parse_external_scope(await repair_scope_file.read(MAX_SCOPE_BYTES + 1)) if repair_scope_file is not None else None
             with tempfile.TemporaryDirectory(prefix='comic-project-upload-') as temporary:
                 sources = await save_uploads(source_files, Path(temporary) / 'source', max_bytes,
                                              progress=validated if registered else None)
@@ -477,13 +479,13 @@ def create_project_router(settings, repository, manager, store: ProjectStore, co
                         raise ValueError('Mask 只接受 PNG')
                     masks = await save_uploads(mask_files, Path(temporary) / 'mask', max_bytes,
                                                progress=validated_mask if registered else None)
-                if registered:
-                    upload_progress.update(progress_id, stage='creating', completed=0, total=len(sources), filename=None)
                 project = await run_in_threadpool(store.create, name, sources, masks,
-                                                 detection_options=options, progress=created if registered else None)
+                                                 detection_options=options, progress=created if registered else None,
+                                                 repair_scope=repair_scope)
                 if registered:
-                    upload_progress.update(progress_id, stage='completed', completed=len(sources),
-                                           total=len(sources), filename=None)
+                    total_pages = len(project['pages'])
+                    upload_progress.update(progress_id, stage='completed', completed=total_pages,
+                                           total=total_pages, filename=None)
                 return project
         except BaseException as exc:
             if registered:
@@ -577,11 +579,22 @@ def create_project_router(settings, repository, manager, store: ProjectStore, co
         except Exception as exc:
             fail(exc)
 
+    @router.get('/{pid}/repair-scope/export')
+    def export_scope(pid: str):
+        try:
+            content = json.dumps(store.export_repair_scope(pid), ensure_ascii=False, indent=2).encode('utf-8')
+            return Response(content, media_type='application/json', headers={
+                'Content-Disposition': 'attachment; filename="repair_scope.json"',
+                'Cache-Control': 'no-store',
+            })
+        except Exception as exc:
+            fail(exc)
+
     @router.put('/{pid}/pages/{page_id}/repair-scope')
     def repair_scope(pid: str, page_id: str, body: dict = Body(...)):
         try:
             if set(body) - {'revision', 'enabled', 'rect', 'apply_all'}:
-                raise ValueError('不支援外部作用範圍設定或匯入')
+                raise ValueError('頁面作用範圍只接受 revision、enabled、rect、apply_all；裁切 JSON 請在新建項目時匯入')
             return store.save_repair_scope(pid, page_id, body.get('revision'), body.get('enabled'), body.get('rect'), body.get('apply_all', False), repository)
         except Exception as exc:
             fail(exc)

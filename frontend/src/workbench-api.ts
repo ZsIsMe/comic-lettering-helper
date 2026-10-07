@@ -23,6 +23,10 @@ export interface DetectionOptions {
 export const defaultDetectionOptions: DetectionOptions = { mask_dilate: 2, mask_mode: 'text_onomatopoeia', bubble_enabled: true, bubble_shrink_percent: 2 }
 export interface Project {
   repair_scope?: RepairScope
+  repair_scope_import?: {
+    skipped_images: { filename: string; reason: string }[]
+    ignored_entries: { filename: string; reason: string }[]
+  }
   id: string; name: string; revision: number; state: string; pages: Page[]
   runs: { id: string; snapshot_id: string; workflows: Workflow[]; created_at: string }[]
   current_run_id: string | null; created_at: string; updated_at: string; storage_bytes?: number

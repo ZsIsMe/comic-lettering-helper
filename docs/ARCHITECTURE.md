@@ -18,7 +18,9 @@
 
 `useRepairScope.tsx` 在第一部分的 `RasterEditor` 上疊加四條固定參考線；線的拖曳與方向鍵操作只修改矩形，不能新增／刪除線或選格，也不改編輯圖層。座標採原圖整數像素，邊界可到 0 和圖片寬高，寬高至少 1。切頁、工作區切換及提交前等待圖層與範圍保存；範圍保存失敗留在當頁。
 
-`projects/<id>/repair_scope.json` 是僅供本機應用使用的設定檔：`enabled` 預設 false、獨立 `revision`、`pages[page_id] = {x,y,width,height}`。前端透過內部 `PUT /api/projects/{pid}/pages/{page_id}/repair-scope` 保存手動操作；`apply_all` 覆蓋其他全部頁面的已存範圍。不同尺寸保持像素座標並裁到有效邊界。整頁操作只更新當頁，開關為項目級。保存使用項目鎖與範圍修訂檢查，並遞增項目 revision；推理／偵測／封存下載期間拒絕改範圍。獨立設定檔不進項目封存，也無 JSON 檔上傳、匯入、匯出入口；匯入項目恢復預設關閉。
+`projects/<id>/repair_scope.json` 是內部設定檔：`enabled` 預設 false、獨立 `revision`、`pages[page_id] = {x,y,width,height}`。前端透過內部 `PUT /api/projects/{pid}/pages/{page_id}/repair-scope` 保存手動操作；`apply_all` 覆蓋其他全部頁面的已存範圍。不同尺寸保持像素座標並裁到有效邊界。整頁操作只更新當頁，開關為項目級。保存使用項目鎖與範圍修訂檢查，並遞增項目 revision；推理／偵測／封存下載期間拒絕改範圍。獨立設定檔不進項目 ZIP 封存，ZIP 匯入恢復預設關閉。
+
+2026-10-07 新增獨立裁切 JSON 交換：工具列導出先 flush 圖層與範圍，再以 `GET /api/projects/{pid}/repair-scope/export` 讀取一致快照，下載包含 `enabled/revision/pages` 的 JSON，外部 `pages` key 為完整圖片檔名（含副檔名），全部頁面包括未編輯過的 `default_rect`。`POST /api/projects` 接受可選 `repair_scope_file`；最大 2 MiB，整份格式、開關／修訂型別、重複 JSON 鍵或檔名歧義仍拒絕。未知檔名項目略過；已配對但範圍無效（含越界）的圖片與其 Mask 不匯入，其餘圖片繼續建立。預檢在建立圖片資產前完成；全部圖片被略過時報錯，不建立空項目。外部 key 沿用 `storage.basename` 正規化但拒絕路徑，以正規化後的完整 filename 精確配對，保留大小寫和副檔名。未在 JSON 列出的圖片仍使用預設範圍；不隱式縮放或裁掉越界範圍。`repair_scope_import` 保存未匯入圖片及未知檔名設定的檔名／原因，前端顯示摘要與明細。建立和完成進度以實際保留圖片數計算，驗證進度仍按上傳的圖片及 Mask 計數。初始化時映射為本次生成的 page_id，保留 `enabled`，內部 scope revision 重設 0，外部 revision 只作格式檢查。範圍初始化与項目建立共用失敗清理，返回的項目包含已匯入 scope，第一頁立即顯示正確範圍。未提供 JSON 時維持原有預設。此交換不改模型工作流或已凍結的任務幾何資料，也不改完整項目 ZIP 行為。
 
 快照仍保留原尺寸的填色底圖與 Mask，但將範圍外的當次快照 Mask 清黑，原編輯圖層不變。每頁的 `repair_rect` 固定於快照，提交時另寫任務內部 `input_geometry.json`。ComfyUI staging 才同步裁切 source 和 Mask，FireRed 平鋪檔仍為真實檔案。三流程的 raw 輸出在同步時先驗證可解碼及裁切尺寸，再貼回完整底圖後原子發布；不進行內容品質篩選。續跑從已保存完整成品重新裁出 raw，避免二次回貼尺寸錯位。全黑有效 Mask 直接輸出完整底圖；比較 PDF 使用任務完整 uploads，與回貼成品尺寸一致。歷史快照／任務的固定幾何資訊隨執行記錄保留，不作為匯入項目的可編輯範圍設定。
 

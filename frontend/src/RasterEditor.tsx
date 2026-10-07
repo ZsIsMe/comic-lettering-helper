@@ -26,6 +26,7 @@ interface Props {
   scopePageId?: string
   repairScope?: RepairScope
   onSaveRepairScope?: (update: ScopeUpdate) => Promise<RepairScope>
+  onExportRepairScope?: () => Promise<void>
   pageLoadTrace?: PageLoadTrace
   acquireWorker?: () => { client: RasterWorkerClient; reused: boolean }
   compareLayout?: 'multi' | 'context' | 'cards'
@@ -96,7 +97,7 @@ export const RasterEditor = forwardRef<RasterHandle, Props>(function RasterEdito
   const [localDraft, setLocalDraft] = useState<LocalDraft | null>(null)
   const [openingLocal, setOpeningLocal] = useState(false)
   const disabled = props.disabled || !!localDraft || openingLocal
-  const scope = useRepairScope({ pageId: props.scopePageId, initial: props.repairScope, width, height, disabled, save: props.onSaveRepairScope })
+  const scope = useRepairScope({ pageId: props.scopePageId, initial: props.repairScope, width, height, disabled, save: props.onSaveRepairScope, exportScope: props.onExportRepairScope })
   const localBlocked = useRef(false); localBlocked.current = !!localDraft || openingLocal
   const initialView = useRef({...props.viewState?.current})
   const confirming = useRef(false)

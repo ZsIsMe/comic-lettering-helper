@@ -1,5 +1,50 @@
 """Manual, pixel-based repair bounds; geometry never changes workflow parameters."""
+import json
+
 from PIL import Image
+
+from .storage import basename
+
+
+MAX_SCOPE_BYTES = 2 * 1024 * 1024
+
+
+def validate_external_scope(value: dict) -> dict:
+    """Normalize portable filename keys; image bounds are checked during creation."""
+    if (not isinstance(value, dict) or set(value) - {'enabled', 'revision', 'pages'}
+            or type(value.get('enabled')) is not bool or not isinstance(value.get('pages'), dict)):
+        raise ValueError('裁切 JSON 必須包含 enabled 開關及 pages 圖片檔名對照')
+    if 'revision' in value and (type(value['revision']) is not int or value['revision'] < 0):
+        raise ValueError('裁切 JSON 的 revision 必須為非負整數')
+    pages = {}
+    for filename, rect in value['pages'].items():
+        if (not isinstance(filename, str) or not filename or '/' in filename
+                or '\\' in filename or '\x00' in filename or filename.startswith('.')):
+            raise ValueError('裁切 JSON 的 key 必須為完整圖片檔名，不可包含路徑或隱藏檔')
+        name = basename(filename)
+        if name in pages:
+            raise ValueError(f'裁切 JSON 包含重複圖片檔名：{name}')
+        pages[name] = rect
+    return {'enabled': value['enabled'], 'revision': 0, 'pages': pages}
+
+
+def parse_external_scope(data: bytes) -> dict:
+    if len(data) > MAX_SCOPE_BYTES:
+        raise ValueError('裁切 JSON 超過 2 MiB 大小限制')
+
+    def unique_object(pairs):
+        result = {}
+        for key, value in pairs:
+            if key in result:
+                raise ValueError(f'裁切 JSON 包含重複 key：{key}')
+            result[key] = value
+        return result
+
+    try:
+        value = json.loads(data.decode('utf-8-sig'), object_pairs_hook=unique_object)
+    except (UnicodeError, json.JSONDecodeError) as exc:
+        raise ValueError('裁切檔案必須為有效 UTF-8 JSON') from exc
+    return validate_external_scope(value)
 
 
 def full_rect(width: int, height: int) -> dict:
