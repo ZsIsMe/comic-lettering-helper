@@ -16,7 +16,7 @@ from PIL import Image, ImageChops
 
 from .repository import now_iso
 from .detection_options import DetectionOptions
-from .repair_scope import default_rect, validate_rect, fit_rect, scoped_mask, validate_external_scope
+from .repair_scope import default_rect, validate_scope, fit_scope, scoped_mask, validate_external_scope
 
 @lru_cache(maxsize=512)
 def _has_repair_mask(path: str, modified_ns: int, size: int) -> bool:
@@ -102,11 +102,11 @@ class ProjectStore:
             if type(enabled) is not bool or type(apply_all) is not bool:
                 raise ValueError('作用範圍開關無效')
             page = self.page(project, page_id)
-            rect = validate_rect(rect, page['width'], page['height'])
+            rect = validate_scope(rect, page['width'], page['height'])
             scope['pages'][page_id] = rect
             if apply_all:
                 for item in project['pages']:
-                    scope['pages'][item['id']] = fit_rect(rect, item['width'], item['height'])
+                    scope['pages'][item['id']] = fit_scope(rect, item['width'], item['height'])
             scope.update(enabled=enabled, revision=scope['revision'] + 1)
             # Invalidate pending submissions before publishing the new local bounds.
             project['revision'] += 1
@@ -124,7 +124,7 @@ class ProjectStore:
                 filename = page['filename']
                 if filename in pages:
                     raise ValueError(f'圖片檔名重複，無法匯出裁切 JSON：{filename}')
-                pages[filename] = validate_rect(scope['pages'].get(page['id'], default_rect(page['width'], page['height'])), page['width'], page['height'])
+                pages[filename] = validate_scope(scope['pages'].get(page['id'], default_rect(page['width'], page['height'])), page['width'], page['height'])
             return {'enabled': scope['enabled'], 'revision': scope['revision'], 'pages': pages}
 
     def list(self) -> list[dict]:
@@ -199,7 +199,7 @@ class ProjectStore:
                     continue
                 with Image.open(sources_by_filename[filename]) as original:
                     try:
-                        valid_rects[filename] = validate_rect(rect, *original.size)
+                        valid_rects[filename] = validate_scope(rect, *original.size)
                     except ValueError as exc:
                         skipped_filenames.add(filename)
                         import_report['skipped_images'].append({'filename': filename, 'reason': str(exc)})
@@ -254,7 +254,7 @@ class ProjectStore:
                 scope = {'enabled': external_scope['enabled'], 'revision': 0, 'pages': {}}
                 for filename, rect in external_scope['pages'].items():
                     page = pages_by_filename[filename]
-                    scope['pages'][page['id']] = validate_rect(rect, page['width'], page['height'])
+                    scope['pages'][page['id']] = validate_scope(rect, page['width'], page['height'])
                 atomic_json(root / 'repair_scope.json', scope)
                 project['repair_scope'] = scope
             self.write(project)
@@ -341,7 +341,7 @@ class ProjectStore:
             manifest = {'version': 1, 'id': snapshot_id, 'project_revision': project['revision'], 'created_at': now_iso(), 'pages': []}
             for page in pages:
                 scope = project['repair_scope']
-                rect = validate_rect(scope['pages'].get(page['id'], default_rect(page['width'], page['height'])), page['width'], page['height']) if scope['enabled'] else None
+                rect = validate_scope(scope['pages'].get(page['id'], default_rect(page['width'], page['height'])), page['width'], page['height']) if scope['enabled'] else None
                 with Image.open(self.asset_path(project_id, page['source'])) as original, Image.open(self.asset_path(project_id, page['overlay'])) as overlay, Image.open(self.asset_path(project_id, page['other'])) as mask:
                     base = Image.alpha_composite(original.convert('RGBA'), overlay.convert('RGBA')).convert('RGB')
                     other = mask.convert('L').point(lambda v: 255 if v >= 128 else 0)

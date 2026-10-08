@@ -63,7 +63,7 @@ export function firstTimingText(progress: WorkflowProgressRecord): string {
 }
 
 export function warmTimingText(progress: WorkflowProgressRecord): string {
-  if (progress.warm_average_seconds !== null) return `${formatWorkflowSeconds(progress.warm_average_seconds)}／張`
+  if (progress.warm_average_seconds !== null) return `${formatWorkflowSeconds(progress.warm_average_seconds)}／次`
   if (activeStates.has(progress.state)) return '待完成'
   if (Math.max(0, progress.completed - progress.passthrough) <= 1) return '—'
   return '未記錄'

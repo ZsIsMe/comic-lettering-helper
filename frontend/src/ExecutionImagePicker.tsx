@@ -2,13 +2,13 @@ import { useEffect, useRef, useState } from 'react'
 import { Button, Empty, Input, Modal, Space, Tag } from 'antd'
 import { CheckOutlined, SearchOutlined } from '@ant-design/icons'
 import { executionPageIds, selectionFromPages, type ExecutionSelection } from './execution-selection'
-import type { RepairRect } from './repair-scope'
+import { repairRectangles, type RepairRegion } from './repair-scope'
 import './execution-image-picker.css'
 
 export interface ExecutionPage {
   id: string; filename: string; maskPreviewUrl?: string; maskReady: boolean
   sourceUrl?: string; overlayUrl?: string; maskUrl?: string
-  scopeRect?: RepairRect
+  scopeRect?: RepairRegion
 }
 
 function PagePreview({ page }: { page: ExecutionPage }) {
@@ -58,7 +58,7 @@ function PagePreview({ page }: { page: ExecutionPage }) {
       if (page.scopeRect) {
         context.save()
         context.beginPath()
-        context.rect(page.scopeRect.x * scale, page.scopeRect.y * scale, page.scopeRect.width * scale, page.scopeRect.height * scale)
+        for (const rect of repairRectangles(page.scopeRect, source.naturalWidth, source.naturalHeight)) context.rect(rect.x * scale, rect.y * scale, rect.width * scale, rect.height * scale)
         context.clip()
       }
       context.drawImage(tintCanvas, 0, 0)

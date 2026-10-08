@@ -6,6 +6,7 @@ import ProjectWorkbench from '../src/ProjectWorkbench'
 import { clearSourceImageCache, getSourceImageCacheStats } from '../src/source-image-cache'
 import { clearPageLoadRecords, getPageLoadRecords, subscribePageLoads, type PageLoadRecord } from '../src/page-load-performance'
 import type { Project } from '../src/workbench-api'
+import { fitRepairGrid } from '../src/repair-scope'
 import '../src/styles.css'
 
 type RequestLog = { at: number; method: string; kind: string; pageId?: string; url: string }
@@ -178,7 +179,7 @@ function installMock(mock: MockProject, onRequest: (entry: RequestLog) => void) 
       const scope = mock.project.repair_scope || { enabled: false, revision: 0, pages: {} }
       if (scope.revision !== update.revision) return jsonResponse({ detail: '作用範圍修訂衝突' }, 409)
       scope.enabled = update.enabled; scope.revision++
-      for (const p of mock.project.pages) if (update.apply_all || p.id === scopeMatch[1]) scope.pages[p.id] = { ...update.rect }
+      for (const p of mock.project.pages) if (update.apply_all || p.id === scopeMatch[1]) scope.pages[p.id] = structuredClone(fitRepairGrid(update.rect, p.width, p.height))
       mock.project.repair_scope = scope; mock.project.revision++
       log(method, 'scope-save', url.pathname, scopeMatch[1])
       return jsonResponse(mock.project)

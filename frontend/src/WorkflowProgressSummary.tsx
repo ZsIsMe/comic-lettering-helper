@@ -33,12 +33,12 @@ function WorkflowProgressItem({ workflow, progress }: { workflow: WorkflowId; pr
     <Progress percent={percent} size="small" />
     <dl className="workflow-progress-metrics">
       <div><dt>完成張數</dt><dd>{progress.completed} / {progress.total}</dd></div>
-      <div><dt>首圖耗時（含模型載入）</dt><dd>{firstTimingText(progress)}</dd></div>
-      <div><dt>非首圖平均</dt><dd>{warmTimingText(progress)}</dd></div>
+      <div><dt>首次推理（含模型載入）</dt><dd>{firstTimingText(progress)}</dd></div>
+      <div><dt>後續推理平均</dt><dd>{warmTimingText(progress)}</dd></div>
       <div><dt>累計耗時</dt><dd>{formatWorkflowSeconds(progress.elapsed_seconds)}</dd></div>
       <div><dt>預計剩餘</dt><dd>{remainingTimingText(progress)}</dd></div>
     </dl>
-    <p className="workflow-progress-detail">已生成 {generatedImages} 張 · 全黑 Mask 直通 {progress.passthrough} 張</p>
+    <p className="workflow-progress-detail">已生成 {generatedImages} 張 · 全黑 Mask 直通 {progress.passthrough} 張。完成張數按原圖計算；每個點亮裁切區塊獨立推理。</p>
   </article>
 }
 

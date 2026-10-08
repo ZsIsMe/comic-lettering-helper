@@ -37,7 +37,7 @@
 .panel-controls .ant-input-number { width: 64px; }
 .mask-mix { display: flex; align-items: center; gap: 8px; width: 100%; }
 .mask-mix .ant-slider { flex: 1; min-width: 50px; }
-.canvas-panels.edit .canvas-scroll { margin-top: auto; }
+.canvas-panels.edit .canvas-scroll { margin-top: auto; padding-bottom: 24px; }
 .canvas-scroll { overflow: auto; height: 65vh; background: #c4bfb5; overscroll-behavior: contain; }
 .canvas-scroll canvas { display: block; }
 .saved-preview { padding-top: 20px; }
@@ -453,8 +453,15 @@ footer { padding: 20px 0; color: #746e63; font-size: 12px; }
 .repair-scope-toolbar { display: inline-flex; align-items: center; flex-wrap: wrap; gap: 4px 6px; padding: 2px 6px; border: 1px solid #bad1d6; border-radius: 6px; background: #eaf3f3; font-size: 11px; }
 .repair-scope-toolbar .ant-checkbox-wrapper { font-size: 12px; white-space: nowrap; }
 .repair-scope-saved { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
-.repair-scope-overlay { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; overflow: hidden; touch-action: none; }
+.repair-scope-save-state { display: inline-block; width: 6em; white-space: nowrap; }
+.repair-scope-overlay { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; overflow: visible; touch-action: none; }
 .repair-scope-handle:focus { outline: none; }
+.repair-scope-editing { pointer-events: all; cursor: crosshair; }
+.repair-scope-editing:focus { outline: none; }
+.repair-scope-dimensions { fill: #fff; stroke: #172737; paint-order: stroke; pointer-events: none; font-family: system-ui, sans-serif; font-weight: 600; }
+.repair-scope-rulers rect { fill: #168fa7; fill-opacity: .55; }
+.repair-scope-rulers rect[data-ruler="vertical"] { cursor: ew-resize; }
+.repair-scope-rulers rect[data-ruler="horizontal"] { cursor: ns-resize; }
 
 .raster-stage > .raster-magic-preview { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; visibility: hidden; }
 

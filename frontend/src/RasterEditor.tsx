@@ -21,7 +21,7 @@ export interface RasterSave {
 }
 export interface RasterHandle { flush: (trace?: PageLoadTrace) => Promise<boolean> }
 interface Candidate { code: number; label: string; url: string; diffUrl: string }
-export interface ComposeView { widths?: Record<number, string>; panelScroll?: number; operation?: SelectionOperation; category?: EditCategory; color?: string; tolerance?: number; expand?: number; intersectOffset?: number; fit?: boolean; tool?: string; size?: number; zoom?: number; compare?: number; order?: number[]; show?: boolean; x?: number; y?: number }
+export interface ComposeView { cropEditing?: boolean; widths?: Record<number, string>; panelScroll?: number; operation?: SelectionOperation; category?: EditCategory; color?: string; tolerance?: number; expand?: number; intersectOffset?: number; fit?: boolean; tool?: string; size?: number; zoom?: number; compare?: number; order?: number[]; show?: boolean; x?: number; y?: number }
 interface Props {
   scopePageId?: string
   repairScope?: RepairScope
@@ -97,7 +97,7 @@ export const RasterEditor = forwardRef<RasterHandle, Props>(function RasterEdito
   const [localDraft, setLocalDraft] = useState<LocalDraft | null>(null)
   const [openingLocal, setOpeningLocal] = useState(false)
   const disabled = props.disabled || !!localDraft || openingLocal
-  const scope = useRepairScope({ pageId: props.scopePageId, initial: props.repairScope, width, height, disabled, save: props.onSaveRepairScope, exportScope: props.onExportRepairScope })
+  const scope = useRepairScope({ pageId: props.scopePageId, initial: props.repairScope, width, height, disabled, save: props.onSaveRepairScope, exportScope: props.onExportRepairScope, initialEditing: props.viewState?.current.cropEditing, onEnter: () => { if (gesture.current) return false; lasso.current = []; hover.current = null; clearMagicPreview(); setSpecial(null); return true } })
   const localBlocked = useRef(false); localBlocked.current = !!localDraft || openingLocal
   const initialView = useRef({...props.viewState?.current})
   const confirming = useRef(false)
@@ -377,8 +377,8 @@ export const RasterEditor = forwardRef<RasterHandle, Props>(function RasterEdito
     requestRender()
   }
   useEffect(() => {
-    if (props.viewState) Object.assign(props.viewState.current, {tool, size, zoom, compare, order: panelOrder, show: showSources, operation, category, tolerance, expand, intersectOffset})
-  }, [props.viewState, tool, size, zoom, compare, panelOrder, showSources, operation, category, tolerance, expand, intersectOffset])
+    if (props.viewState) Object.assign(props.viewState.current, {cropEditing: scope.editing, tool, size, zoom, compare, order: panelOrder, show: showSources, operation, category, tolerance, expand, intersectOffset})
+  }, [props.viewState, scope.editing, tool, size, zoom, compare, panelOrder, showSources, operation, category, tolerance, expand, intersectOffset])
   useEffect(() => () => { if (frame.current !== null) cancelAnimationFrame(frame.current); if (hoverTimer.current) clearTimeout(hoverTimer.current) }, [])
   useEffect(() => {
     if (mode !== 'edit') return
@@ -595,6 +595,7 @@ export const RasterEditor = forwardRef<RasterHandle, Props>(function RasterEdito
   previewHandler.current = previewMagic
   function chooseCategory(value: EditCategory) {
     if (disabled || props.local || gesture.current) return
+    scope.exit()
     setCategory(value); lasso.current = []; clearMagicPreview()
     try { localStorage.setItem('comic-editor-edit-category', JSON.stringify(value)) } catch { /* Optional UI preference. */ }
     if (persisted.current < version.current) timer.current = setTimeout(() => void flush(), 800)
@@ -631,6 +632,7 @@ export const RasterEditor = forwardRef<RasterHandle, Props>(function RasterEdito
     } finally { urls.forEach(url => URL.revokeObjectURL(url)) }
   }
   function down(event: React.PointerEvent<HTMLCanvasElement>, code: number) {
+    if (scope.editing) return
     if (!pixels.current || (mode === 'edit' && !worker.current) || loading || workerFailure.current || gesture.current || disabled || confirming.current || ![0, 1, 2].includes(event.button)) return
     const pan = event.button === 1 || (event.button === 0 && (event.metaKey || event.ctrlKey)) || tool === 'pan'
     if ((mode === 'edit' && code !== 0 || mode === 'compose' && code === 0) && !pan) return
@@ -758,7 +760,7 @@ export const RasterEditor = forwardRef<RasterHandle, Props>(function RasterEdito
   const regional = mode === 'compose' && props.compareLayout && props.compareLayout !== 'multi'
   const regionCandidates = useMemo(() => loading ? [] : [...candidates.current].map(([code,value]) => ({...value,code,label:initial.current.candidates?.find(c=>c.code===code)?.label || String(code)})), [loading])
   const visibleCandidate = (code: number) => !props.visibleCandidateCodes || props.visibleCandidateCodes.includes(code)
-  const categoryName = category === 'solid' ? '純色填充' : '待修補'
+  const categoryName = scope.editing ? '裁切' : category === 'solid' ? '純色填充' : '待修補'
   const historyControls = <div className="editor-history-controls">
     <Button size="small" disabled={disabled || !historyState[0]} onClick={() => undo()}>撤銷</Button>
     <Button size="small" disabled={disabled || !historyState[1]} onClick={() => undo(true)}>重做</Button>
@@ -771,6 +773,7 @@ export const RasterEditor = forwardRef<RasterHandle, Props>(function RasterEdito
   return <div className="raster-editor" onKeyDown={event => {
     const tag = (event.target as HTMLElement).tagName
     if (mode === 'edit' && !['INPUT', 'TEXTAREA', 'SELECT'].includes(tag) && ['F1', 'F2'].includes(event.key)) { event.preventDefault(); chooseCategory(event.key === 'F1' ? 'solid' : 'other'); return }
+    if (mode === 'edit' && !['INPUT', 'TEXTAREA', 'SELECT'].includes(tag) && event.key === 'F3' && props.onSaveRepairScope) { event.preventDefault(); scope.select(); return }
     const typing = ['INPUT', 'TEXTAREA', 'SELECT'].includes(tag) || (event.target as HTMLElement).isContentEditable
     if (!typing && !disabled && (tool === 'brush' || mode === 'edit' && tool === 'magic') && !special && !event.metaKey && !event.ctrlKey && !event.altKey) {
       const direction = event.code === 'BracketLeft' || event.key === '[' ? -1 : event.code === 'BracketRight' || event.key === ']' ? 1 : 0
@@ -804,8 +807,8 @@ export const RasterEditor = forwardRef<RasterHandle, Props>(function RasterEdito
       <div className="edit-control-row category-row">
         <span className="edit-row-label">編輯</span>
         <div role="group" aria-label="編輯類別" className="category-buttons">
-          <Button aria-pressed={category === 'solid'} type={category === 'solid' ? 'primary' : 'default'} disabled={disabled || props.local} onClick={() => chooseCategory('solid')}>F1 純色填充</Button>
-          <Button aria-pressed={category === 'other'} type={category === 'other' ? 'primary' : 'default'} disabled={disabled || props.local} onClick={() => chooseCategory('other')}>F2 待修補</Button>
+          <Button aria-pressed={!scope.editing && category === 'solid'} type={!scope.editing && category === 'solid' ? 'primary' : 'default'} disabled={disabled || props.local} onClick={() => chooseCategory('solid')}>F1 純色填充</Button>
+          <Button aria-pressed={!scope.editing && category === 'other'} type={!scope.editing && category === 'other' ? 'primary' : 'default'} disabled={disabled || props.local} onClick={() => chooseCategory('other')}>F2 待修補</Button>
         </div>
         {historyControls}
         {scope.toolbar}
@@ -868,7 +871,7 @@ export const RasterEditor = forwardRef<RasterHandle, Props>(function RasterEdito
             onPointerLeave={() => { if (!gesture.current) { hover.current=null; previewMagic(null) } }} />
           {mode === 'edit' && panel.code === 0 && <canvas aria-hidden="true" className="raster-magic-preview" ref={magicCanvas} width={width} height={height} />}
           {mode === 'edit' && (panel.code === 0 || props.clipRect) && <svg aria-hidden="true" className="raster-interaction" viewBox={`0 0 ${width} ${height}`} ref={panel.code === 0 ? interactionSvg : previewClipSvg} />}
-          {mode === 'edit' && scope.overlay(panel.code === 0)}
+          {mode === 'edit' && scope.overlay(zoom)}
           </div>
         </div>
       </section>)}

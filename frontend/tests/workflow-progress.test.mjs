@@ -44,5 +44,5 @@ test('terminal timings handle passthrough and old resumed jobs without inventing
   assert.equal(remainingTimingText(progress('failed')), '—')
   assert.equal(remainingTimingText(progress('abandoned')), '—')
   assert.equal(remainingTimingText(progress('completed', { remaining_seconds: 0 })), '—')
-  assert.equal(warmTimingText(progress('completed', { completed: 2, first_seconds: 20, warm_average_seconds: 8.4 })), '8 秒／張')
+  assert.equal(warmTimingText(progress('completed', { completed: 2, first_seconds: 20, warm_average_seconds: 8.4 })), '8 秒／次')
 })

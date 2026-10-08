@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import os
+import re
 import signal
 import shutil
 import urllib.error
@@ -20,7 +22,7 @@ from .schemas import JobRecord, JobState, WorkflowId, WorkflowProgress
 from .resources import ResourceGate
 from .storage import validate_pairs
 from .workflow_progress import WORKFLOW_NAMES, TimingReader, update_progress
-from .repair_scope import box, validate_rect, paste_result
+from .repair_scope import box, is_grid, scope_rects, paste_result
 
 
 WORKFLOW_META: dict[WorkflowId, dict[str, str]] = {
@@ -236,79 +238,128 @@ class JobManager:
         path = self.repository.job_dir(record.id) / 'input_geometry.json'
         return json.loads(path.read_text(encoding='utf-8')) if path.exists() else {}
 
+    def _input_plan(self, record: JobRecord, stems: list[str]) -> dict[str, list[dict]]:
+        """Deterministic frozen page -> independent runner input mapping."""
+        geometry = self._input_geometry(record)
+        if geometry and set(geometry) != set(stems):
+            raise ValueError('作用範圍與圖片未完整配對')
+        plan = {}
+        reserved = set(stems)
+        for stem in stems:
+            if stem not in geometry:
+                plan[stem] = [dict(stem=stem, rect=None)]
+                continue
+            source = self.repository.job_dir(record.id) / 'uploads' / 'pair' / f'{stem}.png'
+            with Image.open(source) as image:
+                regions = scope_rects(geometry[stem], *image.size)
+            units = []
+            for index, rect in enumerate(regions):
+                name = stem
+                if is_grid(geometry[stem]):
+                    name = f"scope_{hashlib.sha256(stem.encode()).hexdigest()}_{index}"
+                    while name in reserved:
+                        name += '_'
+                    reserved.add(name)
+                units.append(dict(stem=name, rect=rect))
+            plan[stem] = units
+        return plan
+
     def _prepare_comfy_input(self, record: JobRecord) -> tuple[str, list[str]]:
         job_dir = self.repository.job_dir(record.id)
-        geometry = self._input_geometry(record)
-        sources = job_dir / "uploads" / "pair"
-        masks = job_dir / "uploads" / "pair_mask"
+        sources = {path.stem: path for path in (job_dir / 'uploads' / 'pair').iterdir() if path.is_file()}
+        stems = sorted(sources)
+        plan = self._input_plan(record, stems)
         batch_name = f"web_{record.id.replace('-', '')[:12]}"
         batch_root = self.settings.comfy_input / batch_name
         if batch_root.exists():
             shutil.rmtree(batch_root)
-        source_target = batch_root / "pair"
-        mask_target = batch_root / "pair_mask"
+        source_target = batch_root / 'pair'
+        mask_target = batch_root / 'pair_mask'
         source_target.mkdir(parents=True)
         mask_target.mkdir(parents=True)
-        for path in sources.iterdir():
-            if path.is_file():
-                shutil.copy2(path, source_target / f"{path.stem}{path.suffix.lower()}")
-        for path in masks.iterdir():
-            if path.is_file():
-                shutil.copy2(path, mask_target / f"{path.stem}.png")
-
-        stems = sorted(path.stem for path in source_target.iterdir() if path.is_file())
-        if geometry and set(geometry) != set(stems):
-            raise ValueError('作用範圍與圖片未完整配對')
-        for stem in stems:
-            source = next(path for path in source_target.iterdir() if path.is_file() and path.stem == stem)
-            mask = mask_target / f"{stem}.png"
-            if stem in geometry:
-                with Image.open(source) as image, Image.open(mask) as other:
-                    rect = validate_rect(geometry[stem], *image.size)
-                    cropped_source = image.convert('RGB').crop(box(rect))
-                    cropped_mask = other.convert('L').crop(box(rect))
-                cropped_source.save(source)
-                cropped_mask.save(mask)
-            shutil.copy2(source, self.settings.comfy_input / f"{batch_name}_{source.name}")
-            shutil.copy2(mask, self.settings.comfy_input / f"{batch_name}_mask_{mask.name}")
+        for stem, units in plan.items():
+            with Image.open(sources[stem]) as image, Image.open(job_dir / 'uploads' / 'pair_mask' / f'{stem}.png') as other:
+                source_base, mask_base = image.convert('RGB'), other.convert('L')
+                for unit in units:
+                    source = source_target / f"{unit['stem']}.png"
+                    mask = mask_target / f"{unit['stem']}.png"
+                    source_image, mask_image = source_base, mask_base
+                    if unit['rect'] is not None:
+                        source_image = source_image.crop(box(unit['rect']))
+                        mask_image = mask_image.crop(box(unit['rect']))
+                    source_image.save(source)
+                    mask_image.save(mask)
+                    # FireRed LoadImage requires actual flattened files, never symlinks.
+                    shutil.copy2(source, self.settings.comfy_input / f'{batch_name}_{source.name}')
+                    shutil.copy2(mask, self.settings.comfy_input / f'{batch_name}_mask_{mask.name}')
         return batch_name, stems
 
+    @staticmethod
+    def _validate_unit_output(path: Path, unit: dict) -> None:
+        with Image.open(path) as image:
+            image.verify()
+        with Image.open(path) as image:
+            image.load()
+            rect = unit['rect']
+            if rect is not None and image.size != (rect['width'], rect['height']):
+                raise ValueError('已有推理輸出尺寸與作用範圍不一致')
+
+    def _crop_result_path(self, record: JobRecord, workflow: WorkflowId, unit: dict) -> Path:
+        # Internal partial crops do not belong in production result folders/archives.
+        return self.repository.job_dir(record.id) / 'crop_results' / workflow / f"{unit['stem']}.png"
+
+    def _unit_outputs(self, prefix: str, unit: dict) -> list[Path]:
+        # Exact suffix matching matters when user stems overlap a generated name
+        # or contain glob metacharacters. Runner filenames append only _N_.png.
+        pattern = re.compile(rf"^{re.escape(prefix + unit['stem'])}_\d+_\.png$")
+        return sorted(path for path in self.settings.comfy_output.glob(f'{prefix}*.png') if pattern.fullmatch(path.name))
+
     def _prepare_existing_outputs(self, record: JobRecord, stems: list[str]) -> None:
-        geometry = self._input_geometry(record)
+        plan = self._input_plan(record, stems)
         for workflow in record.workflows:
             prefix = f"web_{record.id.replace('-', '')[:12]}_{WORKFLOW_META[workflow]['prefix']}_"
-            for stem in stems:
-                valid = False
-                for raw in self.settings.comfy_output.glob(f"{prefix}{stem}_*.png"):
+            for stem, units in plan.items():
+                saved = self.repository.job_dir(record.id) / 'inpaint_workflows' / workflow / f'{stem}.png'
+                for unit in units:
+                    valid = False
+                    for raw in self._unit_outputs(prefix, unit):
+                        try:
+                            self._validate_unit_output(raw, unit)
+                            valid = True
+                        except (OSError, SyntaxError, ValueError):
+                            backup = self.repository.job_dir(record.id) / 'incomplete-output-backups' / raw.name
+                            backup.parent.mkdir(parents=True, exist_ok=True)
+                            shutil.move(raw, backup)
+                    if valid:
+                        continue
+                    raw = self.settings.comfy_output / f"{prefix}{unit['stem']}_00001_.png"
+                    cache = self._crop_result_path(record, workflow, unit)
+                    if cache.is_file():
+                        try:
+                            self._validate_unit_output(cache, unit)
+                            raw.parent.mkdir(parents=True, exist_ok=True)
+                            shutil.copy2(cache, raw)
+                            continue
+                        except (OSError, SyntaxError, ValueError):
+                            pass
+                    if not saved.is_file():
+                        continue
                     try:
-                        with Image.open(raw) as image:
+                        with Image.open(saved) as image:
                             image.verify()
-                        with Image.open(raw) as image:
+                        with Image.open(saved) as image:
                             image.load()
-                            if stem in geometry and image.size != (geometry[stem]['width'], geometry[stem]['height']):
-                                raise ValueError('已有推理輸出尺寸與作用範圍不一致')
-                        valid = True
+                            output = image.convert('RGB')
+                            if unit['rect'] is not None:
+                                source = self.repository.job_dir(record.id) / 'uploads' / 'pair' / f'{stem}.png'
+                                with Image.open(source) as base:
+                                    if image.size != base.size:
+                                        raise ValueError('已有完整成品尺寸與底圖不一致')
+                                output = output.crop(box(unit['rect']))
+                            raw.parent.mkdir(parents=True, exist_ok=True)
+                            output.save(raw)
                     except (OSError, SyntaxError, ValueError):
-                        backup = self.repository.job_dir(record.id) / "incomplete-output-backups" / raw.name
-                        backup.parent.mkdir(parents=True, exist_ok=True)
-                        shutil.move(raw, backup)
-                saved = self.repository.job_dir(record.id) / "inpaint_workflows" / workflow / f"{stem}.png"
-                if valid or not saved.is_file():
-                    continue
-                try:
-                    with Image.open(saved) as image:
-                        image.verify()
-                    with Image.open(saved) as image:
-                        image.load()
-                except (OSError, SyntaxError, ValueError):
-                    continue
-                raw = self.settings.comfy_output / f"{prefix}{stem}_00001_.png"
-                raw.parent.mkdir(parents=True, exist_ok=True)
-                if stem in geometry:
-                    with Image.open(saved) as image:
-                        image.crop(box(validate_rect(geometry[stem], *image.size))).save(raw)
-                else:
-                    shutil.copy2(saved, raw)
+                        continue
 
     async def _run_job(self, job_id: str) -> None:
         self._raise_if_abandoned(job_id)
@@ -322,6 +373,17 @@ class JobManager:
         sources = {path.stem: path for path in source_dir.iterdir() if path.is_file()}
         masks = {path.stem: path for path in mask_dir.iterdir() if path.is_file()}
         stems, black_masks = validate_pairs(sources, masks)
+        # Scope first, so black/empty selected cells never trigger model inference.
+        batch_name, stems = self._prepare_comfy_input(record)
+        staged = self.settings.comfy_input / batch_name
+        staged_sources = {path.stem: path for path in (staged / 'pair').iterdir() if path.is_file()}
+        staged_masks = {path.stem: path for path in (staged / 'pair_mask').iterdir() if path.is_file()}
+        if staged_sources:
+            _, black_units = validate_pairs(staged_sources, staged_masks)
+        else:
+            black_units = set()
+        plan = self._input_plan(record, stems)
+        black_masks = {stem for stem, units in plan.items() if all(unit['stem'] in black_units for unit in units)}
         record.black_mask_count = len(black_masks)
         for workflow in record.workflows:
             record.workflow_progress.setdefault(workflow, WorkflowProgress(total=len(stems)))
@@ -353,10 +415,10 @@ class JobManager:
             record.message = f"全部完成；{len(stems)} 頁無需推理，直接沿用底圖"
             self._write_archive(job_dir, job_dir / "download.zip")
             self.repository.write(record)
+            self._cleanup_comfy_staging(batch_name, record)
             return
         await self._wait_comfy()
         self._raise_if_abandoned(job_id)
-        batch_name, stems = self._prepare_comfy_input(record)
         self._prepare_existing_outputs(record, stems)
         expected = len(stems)
 
@@ -377,12 +439,12 @@ class JobManager:
             self.repository.write(record)
             prefix = f"web_{record.id.replace('-', '')[:12]}_{WORKFLOW_META[workflow]['prefix']}_"
             command, env = self._command_for(workflow, batch_name, prefix)
-            workflow_black_masks = set(black_masks)
+            workflow_black_masks = set(black_units)
             if workflow == "qwen2511_lanpaint":
                 # Match the native runner's binary-mask threshold for accurate passthrough/ETA counts.
-                for stem in stems:
+                for stem in staged_masks:
                     if stem not in workflow_black_masks:
-                        with Image.open(masks[stem]) as mask:
+                        with Image.open(staged_masks[stem]) as mask:
                             if mask.convert("L").point(lambda value: 255 if value >= 128 else 0).getbbox() is None:
                                 workflow_black_masks.add(stem)
             await self._run_process(record, workflow, command, env, prefix, stems, workflow_black_masks)
@@ -458,6 +520,10 @@ class JobManager:
         black_stems: set[str] | None = None,
     ) -> None:
         black_stems = black_stems or set()
+        plan = self._input_plan(record, stems)
+        units = [unit for page_units in plan.values() for unit in page_units]
+        black_pages = {stem for stem, page_units in plan.items()
+                       if all(unit['stem'] in black_stems for unit in page_units)}
         record.workflow_progress.setdefault(workflow, WorkflowProgress(total=len(stems), state="preparing", started_at=now_iso()))
         self.repository.write(record)
         expected = len(stems)
@@ -491,10 +557,20 @@ class JobManager:
         def refresh(latest):
             progress = latest.workflow_progress[workflow]
             names = latest.results.get(workflow, [])
-            update_progress(progress, reader.read(), completed=len(names),
-                            passthrough=sum(Path(name).stem in black_stems for name in names),
+            # Runner timings/ETA are per independent crop, while public completion
+            # counts stay per original page (published only after all its crops).
+            completed_units = sum(self._crop_result_path(record, workflow, unit).is_file() for unit in units)
+            completed_black_units = sum(unit['stem'] in black_stems and self._crop_result_path(record, workflow, unit).is_file() for unit in units)
+            page_total = progress.total
+            progress.total = len(units)
+            update_progress(progress, reader.read(), completed=completed_units,
+                            passthrough=completed_black_units,
                             black_count=len(black_stems), elapsed=previous_elapsed + time.monotonic() - started,
                             now=now_iso())
+            progress.total = page_total
+            progress.completed = len(names)
+            progress.passthrough = sum(Path(name).stem in black_pages for name in names)
+            progress.generated = progress.completed - progress.passthrough
             if progress.state == "running":
                 latest.message = f"正在運行 {WORKFLOW_NAMES[workflow]}"
 
@@ -580,48 +656,69 @@ class JobManager:
         *,
         require_all: bool = False,
     ) -> int:
-        destination = self.repository.job_dir(record.id) / "inpaint_workflows" / WORKFLOW_META[workflow]["result_dir"]
-        geometry = self._input_geometry(record)
+        job_dir = self.repository.job_dir(record.id)
+        destination = job_dir / 'inpaint_workflows' / WORKFLOW_META[workflow]['result_dir']
         destination.mkdir(parents=True, exist_ok=True)
-        names: list[str] = []
-        for stem in stems:
-            matches = sorted(self.settings.comfy_output.glob(f"{prefix}{stem}_*.png"))
-            if not matches:
-                if require_all:
-                    raise RuntimeError(f"缺少輸出：{workflow}/{stem}")
-                continue
-            target = destination / f"{stem}.png"
-            # A visible ComfyUI filename may still be in the middle of PNG writes.
-            # Validate the copied snapshot before publishing it to downloads.
-            temporary = target.with_suffix(".tmp")
-            try:
-                if target.is_file() and not require_all:
-                    with Image.open(target) as image:
-                        image.verify()
-                    with Image.open(target) as image:
-                        image.load()
-                else:
-                    raise OSError("Refresh output snapshot")
-            except (OSError, SyntaxError, ValueError):
+        names = []
+        for stem, units in self._input_plan(record, stems).items():
+            crops = []
+            refreshed = False
+            for unit in units:
+                matches = self._unit_outputs(prefix, unit)
+                cache = self._crop_result_path(record, workflow, unit)
+                cache.parent.mkdir(parents=True, exist_ok=True)
+                temporary_crop = cache.with_suffix('.tmp')
+                if matches:
+                    try:
+                        raw_stat = matches[-1].stat()
+                        cache_stat = cache.stat() if cache.exists() else None
+                        if (require_all or cache_stat is None
+                                or (raw_stat.st_size, raw_stat.st_mtime_ns) != (cache_stat.st_size, cache_stat.st_mtime_ns)):
+                            shutil.copy2(matches[-1], temporary_crop)
+                            self._validate_unit_output(temporary_crop, unit)
+                            temporary_crop.replace(cache)
+                            refreshed = True
+                    except (OSError, SyntaxError, ValueError) as exc:
+                        if require_all:
+                            raise RuntimeError(f'輸出圖片尚未完整：{workflow}/{stem}') from exc
+                    finally:
+                        temporary_crop.unlink(missing_ok=True)
                 try:
-                    shutil.copy2(matches[-1], temporary)
-                    with Image.open(temporary) as image:
-                        image.verify()
-                    with Image.open(temporary) as image:
-                        image.load()
-                        if stem in geometry:
-                            with Image.open(self.repository.job_dir(record.id) / 'uploads' / 'pair' / f'{stem}.png') as base:
-                                restored = paste_result(base, image, geometry[stem])
-                    if stem in geometry:
-                        restored.save(temporary, format='PNG')
-                    temporary.replace(target)
+                    self._validate_unit_output(cache, unit)
                 except (OSError, SyntaxError, ValueError) as exc:
                     if require_all:
-                        raise RuntimeError(f"輸出圖片尚未完整：{workflow}/{stem}") from exc
+                        raise RuntimeError(f'缺少輸出：{workflow}/{stem}') from exc
                     continue
-                finally:
-                    temporary.unlink(missing_ok=True)
-            names.append(target.name)
+                crops.append((unit, cache))
+            if len(crops) != len(units):
+                continue
+            target = destination / f'{stem}.png'
+            temporary = target.with_suffix('.tmp')
+            try:
+                if target.is_file() and not require_all and not refreshed:
+                    try:
+                        with Image.open(target) as image:
+                            image.verify()
+                        names.append(target.name)
+                        continue
+                    except (OSError, SyntaxError, ValueError):
+                        pass
+                if units and units[0]['rect'] is None:
+                    shutil.copy2(crops[0][1], temporary)
+                else:
+                    with Image.open(job_dir / 'uploads' / 'pair' / f'{stem}.png') as base:
+                        restored = base.convert('RGB')
+                    for unit, cache in crops:
+                        with Image.open(cache) as image:
+                            restored = paste_result(restored, image, unit['rect'], in_place=True)
+                    restored.save(temporary, format='PNG')
+                temporary.replace(target)
+                names.append(target.name)
+            except (OSError, SyntaxError, ValueError) as exc:
+                if require_all:
+                    raise RuntimeError(f'輸出圖片尚未完整：{workflow}/{stem}') from exc
+            finally:
+                temporary.unlink(missing_ok=True)
         record.results[workflow] = names
         return len(names)
 
@@ -730,6 +827,10 @@ class JobManager:
     def _cleanup_comfy_staging(self, batch_name: str, record: JobRecord) -> None:
         """Remove only this completed job's temporary ComfyUI files."""
         shutil.rmtree(self.settings.comfy_input / batch_name, ignore_errors=True)
+        if record.state == JobState.completed:
+            # Complete pages can recreate runner crops from their saved full image.
+            # Failed/abandoned jobs retain internal partial crops for resume.
+            shutil.rmtree(self.repository.job_dir(record.id) / 'crop_results', ignore_errors=True)
         for path in self.settings.comfy_input.glob(f"{batch_name}_*"):
             if path.is_file() or path.is_symlink():
                 path.unlink(missing_ok=True)
