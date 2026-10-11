@@ -51,11 +51,11 @@
   ],
   "workflow_sha256": {
     "FireRed-v12-newprompt-latent-mask-FP8Mixed-FP8Text.json": "ce1753d8c78556944815c9edaa747dd62b9b28299702246b17dc3f3cfe9f6b08",
-    "Flux2-Klein-9B-FP8-Manga-Mask-LanPaint-4step.json": "5718d9dfc12b084adcab97d2f017b4014633046825054fe8893d2edf1755609d",
+    "Flux2-Klein-9B-FP8-Manga-Mask-LanPaint-4step.json": "a498ec1ce85f708504bbab504ab2646f54267eee1249b403a1ab6277ebfeffa5",
     "Qwen-Image-2.1-INT8-Manga.api.json": "48427779311cc51834576b0421a0b98306654004c3ee997dbad84a05dceffeb1",
     "Qwen-Image-2.1-INT8-Manga.json": "803b2ceace5614f3c89d81df0cbbb4a35473d9f490ebc89707424e06b3a21bdd",
     "handpaint/FireRed手塗去字.json": "e1126679325fa2185104d6a4a9abccec7f40f40642d4dbb3aa87febb6e191feb",
-    "handpaint/Flux手塗去字.json": "99c2bdfe4ac6b6f03aee7a9de206cef99ae4afc94a76294c2012dc806d4b5e2d",
+    "handpaint/Flux手塗去字.json": "e66af9df3f0883ac112f67b8855296c0a594148b29e18f14460d4a47da6e30c9",
     "handpaint/Qwen手塗去字.json": "f353e51b1f881dc9d10db2d6095e8214f6704917aa8bde2058982aec3e368666"
   },
   "runtime_contract": "qwen21-native-int8-v1",

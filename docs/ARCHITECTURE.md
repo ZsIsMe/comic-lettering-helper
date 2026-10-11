@@ -1,5 +1,11 @@
 # 系統架構
 
+## 0.2.21 Flux 白色修復標記（2026-10-11）
+
+批量 `workflows/Flux2-Klein-9B-FP8-Manga-Mask-LanPaint-4step.json` 與手塗 `workflows/handpaint/Flux手塗去字.json` 的 node 284（ColorImage V2）使用白色 `#FFFFFF`，取代灰綠色 `#687771`；node 295 的標題同步改成白色。參考圖仍經同一混合、VAE 編碼及 ReferenceLatent 路徑送入 Flux。node 281 原提示詞與所有其他推理參數保持原樣，`config/components.json` 同步兩份工作流 SHA-256。此變更針對修復區域偏色的排查，尚未驗證生成品質改善。
+
+指定 AutoDL 應用已只同步兩份 JSON 與雜湊清單；更新前後無活動任務，未重啟服務、未執行 GPU 推理。其餘应用程式仍為伺服器既有版本，不能把此次工作流同步視為完整 0.2.21 部署。
+
 ## 新建項目上傳與建立進度
 
 修圖新建入口使用 XMLHttpRequest 的 upload progress 回報實際傳輸位元組，保留單次 multipart `POST /api/projects` 與成功時的 201 Project 回應。可選 query `progress_id` 使用隨機 32 位十六進位識別；傳輸完成後每秒查詢 `GET /api/projects/upload-progress/{progress_id}`。上傳 100% 只代表瀏覽器完成傳送，視窗仍等待後端驗證與建立。
