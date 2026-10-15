@@ -1,0 +1,4 @@
+interface:
+  display_name: "自動預排版Skill"
+  short_description: "由主代理在內建瀏覽器逐頁看圖、修改並驗證漫畫排版"
+  default_prompt: "使用 $auto-prelayout，由你直接在內建瀏覽器依原圖校對目前 6008 預排版項目的指定頁面，不使用子代理。"

@@ -235,4 +235,4 @@ make verify-local
 
 - 漫畫預排版、看圖校對及排版修改一律由目前主代理直接使用 Codex 內建瀏覽器執行，不啟動或委派子代理。此規則優先於上方一般子代理分工規則。
 - 使用者輸入舊的 `@comic-proofreader` 名稱也不代表恢復子代理；將它理解為使用自動預排版 Skill，仍由主代理直接操作。
-- 操作規範見 `/Users/zhongsheng/.codex/skills/auto-prelayout/SKILL.md`。
+- 操作規範見 `.agents/skills/auto-prelayout/SKILL.md`。
