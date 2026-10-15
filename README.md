@@ -122,7 +122,7 @@ Option／Alt＋滾輪也可增減字級 2；普通滾輪上下捲動，⌘／Ctr
 
 ### 預排版模型與配套資產
 
-權重、模型快取、OCR 校準字型與推理環境不加入工程或 Git；網頁顯示用工具箱字型隨前端內建。製作鏡像時，把下列五項資產直接放到工程外的 `/root/models/comic-prelayout/`，或透過 `COMIC_PRELAYOUT_MODEL_ROOT` 指定另一外部目錄。此表中的來源相對路徑均相對於使用者提供的 `/Users/zhongsheng/Projects/comic-text-detector`；維護者可從該工程已有資產準備鏡像，應用不自動下載。
+權重、模型快取、OCR 校準字型與推理環境不加入工程或 Git；網頁顯示用工具箱字型隨前端內建。字表與字型墨跡指標另隨倉庫保存在 [`assets/prelayout/`](assets/prelayout/)，可從此處取得固定版本。製作鏡像時，把下列五項資產直接放到工程外的 `/root/models/comic-prelayout/`，或透過 `COMIC_PRELAYOUT_MODEL_ROOT` 指定另一外部目錄。此表中的來源相對路徑均相對於使用者提供的 `/Users/zhongsheng/Projects/comic-text-detector`；維護者可從該工程已有資產準備鏡像，應用不自動下載。
 
 | 鏡像內檔名 | 已有來源相對路徑 | SHA-256（已讀取本機檔案核對） |
 | --- | --- | --- |

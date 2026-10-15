@@ -17,9 +17,9 @@ RF 和 MangaLens 是兩個獨立模型，修圖自動檢測將它們串行使用
 
 | 檔案 | 用途 | 取得方式 |
 | --- | --- | --- |
-| `alphabet-all-v5.txt` | 與 OCR checkpoint 配套的字表 | 上游 [ocr-ctc.zip](https://github.com/zyddnys/manga-image-translator/releases/download/beta-0.3/ocr-ctc.zip) 內含此字表；解壓後按下表校驗。其來源宣告見上游 [模型映射](https://github.com/zyddnys/manga-image-translator/blob/main/manga_translator/ocr/model_48px_ctc.py)。不要替換成 v7。 |
+| `alphabet-all-v5.txt` | 與 OCR checkpoint 配套的字表 | 倉庫隨附[固定版本字表](../assets/prelayout/alphabet-all-v5.txt)。上游 [ocr-ctc.zip](https://github.com/zyddnys/manga-image-translator/releases/download/beta-0.3/ocr-ctc.zip) 亦含此字表；解壓後按下表校驗。其來源宣告見上游 [模型映射](https://github.com/zyddnys/manga-image-translator/blob/main/manga_translator/ocr/model_48px_ctc.py)。不要替換成 v7。 |
 | `NotoSansCJKjp-Medium.otf` | 固定預覽字型及字級校準基準 | [Noto CJK 原始庫](https://github.com/notofonts/noto-cjk) · [下載字型](https://raw.githubusercontent.com/notofonts/noto-cjk/main/Sans/OTF/Japanese/NotoSansCJKjp-Medium.otf)；下載後校驗版本。 |
-| `NotoSansCJKjp-Medium.ink-metrics.json` | 上述固定字型與字表的校準產物，並非模型權重 | 使用維護者提供的同版本配套檔；本次本地來源工程的 `assets/fonts/` 已有，且已上傳至伺服器。此檔沒有已核實的獨立公共下載地址，不能從 Noto 字型倉庫取得。原工程的 `tools/generate_font_ink_metrics.py` 可生成指標，但生成結果仍須符合本應用固定校驗值，不能直接以不同平台重算值替代。 |
+| `NotoSansCJKjp-Medium.ink-metrics.json` | 上述固定字型與字表的校準產物，並非模型權重 | 倉庫隨附[固定版本墨跡指標](../assets/prelayout/NotoSansCJKjp-Medium.ink-metrics.json)，不能從 Noto 字型倉庫取得。原工程的 `tools/generate_font_ink_metrics.py` 可生成指標，但生成結果仍須符合本應用固定校驗值，不能直接以不同平台重算值替代。 |
 
 上游 OCR ZIP 的 checkpoint 名稱是 `ocr-ctc.ckpt`；本應用使用上表另外提供的 `mit48pxctc_ocr.ckpt`。不要只改檔名便假定是相同版本，必須核對 SHA-256。
 

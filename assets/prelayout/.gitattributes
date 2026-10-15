@@ -1,0 +1,3 @@
+# Preserve the exact bytes required by the pinned SHA-256 checks.
+* -text
+alphabet-all-v5.txt whitespace=-blank-at-eol,cr-at-eol
