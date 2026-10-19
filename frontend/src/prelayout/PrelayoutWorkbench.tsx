@@ -13,6 +13,7 @@ import { GroupName } from './GroupName'
 import { PageNavigation, type PageRange } from './PageNavigation'
 import { usePrelayoutAgent } from './usePrelayoutAgent'
 import { TextReplacementModal } from './TextReplacementModal'
+import { QuestionRecordsModal } from './QuestionRecordsModal'
 import bundledFontUrl from '../assets/fonts/toolbox-demibold-v2.7.ttf?url'
 import { displayFontUrl } from './display-font'
 import './styles.css'
@@ -115,6 +116,7 @@ function Workspace({ project: initial, promptDetection, onExit, onReadyToLeave }
   const [shortcutOpen, setShortcutOpen] = useState(false)
   const [groupOpen, setGroupOpen] = useState(false), [groupDraft, setGroupDraft] = useState<string[]>([]), [newGroupName, setNewGroupName] = useState('')
   const [replacementOpen, setReplacementOpen] = useState(false)
+  const [questionsOpen, setQuestionsOpen] = useState(false)
   const [groupRevision, setGroupRevision] = useState<number | null>(null), [groupError, setGroupError] = useState('')
   const [method, setMethod] = useState('ocr_aligned'), [fontBase, setFontBase] = useState(24), [fontStep, setFontStep] = useState(2)
   const [clipboard, setClipboard] = useState<Item[]>([]), [memory, setMemory] = useState<Item | null>(null)
@@ -388,6 +390,7 @@ function Workspace({ project: initial, promptDetection, onExit, onReadyToLeave }
   return <main className={`pl-shell pl-workspace ${focus ? 'pl-focus-mode' : ''}`}>{modalContext}{noticesContext}{agent.review}
     <TextReplacementModal open={replacementOpen} project={project} controller={controller} onClose={() => setReplacementOpen(false)}
       onBusyChange={setBusy} onProject={setProject} onReviewPage={go} />
+    <QuestionRecordsModal onProject={setProject} open={questionsOpen} project={project} controller={controller} onClose={() => setQuestionsOpen(false)} />
     <Modal title="預排版快捷鍵與滑鼠操作" open={shortcutOpen} onCancel={() => setShortcutOpen(false)} width="calc(100vw - 32px)" centered className="pl-shortcut-modal" footer={<Button onClick={() => setShortcutOpen(false)}>關閉</Button>}>
       <ShortcutHelp collapsible={false} />
     </Modal>
@@ -420,7 +423,7 @@ function Workspace({ project: initial, promptDetection, onExit, onReadyToLeave }
     <div className="pl-tool-row"><Space wrap>
       {(['bt', 'labelplus', 'clean'] as const).filter((kind): boolean => kind !== 'clean' || showCleanUpload).map(kind => <Button key={kind} disabled={busy} onClick={() => { importKind.current = kind; if (fileInput.current) { fileInput.current.accept = kind === 'bt' ? '.json' : kind === 'labelplus' ? '.txt' : '.png,.jpg,.jpeg'; fileInput.current.multiple = kind === 'clean'; fileInput.current.click() } }}>{kind === 'bt' ? '開啟 Meo.json' : kind === 'labelplus' ? '匯入LP.txt' : '上傳去字圖'}</Button>)}
       <input hidden ref={fileInput} type="file" onChange={e => { const list = files(e.target.files); e.target.value = ''; void execute(() => importFile(list)) }} />
-      <Button disabled={!showText} onClick={() => add()}>新增文字</Button><Button onClick={() => void execute(openGroupOrganizer)}>整理分組</Button><Button onClick={() => controller.undo(selection.page)}>撤銷</Button><Button onClick={() => controller.undo(selection.page, true)}>重做</Button>
+      <Button disabled={!showText} onClick={() => add()}>新增文字</Button><Button onClick={() => void execute(openGroupOrganizer)}>整理分組</Button><Button disabled={busy || activeDetection(task)} onClick={() => setQuestionsOpen(true)}>疑問記錄</Button><Button onClick={() => controller.undo(selection.page)}>撤銷</Button><Button onClick={() => controller.undo(selection.page, true)}>重做</Button>
       <Button disabled={busy || saving || activeDetection(task)} onClick={() => void execute(async () => {
         if (!await controller.flush()) throw new Error('文字尚未保存，請先處理保存錯誤或版本衝突。')
         setReplacementOpen(true)

@@ -150,6 +150,16 @@ def router(store, detector, max_bytes):
     def groups(pid: str, data: dict = Body(...)):
         return call(store.update_groups, pid, data.get('expected_revision'), data.get('names'))
 
+    @api.get('/projects/{pid}/question-records')
+    def question_records(pid: str):
+        return call(store.question_records, pid)
+
+    @api.put('/projects/{pid}/question-records')
+    def save_question_records(pid: str, data: dict = Body(...)):
+        if set(data) != {'expected_version', 'records'}:
+            raise HTTPException(400, '疑問記錄請求須包含 expected_version 與 records')
+        return call(store.save_question_records, pid, data['expected_version'], data['records'])
+
     @api.delete('/projects/{pid}')
     def delete(pid: str):
         with store.lock(pid):

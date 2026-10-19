@@ -576,3 +576,7 @@ WebMCP 在預排版頁註冊檢查、修改、局部對比、撤銷、保存與�
 `prelayout_set_view` 的 `mode` 可選 `overlay`（去字底圖、高亮與譯文）、`original`（原圖、無高亮、隱藏譯文）及 `final`（去字底圖與譯文、無高亮）。模式只切圖層，沿用目前 `comparison`、`zoom` 及 `fullscreen`，不重建連續畫布幾何。需要由並排改單頁時可另傳 `comparison:false`；這種幾何變動沿用既有捲動錨點恢復。
 
 獨立控制使用 `clean`、`show_text`、`difference_highlight`，高亮樣式使用 `difference_color`（`#RRGGBB`）與 `difference_opacity`（0–1）。先驗證整份請求，再套用顯示狀態；與模式矛盾的圖層旗標拒絕。隱藏譯文不改 items、修訂、完成標記或撤銷歷史；顏色及透明度沿用瀏覽器偏好，不寫伺服器資料。
+
+## 疑問記錄（0.2.22）
+
+疑問記錄存於原 project.json 的 template.questionRecords（version、records），沿用項目鎖與原子寫入；不建立獨立記錄檔。GET /api/prelayout/projects/{pid}/question-records 讀取記錄；PUT 接受 expected_version 與 records，使用獨立版本避免多視窗丟失更新，相同內容重送可安全確認。保存增加項目 revision，不修改頁面文字、修訂或完成標記。記錄包含疑問與跨頁文本快照，既有 Meo.json 與 ZIP 匯出／匯入保留。前端失敗保留草稿，結果未確認時重送相同內容，版本衝突要求重新載入；預設收起為一行摘要。

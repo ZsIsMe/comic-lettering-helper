@@ -19,6 +19,7 @@ from PIL import Image
 from prelayout_core.data import identifier, read_json, validate_items, validate_measure, parse_translation, export_item, match_translation
 from prelayout_core.characters import character_pages
 from .text_replacements import replacement, validate_request
+from .question_records import rebind_imported_records, validate_question_records, validate_records
 
 
 class Conflict(ValueError):
@@ -136,6 +137,29 @@ class PrelayoutStore:
             project['revision'] += 1
             self.write(project)
             return project
+
+    def question_records(self, pid):
+        with self.lock(pid):
+            project = self.read(pid)
+            return validate_question_records(project['template'].get('questionRecords', {'version': 0, 'records': []}))
+
+    def save_question_records(self, pid, expected_version, records):
+        if type(expected_version) is not int or expected_version < 0:
+            raise ValueError('疑問記錄版本無效')
+        records = validate_records(records)
+        with self.lock(pid):
+            project = self.read(pid)
+            current = validate_question_records(project['template'].get('questionRecords', {'version': 0, 'records': []}))
+            # A lost response can safely be retried without an operation log or another write.
+            if records == current['records']:
+                return current
+            if expected_version != current['version']:
+                raise Conflict('疑問記錄已有更新，請重新載入後再儲存')
+            result = {'version': current['version'] + 1, 'records': records}
+            project['template']['questionRecords'] = result
+            project['revision'] += 1
+            self.write(project)
+            return copy.deepcopy(result)
 
     def list(self):
         if not self.projects.exists():
@@ -449,6 +473,11 @@ class PrelayoutStore:
             if project['revision'] != expected_revision:
                 raise Conflict('項目已更新，請重新預覽匯入內容')
             data = parse_translation(raw, kind)
+            previous_questions = project['template'].get('questionRecords')
+            if 'questionRecords' in data:
+                data['questionRecords'] = validate_question_records(data['questionRecords'])
+            elif previous_questions is not None:
+                data['questionRecords'] = validate_question_records(previous_questions)
             mapping, unknown = {}, []
             for name, items in data['transMap'].items():
                 page = next((p for p in project['pages'] if p['name'] == name), None)
@@ -478,6 +507,12 @@ class PrelayoutStore:
                     for page in project['pages']:
                         if page['id'] in mapping:
                             mapping[page['id']] = validate_items(matched['transMap'][page['name']], page['width'], page['height'])
+            if 'questionRecords' in data:
+                current = validate_question_records(previous_questions if previous_questions is not None else {'version': 0, 'records': []})
+                incoming = data['questionRecords']
+                incoming['records'] = rebind_imported_records(incoming['records'], project['pages'], mapping)
+                incoming['version'] = (current['version'] if incoming['records'] == current['records']
+                                       else max(current['version'], incoming['version']) + 1)
             # Build every immutable page revision first, then publish a single manifest.
             for page in project['pages']:
                 if page['id'] not in mapping:
@@ -676,6 +711,8 @@ class PrelayoutStore:
             project = read_json((content / 'project.json').read_bytes())
             if not isinstance(project, dict) or project.get('schema_version') != 1 or not isinstance(project.get('pages'), list) or not project['pages'] or not isinstance(project.get('template'), dict) or type(project.get('revision')) is not int:
                 raise ValueError('不是支援的預排版封存')
+            if 'questionRecords' in project['template']:
+                project['template']['questionRecords'] = validate_question_records(project['template']['questionRecords'])
             def asset(relative, prefix):
                 if not isinstance(relative, str) or '\\' in relative or Path(relative).is_absolute() or '..' in Path(relative).parts or Path(relative).parts[:1] != (prefix,):
                     raise ValueError('資產引用不在預排版封存內')
