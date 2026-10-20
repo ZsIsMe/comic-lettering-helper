@@ -59,3 +59,27 @@
 .pl-compact-workspace .pl-tool-row>.ant-space{min-width:0}
 .pl-compact-workspace .pl-toolbar .ant-checkbox-wrapper{font-size:12px;margin-inline-start:0}
 .pl-compact-workspace .pl-display-tools .pl-difference-opacity input{width:80px}
+
+/* Keep the inspector dense while retaining readable text and editable fields. */
+.pl-compact-workspace:not(.pl-focus-mode) .pl-layout{grid-template-columns:minmax(0,1fr) 240px}
+.pl-compact-workspace .pl-inspector{padding:8px;font-size:12px}
+.pl-compact-workspace .pl-inspector-title{gap:6px;margin-bottom:4px}
+.pl-compact-workspace .pl-inspector h2{font-size:14px}
+.pl-compact-workspace .pl-inspector label{gap:3px;margin:5px 0}
+.pl-compact-workspace .pl-inspector details{padding:7px 0;margin-top:6px}
+.pl-compact-workspace .pl-inspector .pl-groups-top{padding-top:3px;margin-top:0}
+.pl-compact-workspace .pl-inspector .ant-space{margin-top:4px;gap:4px!important}
+.pl-compact-workspace .pl-inspector .ant-btn{height:24px;padding:0 6px;font-size:12px}
+.pl-compact-workspace .pl-inspector .ant-input-number{font-size:12px}
+.pl-compact-workspace .pl-inspector .ant-input-number-input{height:24px;padding-inline:6px}
+.pl-compact-workspace .pl-inspector .ant-select-single{height:26px;font-size:12px}
+.pl-compact-workspace .pl-inspector .ant-input{padding:4px 6px;font-size:12px}
+.pl-compact-workspace .pl-inspector .pl-two-fields{gap:6px}
+.pl-compact-workspace .pl-inspector .pl-four-fields{gap:0 4px}
+.pl-compact-workspace .pl-inspector input[type=color]{height:26px}
+.pl-compact-workspace .pl-inspector .pl-muted{margin:5px 0;line-height:1.45}
+.pl-compact-workspace .pl-items-list{max-height:none;margin-top:4px}
+.pl-compact-workspace .pl-items-list button{padding:5px 4px;gap:2px}
+.pl-compact-workspace .pl-items-list button span{max-width:100%}
+@media(max-width:1100px){.pl-compact-workspace:not(.pl-focus-mode) .pl-layout{grid-template-columns:minmax(0,1fr) 220px}}
+@media(max-width:760px){.pl-compact-workspace:not(.pl-focus-mode) .pl-layout{grid-template-columns:minmax(0,1fr) 200px}}
