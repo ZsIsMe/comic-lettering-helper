@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { Alert, Button, Checkbox, Empty, Input, Modal, Popconfirm, Select, Spin } from 'antd'
 import { body, projectPath, request } from './api'
 import type { EditorState } from './editor-state'
@@ -8,13 +8,13 @@ import './question-records.css'
 type TextReference = { key: string; pageId: string; pageNumber: number; pageName: string; itemId: string; itemNumber: number; text: string }
 type QuestionRecord = { id: string; note: string; texts: TextReference[]; createdAt: string; updatedAt: string }
 type RecordsDocument = { version: number; records: QuestionRecord[] }
-type Props = { onProject: (project: Project) => void; open: boolean; project: Project; controller: EditorState; onClose: () => void }
+type Props = { open: boolean; project: Project; controller: EditorState; onClose: () => void }
 
 export function QuestionRecordsModal(props: Props) {
   return <QuestionRecordsPanel key={props.project.id} {...props} />
 }
 
-function QuestionRecordsPanel({ open, project, controller, onClose, onProject }: Props) {
+function QuestionRecordsPanel({ open, project, controller, onClose }: Props) {
   const [pages, setPages] = useState<Map<string, PageData>>(new Map())
   const [failures, setFailures] = useState<Map<string, string>>(new Map())
   const [loading, setLoading] = useState(false)
@@ -22,6 +22,7 @@ function QuestionRecordsPanel({ open, project, controller, onClose, onProject }:
   const [search, setSearch] = useState('')
   const [pageTarget, setPageTarget] = useState<{ id: string } | null>(null)
   const listRef = useRef<HTMLDivElement>(null)
+  const savedScroll = useRef<number | null>(null)
   const pageRefs = useRef(new Map<string, HTMLElement>())
   const [selected, setSelected] = useState<Map<string, TextReference>>(new Map())
   const [note, setNote] = useState('')
@@ -39,6 +40,12 @@ function QuestionRecordsPanel({ open, project, controller, onClose, onProject }:
   const [retryPending, setRetryPending] = useState(false)
   const pendingWrite = useRef<{ version: number; records: QuestionRecord[]; complete: () => void } | null>(null)
   const recordsPath = `${projectPath(project.id)}/question-records`
+
+  useLayoutEffect(() => {
+    if (savedScroll.current === null || !listRef.current) return
+    listRef.current.scrollTop = savedScroll.current
+    if (!saving) savedScroll.current = null
+  }, [saving, records, selected])
 
   useEffect(() => {
     if (!open) return
@@ -59,13 +66,12 @@ function QuestionRecordsPanel({ open, project, controller, onClose, onProject }:
   async function submitWrite() {
     const pending = pendingWrite.current
     if (writeActive.current || !pending) return false
+    savedScroll.current = listRef.current?.scrollTop ?? null
     writeActive.current = true; setSaving(true); setRecordError(''); setFeedback('')
     try {
       const value = await request<RecordsDocument>(recordsPath, body({ expected_version: pending.version, records: pending.records }, 'PUT'))
       setRecords(value.records); setRecordVersion(value.version)
       pendingWrite.current = null; setRetryPending(false); pending.complete()
-      // Refresh the parent revision so later imports/group edits use the saved project.
-      try { onProject(await request<Project>(projectPath(project.id))) } catch { /* Record persistence already succeeded. */ }
       return true
     } catch (error) {
       const status = (error as Error & { status?: number }).status
@@ -143,7 +149,7 @@ function QuestionRecordsPanel({ open, project, controller, onClose, onProject }:
     const next = editingId
       ? records.map(record => record.id === editingId ? { ...record, note: note.trim(), texts, updatedAt: now } : record)
       : [{ id: crypto.randomUUID(), note: note.trim(), texts, createdAt: now, updatedAt: now }, ...records]
-    await persist(next, () => { setViewingId(null); setFeedback(editingId ? '已更新' : '已保存'); clearDraft() })
+    await persist(next, () => { setFeedback(editingId ? '已更新' : '已保存'); clearDraft() })
   }
   function editRecord(record: QuestionRecord) {
     setEditingId(record.id); setNote(record.note); setSelected(new Map(record.texts.map(text => [text.key, { ...text }])))

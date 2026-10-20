@@ -16,7 +16,7 @@
 .pl-question-muted { color: #6b7280; font-size: 11px; }
 .pl-question-loading { display: flex; align-items: center; gap: 6px; font-size: 11px; padding: 3px 0; color: #6b7280; }
 .pl-question-source > .ant-alert { margin-bottom: 4px; }
-.pl-question-text-list { flex: 1; min-height: 0; overflow-y: auto; border: 1px solid #d9dfe7; border-radius: 3px; background: #fafbfc; }
+.pl-question-text-list { flex: 1; min-height: 0; overflow-y: auto; overflow-anchor: none; border: 1px solid #d9dfe7; border-radius: 3px; background: #fafbfc; }
 .pl-question-sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 .pl-question-page + .pl-question-page { border-top: 1px solid #bdc9d8; }
 .pl-question-text-row { border-bottom: 1px solid #eef0f3; }

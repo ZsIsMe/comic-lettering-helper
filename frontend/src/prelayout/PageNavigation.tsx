@@ -44,12 +44,12 @@ export function PageNavigation({ pages, current, range, onRange, onGo, reviewed,
   }
   return <nav className="pl-page-navigation" aria-label="頁面導覽">
     <div className="pl-page-nav-main">
-      <div className="pl-page-nav-position"><Button size="small" aria-label="上一頁" disabled={previousNumber < range[0]} onClick={() => adjacent(-1)}>上一頁</Button>
+      <div className="pl-page-nav-position"><Button size="small" aria-label="上一頁" disabled={previousNumber < range[0]} title="上一頁" onClick={() => adjacent(-1)}>‹</Button>
         <strong>{String(index + 1).padStart(2, '0')} / {pages.length}</strong>
-        <Button size="small" aria-label="下一頁" disabled={nextNumber > range[1]} onClick={() => adjacent(1)}>下一頁</Button>
+        <Button size="small" aria-label="下一頁" disabled={nextNumber > range[1]} title="下一頁" onClick={() => adjacent(1)}>›</Button>
         <span className="pl-page-nav-name" title={currentPage?.name}>{currentPage?.name}</span>
       </div>
-      <div className="pl-page-nav-actions"><span className="pl-page-nav-progress">範圍 {range[0]}–{range[1]} · 完成 {complete}/{within.length}</span>
+      <div className="pl-page-nav-actions"><span className="pl-page-nav-progress" title={`範圍 ${range[0]}–${range[1]}`}>完成 {complete}/{within.length}<span className="pl-page-nav-scope"> · 範圍 {range[0]}–{range[1]}</span></span>
         <Button size="small" disabled={busy || !currentPage || !currentInRange} onClick={() => onReview(!currentReviewed)}>{currentReviewed ? '取消完成' : '標記完成'}</Button>
         <Button size="small" type="primary" disabled={busy || !currentPage} onClick={onFinishAndNext}>保存並下一未完成</Button>
         <Button size="small" aria-expanded={expanded} onClick={() => setExpanded(value => !value)}>{expanded ? '收起頁碼' : '頁碼與範圍'}</Button>
