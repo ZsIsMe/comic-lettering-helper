@@ -256,6 +256,9 @@ start_server() {
     printf '本機服務已在執行（PID %s）。\n' "$pid"
     print_urls
     summarize_availability || true
+    if [ "$OPEN_BROWSER" -eq 1 ]; then
+      open "$PRELAYOUT_URL"
+    fi
     return 0
   fi
   if lsof -nP -iTCP:"$WEB_PORT" -sTCP:LISTEN >/dev/null 2>&1; then

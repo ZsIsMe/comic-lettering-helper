@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import copy
 import json
+import math
 from datetime import datetime
 from pathlib import Path
 
@@ -21,6 +22,29 @@ def _timestamp(value):
         raise ValueError('疑問記錄的時間格式無效') from exc
     if parsed.tzinfo is None:
         raise ValueError('疑問記錄的時間必須包含時區')
+
+
+def _snapshot_characters(value, label):
+    def check_json(item):
+        if item is None or type(item) in (str, bool, int):
+            return
+        if type(item) is float and math.isfinite(item):
+            return
+        if isinstance(item, list):
+            for child in item:
+                check_json(child)
+            return
+        if isinstance(item, dict) and all(isinstance(key, str) for key in item):
+            for child in item.values():
+                check_json(child)
+            return
+        raise ValueError(f'疑問記錄的{label}必須是有效 JSON 資料')
+
+    try:
+        check_json(value)
+        return len(json.dumps(value, ensure_ascii=False, allow_nan=False, separators=(',', ':')))
+    except (RecursionError, TypeError, OverflowError) as exc:
+        raise ValueError(f'疑問記錄的{label}必須是有效 JSON 資料') from exc
 
 
 def validate_records(records):
@@ -43,7 +67,8 @@ def validate_records(records):
         keys, references = set(), set()
         total_texts += len(texts)
         for text in texts:
-            if not isinstance(text, dict) or set(text) != {'key', 'pageId', 'pageNumber', 'pageName', 'itemId', 'itemNumber', 'text'}:
+            required = {'key', 'pageId', 'pageNumber', 'pageName', 'itemId', 'itemNumber', 'text'}
+            if not isinstance(text, dict) or not required <= set(text) <= required | {'source', 'pageSummary'}:
                 raise ValueError('疑問記錄的文本引用欄位不完整或無效')
             for field, limit in (('key', 500), ('pageId', 200), ('pageName', 512), ('itemId', 200)):
                 _string(text[field], field, limit)
@@ -51,6 +76,12 @@ def validate_records(records):
                 if type(text[field]) is not int or not 1 <= text[field] <= 1_000_000:
                     raise ValueError('疑問記錄的頁碼或框號無效')
             total_characters += len(_string(text['text'], '文本快照', 50000, nonempty=False))
+            if 'source' in text:
+                if not isinstance(text['source'], dict):
+                    raise ValueError('疑問記錄的原始文本資料須為 JSON 物件')
+                total_characters += _snapshot_characters(text['source'], '原始文本資料')
+            if 'pageSummary' in text:
+                total_characters += _snapshot_characters(text['pageSummary'], '頁面概括')
             reference = (text['pageId'], text['itemId'])
             if text['key'] in keys or reference in references:
                 raise ValueError('同一條疑問記錄不可重複選擇文本')

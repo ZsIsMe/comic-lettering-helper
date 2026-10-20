@@ -20,6 +20,7 @@ from prelayout_core.data import identifier, read_json, validate_items, validate_
 from prelayout_core.characters import character_pages
 from .text_replacements import replacement, validate_request
 from .question_records import rebind_imported_records, validate_question_records, validate_records
+from .import_metadata import labelplus_indices, merge_template, preserve_item_information
 
 
 class Conflict(ValueError):
@@ -472,7 +473,8 @@ class PrelayoutStore:
             project = self.read(pid)
             if project['revision'] != expected_revision:
                 raise Conflict('項目已更新，請重新預覽匯入內容')
-            data = parse_translation(raw, kind)
+            data = merge_template(project['template'], parse_translation(raw, kind), project['pages'])
+            original_indices = labelplus_indices(raw) if kind == 'labelplus' else {}
             previous_questions = project['template'].get('questionRecords')
             if 'questionRecords' in data:
                 data['questionRecords'] = validate_question_records(data['questionRecords'])
@@ -488,6 +490,8 @@ class PrelayoutStore:
                     unknown.append(name); continue
                 if page['id'] in mapping:
                     raise ValueError('多個譯稿頁面對應到同一圖片')
+                previous_items = read_json((self.directory(pid) / page['state']).read_bytes())['items']
+                items = preserve_item_information(previous_items, items, original_indices.get(name))
                 mapping[page['id']] = validate_items(items, page['width'], page['height'])
             if unknown:
                 raise ValueError('譯稿找不到對應原圖：' + '、'.join(unknown[:12]))

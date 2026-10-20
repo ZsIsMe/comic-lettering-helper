@@ -206,7 +206,7 @@ function QuestionRecordsPanel({ open, project, controller, onClose, currentPageI
     </div>)
   }
 
-  return <Modal title={<div className="pl-question-header-line"><strong>疑問記錄 · {project.name}</strong><span>只讀 · 跨頁多選</span><small>{saving ? '保存中…' : '隨項目 JSON 保存與匯出'}</small></div>} open={open} transitionName="" maskTransitionName="" width="calc(100vw - 16px)" className="pl-question-modal" onCancel={onClose} closable={!saving} keyboard={!saving} maskClosable={!saving}
+  return <Modal title={<div className="pl-question-header-line"><strong>導出疑問記錄 · {project.name}</strong><span>只讀 · 跨頁多選</span><small>{saving ? '保存中…' : '隨項目 JSON 保存與匯出'}</small></div>} open={open} transitionName="" maskTransitionName="" width="calc(100vw - 16px)" className="pl-question-modal" onCancel={onClose} closable={!saving} keyboard={!saving} maskClosable={!saving}
     footer={null}>
     <div className="pl-question-layout">
       <section className="pl-question-source" aria-label="項目全部文本">

@@ -396,7 +396,7 @@ function Workspace({ project: initial, promptDetection, onExit, onReadyToLeave }
       await controller.reload(); setProject(result); return
     }
     const summary = await request<{ pages: number; items: number; groups: { name: string }[] }>(`${projectPath(project.id)}/imports`, { method: 'POST', body: form })
-    modal.confirm({ title: '確認匯入譯稿', okText: '匯入', cancelText: '取消', content: <><p>{summary.pages} 頁，共 {summary.items} 條文字。對應頁面會替換為本次譯稿。</p><p>分組：{summary.groups.length ? summary.groups.map((group, index) => <span key={`${index}-${group.name}`}><GroupName name={group.name} index={index} />{index < summary.groups.length - 1 ? '、' : ''}</span>) : '無分組'}；所有分組均保留。</p></>, onOk: () => execute(async () => {
+    modal.confirm({ title: '確認匯入譯稿', okText: '匯入', cancelText: '取消', content: <><p>{summary.pages} 頁，共 {summary.items} 條文字。對應頁面會替換為本次譯稿。</p><p>來源已有的原文、概括與註釋會保留；同頁同編號文本缺少的附加資訊沿用既有內容。來源明確填寫的內容優先。</p><p>分組：{summary.groups.length ? summary.groups.map((group, index) => <span key={`${index}-${group.name}`}><GroupName name={group.name} index={index} />{index < summary.groups.length - 1 ? '、' : ''}</span>) : '無分組'}；所有分組均保留。</p></>, onOk: () => execute(async () => {
       form.set('apply', 'true'); const result = await request<Project>(`${projectPath(project.id)}/imports`, { method: 'POST', body: form })
       await controller.reload(); setProject(result); setSelection({ page: current, ids: [] }); setJump({ id: current, version: Date.now() })
       await Promise.all(result.pages.filter(page => page.id === current).map(page => controller.load(page.id)))
@@ -494,7 +494,7 @@ function Workspace({ project: initial, promptDetection, onExit, onReadyToLeave }
               if (!await controller.flush()) throw new Error('文字尚未保存，請先處理保存錯誤或版本衝突。')
               setReplacementOpen(true)
             })}>批量替換</Button>
-      <Button size="small" disabled={busy || activeDetection(task)} onClick={() => { setQuestionsPage(current); setQuestionsOpen(true) }}>疑問記錄</Button>
+      <Button size="small" disabled={busy || activeDetection(task)} onClick={() => { setQuestionsPage(current); setQuestionsOpen(true) }}>導出疑問記錄</Button>
     </Space></div>
     <div className="pl-tool-row pl-display-tools"><span className="pl-tool-label">顯示</span><Space size={[8, 4]} wrap>
       <Select size="small" aria-label="縮放" title="相對適合寬度的縮放比例" value={zoom} onChange={setZoom} options={[...new Set([.5, .75, 1, 1.5, 2, 3, zoom])].sort((a, b) => a - b).map(value => ({ value, label: value === 1 ? '適合寬度' : `${Math.round(value * 100)}%` }))} />
