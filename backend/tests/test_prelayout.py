@@ -667,3 +667,15 @@ def test_labelplus_import_auto_matches_completed_detection_only_imported_pages(s
     assert result['revision'] == project['revision'] + 1
     assert store.page(pid, untouched['id']) == before
     assert json.loads(path.read_text()) == measure
+
+
+def test_selected_font_preserved_through_save_reload_and_json_export(store, project):
+    pid = project['id']
+    for page, name in zip(project['pages'], ['NotoSansCJKjp-Medium', 'Helvetica-Bold']):
+        store.save_page(pid, page['id'], 0, [item(font=name)], 'font-' + page['id'])
+        assert store.page(pid, page['id'])['items'][0]['font'] == name
+    exported = store.translation(pid)
+    for page, name in zip(project['pages'], ['NotoSansCJKjp-Medium', 'Helvetica-Bold']):
+        assert exported['transMap'][page['name']][0]['font'] == name
+    store.import_translation(pid, json.dumps(exported).encode(), 'bt', store.read(pid)['revision'], True)
+    assert store.translation(pid)['transMap'] == exported['transMap']

@@ -109,7 +109,9 @@ class PrelayoutStore:
         project['updated_at'] = now()
         atomic_json(self.directory(project['id']) / 'project.json', project)
 
-    def update_groups(self, pid, expected_revision, names):
+    def update_groups(self, pid, expected_revision, names, fonts=None, apply_font_groups=None):
+        if type(expected_revision) is not int or expected_revision < 0:
+            raise ValueError('預期項目修訂無效')
         with self.lock(pid):
             project = self.read(pid)
             if project['revision'] != expected_revision:
@@ -134,6 +136,55 @@ class PrelayoutStore:
                 group = copy.deepcopy(previous) if isinstance(previous, dict) else {}
                 group['name'] = name
                 groups.append(group)
+            if fonts is not None:
+                if not isinstance(fonts, dict):
+                    raise ValueError('分組字體格式錯誤')
+                for key, font in fonts.items():
+                    if (not isinstance(key, str) or not re.fullmatch(r'0|[1-9][0-9]*', key)
+                            or len(key) > 4 or int(key) >= len(groups)):
+                        raise ValueError('分組字體索引無效')
+                    if font is not None and (not isinstance(font, str) or not font.strip()
+                            or len(font) > 512 or re.search(r'[\x00-\x1f\x7f-\x9f]', font)):
+                        raise ValueError('分組字體須為 1 至 512 個字元且不可含控制字元')
+                for key, font in fonts.items():
+                    if font is None:
+                        groups[int(key)].pop('font', None)
+                    else:
+                        groups[int(key)]['font'] = font
+            apply_keys = None
+            if apply_font_groups is not None:
+                if not isinstance(apply_font_groups, list):
+                    raise ValueError('套用分組字體清單格式錯誤')
+                apply_keys = set()
+                for key in apply_font_groups:
+                    if (not isinstance(key, str) or key in apply_keys
+                            or key not in (fonts or {}) or fonts[key] is None):
+                        raise ValueError('套用分組字體索引無效或重複')
+                    apply_keys.add(key)
+            applied_fonts = {int(key): font for key, font in (fonts or {}).items()
+                             if font is not None and (apply_keys is None or key in apply_keys)}
+            if applied_fonts:
+                root = self.directory(pid)
+                for page in project['pages']:
+                    state = read_json((root / page['state']).read_bytes())
+                    changed = False
+                    for item in state['items']:
+                        group_id = item.get('groupId')
+                        if type(group_id) is not int or group_id not in applied_fonts:
+                            continue
+                        font = applied_fonts[group_id]
+                        if item.get('font') != font:
+                            item.update(font=font, match_status='manual')
+                            changed = True
+                    if not changed:
+                        continue
+                    revision = page['revision'] + 1
+                    relative = f'pages/{page["id"]}/{revision}-{identifier()}.json'
+                    state['revision'] = revision
+                    atomic_json(root / relative, state)
+                    page.update(revision=revision, state=relative)
+                    page.pop('reviewed_revision', None)
+            # Publish the new groups and every affected immutable page in one manifest write.
             project.setdefault('template', {})['groupList'] = groups
             project['revision'] += 1
             self.write(project)

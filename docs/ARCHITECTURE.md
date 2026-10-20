@@ -608,3 +608,11 @@ WebMCP 在預排版頁註冊檢查、修改、局部對比、撤銷、保存與�
 預排版工具列入口與記錄視窗名稱統一為「導出疑問記錄」。
 
 獨立討論稿匯出：`python3 scripts/export-discussion.py Meo.json discussion.md --title 項目名稱`；只測一頁可加 `--page 8`。來源完整時保留原文、每頁概括與註釋，疑問統一置前，頁內編號列出，文字換行以字面 `\n` 表示；不含使用者資料或模型。
+
+## 預排版本機與分組字體（0.2.24）
+
+每框可選 `font` 是 PostScript face 名稱。前端為確切 face 建立獨立 FontFace local 別名，畫布與 measurePage 共用字體樣式，量測等待字體載入；未提供 font 沿用預設預覽字體，字體缺失不改存檔值。字體列表由 `font-catalogue.ts` 共用，版本化 localStorage 快取名稱、字族、樣式及中文名，手動更新才重新掃描；失敗保留快取。macOS `/api/prelayout/local-fonts` 僅對 loopback 提供 CoreText 列表及字體 name table 內建的中文名稱，其他平台／遠端客戶端改走支援的瀏覽器授權；不提供字體檔案或本機路徑。
+
+`groupList[].font` 是分組預設；明確切換分組才套用，後續直接改 item.font 可獨立覆寫。分組 API 的 fonts map 表示預設變更，apply_font_groups 可限制哪些組同時修改現有文字；省略沿用全組套用，空陣列僅修改預設。鎖內檢查版本，先寫受影響頁面的不可變版本，最後單次發布 manifest；失敗不會部分發布，原始資訊與疑問快照保留。頁面更新後同步編輯快取並清除受影響頁的舊撤銷記錄。
+
+跨項目／JSON 分組匯入只合併選中定義，同名預設覆蓋但可保留，新增組追加到末尾；缺少 font 不抹除既有值，明確空值清除預設。前端草稿保存後才透過同一分組 API 生效，不移動既有 groupId。

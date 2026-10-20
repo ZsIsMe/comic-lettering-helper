@@ -17,6 +17,12 @@ import { QuestionRecordsModal } from './QuestionRecordsModal'
 import { InlineQuestionRecord } from './InlineQuestionRecord'
 import bundledFontUrl from '../assets/fonts/toolbox-demibold-v2.7.ttf?url'
 import { displayFontUrl } from './display-font'
+import { LocalFontPicker } from './LocalFontPicker'
+import { loadLocalFont } from './local-fonts'
+import { getFontCatalogue, refreshFontCatalogue, subscribeFontCatalogue } from './font-catalogue'
+import { groupFontChanges } from './group-fonts'
+import { GroupImportModal } from './GroupImportModal'
+import type { GroupImportResult } from './group-import'
 import './styles.css'
 
 const showCleanUpload = false
@@ -122,6 +128,12 @@ function Workspace({ project: initial, promptDetection, onExit, onReadyToLeave }
   const [showService, setShowService] = useState(false)
   const [moreToolsOpen, setMoreToolsOpen] = useState(false)
   const [detectionToolsOpen, setDetectionToolsOpen] = useState(false)
+  const groupCatalogue = useSyncExternalStore(subscribeFontCatalogue, getFontCatalogue)
+  const [groupCatalogueRefreshing, setGroupCatalogueRefreshing] = useState(false)
+  const [groupImportOpen, setGroupImportOpen] = useState(false)
+  const [groupFontApply, setGroupFontApply] = useState<Record<string, boolean>>({})
+  const [groupFontLoading, setGroupFontLoading] = useState<Record<string, boolean>>({})
+  const [groupFonts, setGroupFonts] = useState<Record<string, string | null>>({})
   const [groupRevision, setGroupRevision] = useState<number | null>(null), [groupError, setGroupError] = useState('')
   const [method, setMethod] = useState('ocr_aligned'), [fontBase, setFontBase] = useState(24), [fontStep, setFontStep] = useState(2)
   const [clipboard, setClipboard] = useState<Item[]>([]), [memory, setMemory] = useState<Item | null>(null)
@@ -170,6 +182,10 @@ function Workspace({ project: initial, promptDetection, onExit, onReadyToLeave }
     window.addEventListener('beforeunload', unload)
     return () => { clearInterval(timer); window.removeEventListener('beforeunload', unload); controller.dispose() }
   }, [controller, initial.id])
+  const itemFontNames = JSON.stringify([...new Set([...controller.pages.values()].flatMap(page => page.data.items.map(item => item.font).filter(Boolean)))])
+  useEffect(() => {
+    for (const name of JSON.parse(itemFontNames) as string[]) void loadLocalFont(name).catch(() => {})
+  }, [itemFontNames])
   const fontSource = availability ? displayFontUrl(bundledFontUrl, availability) : null
   useEffect(() => {
     setFontReady(false)
@@ -199,6 +215,10 @@ function Workspace({ project: initial, promptDetection, onExit, onReadyToLeave }
     setProject(fresh)
     setGroupDraft((fresh.template?.groupList || []).map(group => group.name))
     setGroupRevision(fresh.revision)
+    setGroupFonts({})
+    setGroupFontApply({})
+    setGroupImportOpen(false)
+    setGroupFontLoading({})
     setNewGroupName('')
     setGroupError('')
     setGroupOpen(true)
@@ -211,7 +231,20 @@ function Workspace({ project: initial, promptDetection, onExit, onReadyToLeave }
     setNewGroupName('')
     setGroupError('')
   }
+  function setGroupFontPreset(index: number, font: string | null) {
+    setGroupFonts(values => ({ ...values, [index]: font }))
+    setGroupFontApply(values => ({ ...values, [index]: true }))
+    setGroupError('')
+  }
+  function importGroups(result: GroupImportResult) {
+    setGroupDraft(result.names)
+    setGroupFonts(values => ({ ...values, ...result.fonts }))
+    setGroupFontApply(values => ({ ...values, ...Object.fromEntries(Object.keys(result.fonts).map(key => [key, result.applyFontGroups.includes(key)])) }))
+    setGroupImportOpen(false)
+    setGroupError('')
+  }
   async function saveGroups() {
+    if (busy || groupCatalogueRefreshing || Object.values(groupFontLoading).some(Boolean)) return
     const names = groupDraft.map(name => name.trim())
     const empty = names.findIndex(name => !name)
     if (empty >= 0) { setGroupError(`第 ${empty + 1} 個分組名稱不能為空`); return }
@@ -224,8 +257,13 @@ function Workspace({ project: initial, promptDetection, onExit, onReadyToLeave }
     if (groupRevision === null) { setGroupError('分組資料尚未載入，請關閉後重試'); return }
     setBusy(true); setGroupError('')
     try {
-      const result = await request<Project>(`${projectPath(project.id)}/groups`, body({ expected_revision: groupRevision, names }, 'PUT'))
+      if (!await controller.flush()) throw new Error('文字尚未保存，請先處理保存衝突')
+      const result = await request<Project>(`${projectPath(project.id)}/groups`, body({ expected_revision: groupRevision, names, fonts: groupFonts, apply_font_groups: Object.keys(groupFonts).filter(key => groupFonts[key] !== null && groupFontApply[key] !== false) }, 'PUT'))
       setProject(result)
+      setGroupRevision(result.revision)
+      setGroupFonts({})
+      setGroupFontApply({})
+      await controller.acceptTextReplacement(result)
       setGroupOpen(false)
       notices.success('分組已整理')
     } catch (e) {
@@ -236,6 +274,7 @@ function Workspace({ project: initial, promptDetection, onExit, onReadyToLeave }
   }
   const patch = useCallback((changes: Partial<Item>) => {
     if (!showText) return
+    changes = groupFontChanges(changes, project.template?.groupList || [])
     const local = Object.keys(changes).some(key => ['text', 'x', 'y', 'xyxy_pixel'].includes(key))
     const pages = local ? { [selection.page]: selection.ids } : selectionPages(selection)
     const updates = new Map<string, Item[]>()
@@ -246,7 +285,7 @@ function Workspace({ project: initial, promptDetection, onExit, onReadyToLeave }
       if (items.some((item, index) => item !== state.data.items[index])) updates.set(page, items)
     }
     controller.editBatch(updates)
-  }, [controller, selection, showText])
+  }, [controller, selection, showText, project.template?.groupList])
   const moveSelected = (axis: 'x' | 'y', value: number | null) => {
     if (value === null || !Number.isFinite(value) || !state || !first) return
     const delta = value - first[axis] * (axis === 'x' ? state.data.width : state.data.height)
@@ -420,13 +459,25 @@ function Workspace({ project: initial, promptDetection, onExit, onReadyToLeave }
     <Modal title="預排版快捷鍵與滑鼠操作" open={shortcutOpen} onCancel={() => setShortcutOpen(false)} width="calc(100vw - 32px)" centered className="pl-shortcut-modal" footer={<Button onClick={() => setShortcutOpen(false)}>關閉</Button>}>
       <ShortcutHelp collapsible={false} />
     </Modal>
-    <Modal title="整理分組" open={groupOpen} okText="保存" cancelText="取消" confirmLoading={busy} onCancel={() => { if (!busy) setGroupOpen(false) }} onOk={() => void saveGroups()}>
-      <p className="pl-muted">可以新增或修改分組名稱。分組順序與文字的分組關聯保持不變；不能移動或刪除分組。</p>
+    <GroupImportModal open={groupImportOpen} currentProjectId={project.id} currentGroups={groupDraft.map((name, index) => ({ name, ...(Object.hasOwn(groupFonts, String(index)) ? groupFonts[index] ? { font: groupFonts[index]! } : {} : project.template?.groupList?.[index]?.font ? { font: project.template.groupList[index].font } : {}) }))} onClose={() => setGroupImportOpen(false)} onImport={importGroups} />
+    <Modal title="整理分組" width="min(1120px, calc(100vw - 32px))" className="pl-group-organizer" open={groupOpen} okButtonProps={{ disabled: groupCatalogueRefreshing || Object.values(groupFontLoading).some(Boolean) }} okText="保存" cancelText="取消" confirmLoading={busy} onCancel={() => { if (!busy) setGroupOpen(false) }} onOk={() => void saveGroups()}>
+      <div className="pl-group-toolbar"><Button size="small" disabled={busy || groupCatalogueRefreshing || Object.values(groupFontLoading).some(Boolean)} onClick={() => setGroupImportOpen(true)}>匯入其他項目分組</Button><Button size="small" loading={groupCatalogueRefreshing} disabled={busy || Object.values(groupFontLoading).some(Boolean)} onClick={() => {
+        setGroupCatalogueRefreshing(true); setGroupError('')
+        void refreshFontCatalogue().catch(error => setGroupError(error instanceof Error ? error.message : '字體列表更新失敗')).finally(() => setGroupCatalogueRefreshing(false))
+      }}>{groupCatalogue.updatedAt ? '更新字體列表' : '讀取字體列表'}</Button><span>{groupCatalogue.updatedAt ? `${groupCatalogue.fonts.length} 款字體 · 已快取` : '尚未讀取字體'}</span></div>
+      <p className="pl-group-hint">設定字體後保存，套用到該組全部頁面；之後仍可單獨改字體。全組套用無法整批撤銷。</p>
+      <div className="pl-group-table"><div className="pl-group-grid-row pl-group-table-head"><span>分組名稱</span><div className="pl-local-font-fields"><span>字體</span><span>字重</span></div><span>操作</span></div>
       <div className="pl-group-editor-list">
-        {groupDraft.map((name, index) => <label key={index} className="pl-group-editor-row"><span><GroupName name={name || `分組 ${index + 1}`} index={index} /></span><Input aria-label={`分組 ${index + 1} 名稱`} maxLength={80} value={name} onChange={event => { const value = event.target.value; setGroupDraft(names => names.map((current, currentIndex) => currentIndex === index ? value : current)); setGroupError('') }} /></label>)}
+        {groupDraft.map((name, index) => {
+          const font = Object.hasOwn(groupFonts, String(index)) ? groupFonts[index] : project.template?.groupList?.[index]?.font
+          return <div key={index} className="pl-group-grid-row pl-group-editor-entry"><div className="pl-group-name-cell"><label><GroupName name="" index={index} /><Input size="small" aria-label={`分組 ${index + 1} 名稱`} maxLength={80} disabled={busy} value={name} onChange={event => { const value = event.target.value; setGroupDraft(names => names.map((current, currentIndex) => currentIndex === index ? value : current)); setGroupError('') }} /></label>{Object.hasOwn(groupFonts, String(index)) && <small>{font && groupFontApply[index] !== false ? '待統一全組字體' : '待保存預設'}</small>}</div>
+            <LocalFontPicker compact disabled={busy || groupCatalogueRefreshing} onLoadingChange={loading => setGroupFontLoading(values => values[index] === loading ? values : { ...values, [index]: loading })} value={font} values={[font]} mixed={false} selectionKey={`group-${index}-${groupRevision}-${groupOpen}`} onChange={font => setGroupFontPreset(index, font)} />
+            <Button size="small" title="保存後統一此分組全部頁面的字體，包含個別修改的文字。" disabled={busy || !font} onClick={() => setGroupFontPreset(index, font || null)}>統一全組字體</Button>
+          </div>
+        })}
         {!groupDraft.length && <Empty image={Empty.PRESENTED_IMAGE_SIMPLE} description="尚無分組，請在下方新增" />}
-      </div>
-      <div className="pl-group-editor-add"><Input aria-label="新分組名稱" maxLength={80} value={newGroupName} placeholder="新分組名稱" onChange={event => { setNewGroupName(event.target.value); setGroupError('') }} onPressEnter={appendGroup} /><Button onClick={appendGroup}>新增分組</Button></div>
+      </div></div>
+      <div className="pl-group-editor-add"><Input disabled={busy} aria-label="新分組名稱" maxLength={80} value={newGroupName} placeholder="新分組名稱" onChange={event => { setNewGroupName(event.target.value); setGroupError('') }} onPressEnter={appendGroup} /><Button disabled={busy} onClick={appendGroup}>新增分組</Button></div>
       {groupError && <Alert type="error" showIcon message={groupError} />}
     </Modal>
     <Modal title="偵測與字級" open={detectionToolsOpen} width={520} onCancel={() => { if (!busy) setDetectionToolsOpen(false) }} closable={!busy}
@@ -521,6 +572,7 @@ function Workspace({ project: initial, promptDetection, onExit, onReadyToLeave }
         {first ? <><label>文字 {selected.length > 1 && `· 本頁已選 ${selected.length} 條`}<Input.TextArea autoSize={{ minRows: 3, maxRows: 7 }} value={first.text} onChange={e => patch({ text: e.target.value })} /></label>
           <div className="pl-two-fields"><label>X 位置（像素）<InputNumber aria-label="X 位置（像素）" min={0} max={state?.data.width} step={1} precision={1} value={state ? Math.round(first.x * state.data.width * 10) / 10 : 0} onChange={value => moveSelected('x', value)} /></label><label>Y 位置（像素）<InputNumber aria-label="Y 位置（像素）" min={0} max={state?.data.height} step={1} precision={1} value={state ? Math.round(first.y * state.data.height * 10) / 10 : 0} onChange={value => moveSelected('y', value)} /></label></div>
           <div className="pl-two-fields"><label>角度<InputNumber aria-label="角度" value={mixed('rotation') ? null : first.rotation} placeholder="混合" min={-180} max={180} step={1} onChange={v => v !== null && patch({ rotation: v })} /></label><label>方向<Select value={mixed('orientation') ? undefined : first.orientation} placeholder="混合" onChange={v => patch({ orientation: v })} options={[{ value: 'vertical', label: '直排' }, { value: 'horizontal', label: '橫排' }]} /></label></div>
+          <LocalFontPicker value={first.font} values={allSelected.map(item => item.font)} mixed={mixed('font')} selectionKey={allSelected.map(item => item._id).join(',')} onChange={font => patch({ font })} />
           <div className="pl-four-fields"><label>字級<InputNumber aria-label="字級" value={mixed('font-size') ? null : first['font-size']} placeholder="混合" min={1} max={999} onChange={v => v !== null && patch({ 'font-size': v })} /></label><label>文字色{mixed('color') && '（混合）'}<input aria-label="文字色" type="color" value={color(first.color)} onChange={e => patch({ color: e.target.value })} /></label><label>描邊粗細<InputNumber aria-label="描邊粗細" min={0} max={99} value={mixed('stroke-weight') ? null : first['stroke-weight']} placeholder="混合" onChange={v => v !== null && patch({ 'stroke-weight': v })} /></label><label>描邊色{mixed('stroke-color') && '（混合）'}<input aria-label="描邊色" type="color" value={color(first['stroke-color'])} onChange={e => patch({ 'stroke-color': e.target.value })} /></label></div>
           <Space wrap><Button onClick={duplicate}>複製</Button><Button danger onClick={() => { if (state) controller.edit(selection.page, state.data.items.filter(item => !selection.ids.includes(item._id))); setSelection(value => ({ page: value.page, ids: [] })) }}>刪除</Button><Button onClick={() => void execute(async () => { const values = [...clipboard, { ...first, _id: uid() }]; await request(`${base}/preferences`, body(values, 'PUT')); setClipboard(values) })}>加入常用框</Button></Space>
         </> : <p className="pl-muted">雙擊文字可原位編輯（橫排／直排）；Mac 也可用 ⌘＋單擊。雙擊底圖新增文字；Shift 點選可跨頁多選，再點一次取消該框。</p>}

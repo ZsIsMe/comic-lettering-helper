@@ -674,3 +674,9 @@ PDF 中文字型：支援 `CJK_FONT_PATH` 及腳本旁 `fonts/SourceHanSansTC-Re
 預排版工具列入口與記錄視窗名稱統一為「導出疑問記錄」。
 
 獨立討論稿匯出：`python3 scripts/export-discussion.py Meo.json discussion.md --title 項目名稱`；只測一頁可加 `--page 8`。來源完整時保留原文、每頁概括與註釋，疑問統一置前，頁內編號列出，文字換行以字面 `\n` 表示；不含使用者資料或模型。
+
+## 0.2.24：本機字體與分組字體
+
+更新應用後端及正式前端資產；沒有新增 Python 套件、模型、ComfyUI 節點或資料遷移。舊項目沒有 font／分組預設時維持原預覽；使用者選定後按原 JSON 保存 PostScript 名稱。本機 macOS 使用系統 CoreText，Linux 遠端服務不枚舉其自身字體；瀏覽器列出客戶端字體需要支援 Local Font Access 並授權。中文字體名稱取自已安裝字體，沒有中文名時使用原名。
+
+列表快取保存在當前瀏覽器來源的 localStorage，重新整理頁面即可沿用，安裝新字體後手動更新。換電腦仍須安裝 JSON 所引用的字體；應用更新包不包含使用者字體或快取。全組字體保存更新全部命中頁面，完成標記失效，舊撤銷記錄不再適用。字體功能與 OCR 字級估算所用校準模型分離，不改推理參數。本版僅發布 GitHub／Gitee 同包 Release，未部署 AutoDL 或製作鏡像。

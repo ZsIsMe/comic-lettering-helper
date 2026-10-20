@@ -2,6 +2,7 @@ import type { CSSProperties } from 'react'
 import { color, transform } from './geometry'
 import type { Item, PageData } from './types'
 import { setDisplayText } from './display-runs'
+import { itemFontFamily, loadLocalFont } from './local-fonts'
 
 export type TextRect = [number, number, number, number]
 export type PageMeasurement = { rects: Record<string, TextRect>; risks: string[] }
@@ -10,6 +11,7 @@ export type PageMeasurement = { rects: Record<string, TextRect>; risks: string[]
 export function textStyle(item: Item, page: Pick<PageData, 'width' | 'height'>): CSSProperties {
   return {
     left: item.x * page.width, top: item.y * page.height, transform: transform(item),
+    fontFamily: itemFontFamily(item.font), fontWeight: itemFontFamily(item.font) ? 400 : undefined,
     fontSize: item['font-size'], writingMode: item.orientation === 'vertical' ? 'vertical-rl' : 'horizontal-tb',
     fontVariantLigatures: 'discretionary-ligatures',
     fontFeatureSettings: item.orientation === 'vertical' ? '"onum" 1, "palt" 0, "vpal" 1' : '"onum" 1, "palt" 1, "vpal" 0',
@@ -24,6 +26,7 @@ function intersects(a: TextRect, b: TextRect): boolean {
 /** Measure actual browser text geometry, including writing mode, rotation, and stroke margin. */
 export async function measurePage(page: PageData): Promise<PageMeasurement> {
   if (typeof document === 'undefined' || !document.body) throw new Error('文字測量需要瀏覽器頁面。')
+  await Promise.all(page.items.map(item => loadLocalFont(item.font).catch(() => {})))
   const root = document.createElement('div')
   root.className = 'pl-shell'
   Object.assign(root.style, { position: 'absolute', left: '-100000px', top: '0', width: `${page.width}px`, height: `${page.height}px`,
@@ -36,6 +39,8 @@ export async function measurePage(page: PageData): Promise<PageMeasurement> {
     const style = textStyle(item, page)
     node.style.left = `${style.left}px`
     node.style.top = `${style.top}px`
+    if (style.fontFamily) node.style.fontFamily = style.fontFamily
+    if (style.fontWeight) node.style.fontWeight = String(style.fontWeight)
     node.style.fontSize = `${style.fontSize}px`
     node.style.transform = String(style.transform)
     node.style.writingMode = String(style.writingMode)

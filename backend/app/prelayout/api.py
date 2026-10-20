@@ -4,12 +4,13 @@ import json
 import asyncio
 import re
 
-from fastapi import APIRouter, Body, File, Form, HTTPException, UploadFile
+from fastapi import APIRouter, Body, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel, ConfigDict, Field, StrictInt, StrictStr
 from starlette.concurrency import run_in_threadpool
 
 from .store import Conflict
+from .local_fonts import local_fonts
 
 
 class ReplacementPreview(BaseModel):
@@ -85,6 +86,11 @@ def router(store, detector, max_bytes):
     def availability():
         return detector.availability()
 
+    @api.get('/local-fonts')
+    def installed_fonts(request: Request, response: Response, refresh: bool = False):
+        response.headers['Cache-Control'] = 'no-store'
+        return local_fonts(request.client.host if request.client else None, refresh=refresh)
+
     @api.get('/font')
     def font():
         path = detector.display_font
@@ -148,7 +154,11 @@ def router(store, detector, max_bytes):
 
     @api.put('/projects/{pid}/groups')
     def groups(pid: str, data: dict = Body(...)):
-        return call(store.update_groups, pid, data.get('expected_revision'), data.get('names'))
+        with store.lock(pid):
+            if data.get('fonts') and call(detector.busy, pid):
+                raise HTTPException(409, '此項目正在偵測，請等待完成或取消')
+            return call(store.update_groups, pid, data.get('expected_revision'), data.get('names'),
+                        data.get('fonts'), data.get('apply_font_groups'))
 
     @api.get('/projects/{pid}/question-records')
     def question_records(pid: str):
