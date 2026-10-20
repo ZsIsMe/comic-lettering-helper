@@ -4,7 +4,7 @@ import { base, body, files, previewUrl, projectPath, request } from './api'
 import { type Availability, type Detection, type Item, type Project, activeDetection, uid } from './types'
 import { EditorState } from './editor-state'
 import { ContinuousPages } from './ContinuousPages'
-import { type Selection, type PagePointer, color, moved, measureStyle } from './geometry'
+import { type Selection, type PagePointer, selectionPages, selectTextItem, color, moved, measureStyle } from './geometry'
 import { adjustedItems, textShortcut, type TextAdjustment } from './shortcuts'
 import { pasteFrame } from './frame-clipboard'
 import { useFrameClipboard } from './use-frame-clipboard'
@@ -14,6 +14,7 @@ import { PageNavigation, type PageRange } from './PageNavigation'
 import { usePrelayoutAgent } from './usePrelayoutAgent'
 import { TextReplacementModal } from './TextReplacementModal'
 import { QuestionRecordsModal } from './QuestionRecordsModal'
+import { InlineQuestionRecord } from './InlineQuestionRecord'
 import bundledFontUrl from '../assets/fonts/toolbox-demibold-v2.7.ttf?url'
 import { displayFontUrl } from './display-font'
 import './styles.css'
@@ -117,6 +118,7 @@ function Workspace({ project: initial, promptDetection, onExit, onReadyToLeave }
   const [groupOpen, setGroupOpen] = useState(false), [groupDraft, setGroupDraft] = useState<string[]>([]), [newGroupName, setNewGroupName] = useState('')
   const [replacementOpen, setReplacementOpen] = useState(false)
   const [questionsOpen, setQuestionsOpen] = useState(false)
+  const [questionsPage, setQuestionsPage] = useState(initial.pages[0].id)
   const [showService, setShowService] = useState(false)
   const [moreToolsOpen, setMoreToolsOpen] = useState(false)
   const [detectionToolsOpen, setDetectionToolsOpen] = useState(false)
@@ -144,16 +146,21 @@ function Workspace({ project: initial, promptDetection, onExit, onReadyToLeave }
   const fileInput = useRef<HTMLInputElement>(null), importKind = useRef('bt')
   const state = controller.pages.get(selection.page)
   const selected = showText ? state?.data.items.filter(item => selection.ids.includes(item._id)) || [] : []
+  const selectedPages = selectionPages(selection)
+  const allSelected = showText ? Object.entries(selectedPages).flatMap(([page, ids]) => controller.pages.get(page)?.data.items.filter(item => ids.includes(item._id)) || []) : []
+  const selectedPageCount = Object.keys(selectedPages).length
+  const crossPage = selectedPageCount > 1
+  const mixed = (key: keyof Item) => allSelected.some(item => item[key] !== allSelected[0]?.[key])
   const first = selected[0]
   const groupNames = (project.template?.groupList || []).map(group => group.name).filter(name => typeof name === 'string')
-  const selectedGroupIds = new Set(selected.map(item => typeof item.groupId === 'number' ? item.groupId : -1))
+  const selectedGroupIds = new Set(allSelected.map(item => typeof item.groupId === 'number' ? item.groupId : -1))
   const selectedGroupId = selectedGroupIds.size === 1 ? [...selectedGroupIds][0] : undefined
   const hasClean = project.pages.some(page => page.clean)
-  const errors = [...controller.pages.values()].map(state => state.error).filter(Boolean)
+  const errors = [...controller.pages.values()].filter(state => state.error).map(state => `${project.pages.find(page => page.id === state.data.id)?.name || state.data.id}：${state.error}`)
   const saving = [...controller.pages.values()].some(state => state.saving)
   useEffect(() => { try { localStorage.setItem(`pl-review-range-${initial.id}`, JSON.stringify(range)) } catch { /* Optional range preference. */ } }, [initial.id, range])
   useEffect(() => { try { localStorage.setItem(`pl-view-${initial.id}`, JSON.stringify({ zoom, compare, clean, difference, showText, showMeasure })) } catch { /* Optional view preferences. */ } }, [initial.id, zoom, compare, clean, difference, showText, showMeasure])
-  useEffect(() => { if (!showText) { pointer.current = null; setSelection(value => value.ids.length ? { ...value, ids: [] } : value) } }, [showText])
+  useEffect(() => { if (!showText) { pointer.current = null; setSelection(value => value.ids.length ? { page: value.page, ids: [] } : value) } }, [showText])
   useEffect(() => { try { localStorage.setItem('pl-difference-style', JSON.stringify({ color: differenceColor, opacity: differenceOpacity })) } catch { /* Optional browser preference. */ } }, [differenceColor, differenceOpacity])
   useEffect(() => {
     void request<Item[]>(`${base}/preferences`).then(setClipboard).catch(e => setError(e.message))
@@ -229,9 +236,16 @@ function Workspace({ project: initial, promptDetection, onExit, onReadyToLeave }
   }
   const patch = useCallback((changes: Partial<Item>) => {
     if (!showText) return
-    const state = controller.pages.get(selection.page)
-    if (!state) return
-    controller.edit(selection.page, state.data.items.map(item => selection.ids.includes(item._id) ? { ...item, ...changes, match_status: 'manual' } : item))
+    const local = Object.keys(changes).some(key => ['text', 'x', 'y', 'xyxy_pixel'].includes(key))
+    const pages = local ? { [selection.page]: selection.ids } : selectionPages(selection)
+    const updates = new Map<string, Item[]>()
+    for (const [page, ids] of Object.entries(pages)) {
+      const state = controller.pages.get(page)
+      if (!state) continue
+      const items = state.data.items.map(item => ids.includes(item._id) && Object.entries(changes).some(([key, value]) => item[key] !== value) ? { ...item, ...changes, match_status: 'manual' as const } : item)
+      if (items.some((item, index) => item !== state.data.items[index])) updates.set(page, items)
+    }
+    controller.editBatch(updates)
   }, [controller, selection, showText])
   const moveSelected = (axis: 'x' | 'y', value: number | null) => {
     if (value === null || !Number.isFinite(value) || !state || !first) return
@@ -242,7 +256,7 @@ function Workspace({ project: initial, promptDetection, onExit, onReadyToLeave }
   }
   const select = useCallback((value: Selection) => setSelection(value), [])
   const currentPage = useCallback((id: string) => { setCurrent(id); setSelection(value => value.ids.length ? value : { page: id, ids: [] }) }, [])
-  function go(id: string) { setJump({ id, version: Date.now() }); setCurrent(id); setSelection({ page: id, ids: [] }) }
+  function go(id: string) { setJump({ id, version: Date.now() }); setCurrent(id); setSelection(value => value.ids.length ? value : { page: id, ids: [] }) }
   const isReviewed = (page: Project['pages'][number]) => {
     const loaded = controller.pages.get(page.id)
     if (loaded?.dirty) return false
@@ -282,7 +296,7 @@ function Workspace({ project: initial, promptDetection, onExit, onReadyToLeave }
   function duplicate() {
     if (!state || !selected.length) return
     const added = selected.map(item => ({ ...moved(item, 16, 16, state.data.width, state.data.height), _id: uid(), index: undefined }))
-    controller.edit(selection.page, [...state.data.items, ...added]); setSelection(value => ({ ...value, ids: added.map(item => item._id) }))
+    controller.edit(selection.page, [...state.data.items, ...added]); setSelection({ page: selection.page, ids: added.map(item => item._id) })
   }
   async function nextPending() {
     const pages = project.pages.slice(range[0] - 1, range[1])
@@ -301,7 +315,7 @@ function Workspace({ project: initial, promptDetection, onExit, onReadyToLeave }
   }
   useFrameClipboard({
     blocked: event => !showText || shortcutBlocked(event),
-    selectionCount: selection.ids.length,
+    selectionCount: allSelected.length,
     selected,
     selectedPage: project.pages.find(page => page.id === selection.page),
     pointer,
@@ -318,11 +332,20 @@ function Workspace({ project: initial, promptDetection, onExit, onReadyToLeave }
   })
   function adjust(adjustment: TextAdjustment, continuing = false) {
     if (!showText) return false
-    const state = controller.pages.get(selection.page)
-    if (!state || !selection.ids.length) return false
-    const items = adjustedItems(state.data.items, selection.ids, adjustment, state.data.width, state.data.height)
-    const group = `${JSON.stringify(adjustment)}:${selection.ids.join(',')}`
-    if (items !== state.data.items) controller.edit(selection.page, items, true, group, continuing)
+    if (!selection.ids.length) return false
+    const pages = adjustment.kind === 'move' ? { [selection.page]: selection.ids } : selectionPages(selection)
+    const updates = new Map<string, Item[]>()
+    for (const [page, ids] of Object.entries(pages)) {
+      const state = controller.pages.get(page)
+      if (!state) continue
+      const items = adjustedItems(state.data.items, ids, adjustment, state.data.width, state.data.height)
+      if (items !== state.data.items) updates.set(page, items)
+    }
+    if (Object.keys(pages).length > 1) controller.editBatch(updates)
+    else for (const [page, items] of updates) {
+      const group = `${JSON.stringify(adjustment)}:${selection.ids.join(',')}`
+      controller.edit(page, items, true, group, continuing)
+    }
     return true
   }
   function fontWheel(event: WheelEvent) {
@@ -336,7 +359,7 @@ function Workspace({ project: initial, promptDetection, onExit, onReadyToLeave }
       const meta = event.metaKey || event.ctrlKey
       if (meta && !event.altKey && event.key.toLowerCase() === 's') { event.preventDefault(); void controller.flush(); return }
       if (meta && !event.altKey && event.key.toLowerCase() === 'z') { event.preventDefault(); controller.undo(selection.page, event.shiftKey); return }
-      if (event.key === 'Escape') { setSelection(value => ({ ...value, ids: [] })); return }
+      if (event.key === 'Escape') { setSelection(value => ({ page: value.page, ids: [] })); return }
       if (!meta && !event.altKey && !event.shiftKey && event.key.toLowerCase() === 'q') { event.preventDefault(); if (!event.repeat) setClean(value => !value); return }
       if (!meta && !event.altKey && !event.shiftKey && event.key.toLowerCase() === 'h' && hasClean) { event.preventDefault(); if (!event.repeat) setDifference(value => !value); return }
       if (!meta && !event.altKey && !event.shiftKey && ['PageUp', 'PageDown'].includes(event.key)) {
@@ -354,7 +377,7 @@ function Workspace({ project: initial, promptDetection, onExit, onReadyToLeave }
       if (meta && !event.altKey && event.key.toLowerCase() === 'n') { event.preventDefault(); add(undefined, true); return }
       if (meta && !event.altKey && event.key.toLowerCase() === 'd') { event.preventDefault(); duplicate(); return }
       if (!selection.ids.length) return
-      if (['Delete', 'Backspace'].includes(event.key)) { event.preventDefault(); controller.edit(selection.page, state.data.items.filter(item => !selection.ids.includes(item._id))); setSelection(value => ({ ...value, ids: [] })); return }
+      if (['Delete', 'Backspace'].includes(event.key)) { event.preventDefault(); controller.edit(selection.page, state.data.items.filter(item => !selection.ids.includes(item._id))); setSelection(value => ({ page: value.page, ids: [] })); return }
       const adjustment = textShortcut(event)
       if (adjustment) { event.preventDefault(); adjust(adjustment, event.repeat) }
     }
@@ -393,7 +416,7 @@ function Workspace({ project: initial, promptDetection, onExit, onReadyToLeave }
   return <main className={`pl-shell pl-workspace pl-compact-workspace ${showService ? 'pl-show-service' : ''} ${focus ? 'pl-focus-mode' : ''}`}>{modalContext}{noticesContext}{agent.review}
     <TextReplacementModal open={replacementOpen} project={project} controller={controller} onClose={() => setReplacementOpen(false)}
       onBusyChange={setBusy} onProject={setProject} onReviewPage={go} />
-    <QuestionRecordsModal open={questionsOpen} project={project} controller={controller} onClose={() => setQuestionsOpen(false)} />
+    <QuestionRecordsModal currentPageId={questionsPage} open={questionsOpen} project={project} controller={controller} onClose={() => setQuestionsOpen(false)} />
     <Modal title="預排版快捷鍵與滑鼠操作" open={shortcutOpen} onCancel={() => setShortcutOpen(false)} width="calc(100vw - 32px)" centered className="pl-shortcut-modal" footer={<Button onClick={() => setShortcutOpen(false)}>關閉</Button>}>
       <ShortcutHelp collapsible={false} />
     </Modal>
@@ -471,7 +494,7 @@ function Workspace({ project: initial, promptDetection, onExit, onReadyToLeave }
               if (!await controller.flush()) throw new Error('文字尚未保存，請先處理保存錯誤或版本衝突。')
               setReplacementOpen(true)
             })}>批量替換</Button>
-      <Button size="small" disabled={busy || activeDetection(task)} onClick={() => setQuestionsOpen(true)}>疑問記錄</Button>
+      <Button size="small" disabled={busy || activeDetection(task)} onClick={() => { setQuestionsPage(current); setQuestionsOpen(true) }}>疑問記錄</Button>
     </Space></div>
     <div className="pl-tool-row pl-display-tools"><span className="pl-tool-label">顯示</span><Space size={[8, 4]} wrap>
       <Select size="small" aria-label="縮放" title="相對適合寬度的縮放比例" value={zoom} onChange={setZoom} options={[...new Set([.5, .75, 1, 1.5, 2, 3, zoom])].sort((a, b) => a - b).map(value => ({ value, label: value === 1 ? '適合寬度' : `${Math.round(value * 100)}%` }))} />
@@ -486,17 +509,22 @@ function Workspace({ project: initial, promptDetection, onExit, onReadyToLeave }
     <PageNavigation pages={project.pages} current={current} range={range} onRange={setRange} onGo={go} reviewed={isReviewed}
       onReview={reviewed => void execute(() => setReviewed(reviewed))} onFinishAndNext={() => void execute(finishAndNext)} busy={busy || saving} focus={focus} onFocus={setFocus} />
     <div className="pl-layout">
-      <ContinuousPages project={project} controller={controller} selection={selection} onSelect={select} zoom={zoom} onZoom={setZoom} compare={compare} clean={clean} difference={difference} differenceColor={differenceColor} differenceOpacity={differenceOpacity} showText={showText} showMeasure={showMeasure} jump={jump} onCurrent={currentPage} onMeasure={onMeasure} onPointer={pointerChanged} onFontWheel={fontWheel} onInteractionChange={interactionChanged} />
+      <ContinuousPages project={project} controller={controller} selection={selection} onSelect={select} onAdjust={adjust} zoom={zoom} onZoom={setZoom} compare={compare} clean={clean} difference={difference} differenceColor={differenceColor} differenceOpacity={differenceOpacity} showText={showText} showMeasure={showMeasure} jump={jump} onCurrent={currentPage} onMeasure={onMeasure} onPointer={pointerChanged} onFontWheel={fontWheel} onInteractionChange={interactionChanged} />
       <aside className="pl-inspector">
         <div className="pl-inspector-title"><h2>文字編輯</h2><Tooltip title="雙擊頁面文字可原位編輯；Mac 也可用 ⌘＋單擊，並支援直排。Enter 換行；⌘／Ctrl＋Enter 完成；Esc 保存並結束編輯。"><button type="button" className="pl-help" aria-label="文字編輯說明">?</button></Tooltip></div>{state?.conflict && <Space wrap><Button onClick={() => void execute(() => controller.resolve(selection.page, true))}>保留我的草稿</Button><Button onClick={() => void execute(() => controller.resolve(selection.page, false))}>載入伺服器版</Button></Space>}
+        {allSelected.length > 0 && <div className="pl-selection-summary"><span>已選 {selectedPageCount} 頁 · {allSelected.length} 框</span><Button size="small" onClick={() => setSelection({ page: current, ids: [] })}>清除</Button>{crossPage && <small>樣式與分組套用全部；文字、位置、拖曳、複製及刪除僅作用於第 {project.pages.findIndex(page => page.id === selection.page) + 1} 頁所選框。</small>}</div>}
+        <InlineQuestionRecord project={project} controller={controller} selection={selection} onSaved={saved => {
+          setSelection(current => JSON.stringify(selectionPages(current)) === JSON.stringify(selectionPages(saved)) ? { page: current.page, ids: [] } : current)
+          notices.success('已添加疑問記錄')
+        }} />
         <details open className="pl-groups-top"><summary>分組</summary><Space wrap>{groupNames.map((name, index) => <Tooltip key={`${index}-${name}`} title={selected.length ? `切換選取文字至「${name}」` : '請先選取文字'}><Button size="small" type={selectedGroupIds.size === 1 && selectedGroupId === index ? 'primary' : 'default'} disabled={!selected.length} onClick={() => patch({ groupId: index })}><GroupName name={name} index={index} /></Button></Tooltip>)}{!groupNames.length && <span className="pl-muted">尚無分組</span>}<Button size="small" onClick={() => void execute(openGroupOrganizer)}>整理分組</Button></Space></details>
-        {first ? <><label>文字 {selected.length > 1 && `· 已選 ${selected.length} 條`}<Input.TextArea autoSize={{ minRows: 3, maxRows: 7 }} value={first.text} onChange={e => patch({ text: e.target.value })} /></label>
+        {first ? <><label>文字 {selected.length > 1 && `· 本頁已選 ${selected.length} 條`}<Input.TextArea autoSize={{ minRows: 3, maxRows: 7 }} value={first.text} onChange={e => patch({ text: e.target.value })} /></label>
           <div className="pl-two-fields"><label>X 位置（像素）<InputNumber aria-label="X 位置（像素）" min={0} max={state?.data.width} step={1} precision={1} value={state ? Math.round(first.x * state.data.width * 10) / 10 : 0} onChange={value => moveSelected('x', value)} /></label><label>Y 位置（像素）<InputNumber aria-label="Y 位置（像素）" min={0} max={state?.data.height} step={1} precision={1} value={state ? Math.round(first.y * state.data.height * 10) / 10 : 0} onChange={value => moveSelected('y', value)} /></label></div>
-          <div className="pl-two-fields"><label>角度<InputNumber aria-label="角度" value={first.rotation} min={-180} max={180} step={1} onChange={v => v !== null && patch({ rotation: v })} /></label><label>方向<Select value={first.orientation} onChange={v => patch({ orientation: v })} options={[{ value: 'vertical', label: '直排' }, { value: 'horizontal', label: '橫排' }]} /></label></div>
-          <div className="pl-four-fields"><label>字級<InputNumber aria-label="字級" value={first['font-size']} min={1} max={999} onChange={v => v !== null && patch({ 'font-size': v })} /></label><label>文字色<input aria-label="文字色" type="color" value={color(first.color)} onChange={e => patch({ color: e.target.value })} /></label><label>描邊粗細<InputNumber aria-label="描邊粗細" min={0} max={99} value={first['stroke-weight']} onChange={v => v !== null && patch({ 'stroke-weight': v })} /></label><label>描邊色<input aria-label="描邊色" type="color" value={color(first['stroke-color'])} onChange={e => patch({ 'stroke-color': e.target.value })} /></label></div>
-          <Space wrap><Button onClick={duplicate}>複製</Button><Button danger onClick={() => { if (state) controller.edit(selection.page, state.data.items.filter(item => !selection.ids.includes(item._id))); setSelection(value => ({ ...value, ids: [] })) }}>刪除</Button><Button onClick={() => void execute(async () => { const values = [...clipboard, { ...first, _id: uid() }]; await request(`${base}/preferences`, body(values, 'PUT')); setClipboard(values) })}>加入常用框</Button></Space>
-        </> : <p className="pl-muted">雙擊文字可原位編輯（橫排／直排）；Mac 也可用 ⌘＋單擊。雙擊底圖新增文字；Shift 點選可多選。</p>}
-        <details open><summary>本頁文字</summary><Space wrap><Checkbox checked={pendingOnly} onChange={e => setPendingOnly(e.target.checked)}>只看待處理</Checkbox><Button size="small" onClick={() => void execute(nextPending)}>下一個待處理</Button></Space><div className="pl-items-list">{state?.data.items.filter(item => !pendingOnly || ['unmatched', 'duplicate'].includes(item.match_status || '')).map((item, index) => <button key={item._id} className={selection.ids.includes(item._id) ? 'active' : ''} onClick={() => { setSelection({ page: state.data.id, ids: [item._id] }); setJump({ id: state.data.id, y: item.y, version: Date.now() }) }}><span>{index + 1}. {item.text || '空文字'}</span><small>{typeof item.groupId === 'number' && groupNames[item.groupId] ? <GroupName name={groupNames[item.groupId]} index={item.groupId} /> : typeof item.groupId === 'number' ? `未知分組 ${item.groupId + 1}` : '未分組'} · {({ auto: '自動', manual: '手動', duplicate: '待確認', unmatched: '未匹配' } as Record<string, string>)[item.match_status || ''] || '—'}</small></button>)}</div></details>
+          <div className="pl-two-fields"><label>角度<InputNumber aria-label="角度" value={mixed('rotation') ? null : first.rotation} placeholder="混合" min={-180} max={180} step={1} onChange={v => v !== null && patch({ rotation: v })} /></label><label>方向<Select value={mixed('orientation') ? undefined : first.orientation} placeholder="混合" onChange={v => patch({ orientation: v })} options={[{ value: 'vertical', label: '直排' }, { value: 'horizontal', label: '橫排' }]} /></label></div>
+          <div className="pl-four-fields"><label>字級<InputNumber aria-label="字級" value={mixed('font-size') ? null : first['font-size']} placeholder="混合" min={1} max={999} onChange={v => v !== null && patch({ 'font-size': v })} /></label><label>文字色{mixed('color') && '（混合）'}<input aria-label="文字色" type="color" value={color(first.color)} onChange={e => patch({ color: e.target.value })} /></label><label>描邊粗細<InputNumber aria-label="描邊粗細" min={0} max={99} value={mixed('stroke-weight') ? null : first['stroke-weight']} placeholder="混合" onChange={v => v !== null && patch({ 'stroke-weight': v })} /></label><label>描邊色{mixed('stroke-color') && '（混合）'}<input aria-label="描邊色" type="color" value={color(first['stroke-color'])} onChange={e => patch({ 'stroke-color': e.target.value })} /></label></div>
+          <Space wrap><Button onClick={duplicate}>複製</Button><Button danger onClick={() => { if (state) controller.edit(selection.page, state.data.items.filter(item => !selection.ids.includes(item._id))); setSelection(value => ({ page: value.page, ids: [] })) }}>刪除</Button><Button onClick={() => void execute(async () => { const values = [...clipboard, { ...first, _id: uid() }]; await request(`${base}/preferences`, body(values, 'PUT')); setClipboard(values) })}>加入常用框</Button></Space>
+        </> : <p className="pl-muted">雙擊文字可原位編輯（橫排／直排）；Mac 也可用 ⌘＋單擊。雙擊底圖新增文字；Shift 點選可跨頁多選，再點一次取消該框。</p>}
+        <details open><summary>本頁文字</summary><Space wrap><Checkbox checked={pendingOnly} onChange={e => setPendingOnly(e.target.checked)}>只看待處理</Checkbox><Button size="small" onClick={() => void execute(nextPending)}>下一個待處理</Button></Space><div className="pl-items-list">{state?.data.items.filter(item => !pendingOnly || ['unmatched', 'duplicate'].includes(item.match_status || '')).map((item, index) => <button key={item._id} className={selection.ids.includes(item._id) ? 'active' : ''} onClick={event => { setSelection(value => selectTextItem(value, state.data.id, item._id, event.shiftKey)); setJump({ id: state.data.id, y: item.y, version: Date.now() }) }}><span>{index + 1}. {item.text || '空文字'}</span><small>{typeof item.groupId === 'number' && groupNames[item.groupId] ? <GroupName name={groupNames[item.groupId]} index={item.groupId} /> : typeof item.groupId === 'number' ? `未知分組 ${item.groupId + 1}` : '未分組'} · {({ auto: '自動', manual: '手動', duplicate: '待確認', unmatched: '未匹配' } as Record<string, string>)[item.match_status || ''] || '—'}</small></button>)}</div></details>
         <details><summary>常用文字框</summary>{clipboard.map(item => <div className="pl-clipboard" key={item._id}><button title="暫存此框，再用 F2 貼到指標位置" onClick={() => { setMemory(structuredClone(item)); notices.info('已暫存，將指標移到頁面後按 F2 貼上') }}>{item.text || '空文字'}</button><Button size="small" onClick={() => void execute(async () => { const next = clipboard.filter(i => i._id !== item._id); await request(`${base}/preferences`, body(next, 'PUT')); setClipboard(next) })}>移除</Button></div>)}</details>
 
         {!fontReady && <p className="pl-muted">預覽字型尚未載入，目前暫用系統字型。</p>}

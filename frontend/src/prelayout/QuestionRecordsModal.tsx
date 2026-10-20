@@ -3,18 +3,19 @@ import { Alert, Button, Checkbox, Empty, Input, Modal, Popconfirm, Select, Spin 
 import { body, projectPath, request } from './api'
 import type { EditorState } from './editor-state'
 import type { PageData, Project } from './types'
+import { questionReferences, type TextReference } from './question-references'
+import { loadQuestionPages } from './question-page-loader'
 import './question-records.css'
 
-type TextReference = { key: string; pageId: string; pageNumber: number; pageName: string; itemId: string; itemNumber: number; text: string }
 type QuestionRecord = { id: string; note: string; texts: TextReference[]; createdAt: string; updatedAt: string }
 type RecordsDocument = { version: number; records: QuestionRecord[] }
-type Props = { open: boolean; project: Project; controller: EditorState; onClose: () => void }
+type Props = { currentPageId: string; open: boolean; project: Project; controller: EditorState; onClose: () => void }
 
 export function QuestionRecordsModal(props: Props) {
   return <QuestionRecordsPanel key={props.project.id} {...props} />
 }
 
-function QuestionRecordsPanel({ open, project, controller, onClose }: Props) {
+function QuestionRecordsPanel({ open, project, controller, onClose, currentPageId }: Props) {
   const [pages, setPages] = useState<Map<string, PageData>>(new Map())
   const [failures, setFailures] = useState<Map<string, string>>(new Map())
   const [loading, setLoading] = useState(false)
@@ -22,7 +23,12 @@ function QuestionRecordsPanel({ open, project, controller, onClose }: Props) {
   const [search, setSearch] = useState('')
   const [pageTarget, setPageTarget] = useState<{ id: string } | null>(null)
   const listRef = useRef<HTMLDivElement>(null)
-  const savedScroll = useRef<number | null>(null)
+  const [priorityReady, setPriorityReady] = useState(false)
+  const [positioned, setPositioned] = useState(false)
+  const opened = useRef(false)
+  const pagesSnapshot = useRef(pages)
+  const pendingLocation = useRef<string | null>(null)
+  const pendingAnchor = useRef<{ page: string; key?: string; offset: number } | null>(null)
   const pageRefs = useRef(new Map<string, HTMLElement>())
   const [selected, setSelected] = useState<Map<string, TextReference>>(new Map())
   const [note, setNote] = useState('')
@@ -40,12 +46,41 @@ function QuestionRecordsPanel({ open, project, controller, onClose }: Props) {
   const [retryPending, setRetryPending] = useState(false)
   const pendingWrite = useRef<{ version: number; records: QuestionRecord[]; complete: () => void } | null>(null)
   const recordsPath = `${projectPath(project.id)}/question-records`
-
+  function captureAnchor() {
+    const list = listRef.current
+    if (!list) return null
+    const rect = list.getBoundingClientRect(), scale = rect.height / list.offsetHeight || 1
+    const top = rect.top + list.clientTop * scale
+    for (const [page, section] of pageRefs.current) {
+      const rect = section.getBoundingClientRect()
+      if (rect.bottom <= top + 1 || rect.top >= top + list.clientHeight * scale) continue
+      const row = [...section.querySelectorAll<HTMLElement>('[data-question-key]')].find(node => node.getBoundingClientRect().bottom > top + 1)
+      return { page, key: row?.dataset.questionKey, offset: ((row || section).getBoundingClientRect().top - top) / scale }
+    }
+    return null
+  }
+  useLayoutEffect(() => { pagesSnapshot.current = pages }, [pages])
   useLayoutEffect(() => {
-    if (savedScroll.current === null || !listRef.current) return
-    listRef.current.scrollTop = savedScroll.current
-    if (!saving) savedScroll.current = null
-  }, [saving, records, selected])
+    if (!open || !priorityReady) return
+    const list = listRef.current
+    if (!list) return
+    const rect = list.getBoundingClientRect(), scale = rect.height / list.offsetHeight || 1
+    const top = rect.top + list.clientTop * scale
+    if (pendingLocation.current && !search) {
+      const section = pageRefs.current.get(pendingLocation.current)
+      if (!section) return
+      const firstRow = section.querySelector<HTMLElement>('[data-question-key]') || section
+      list.scrollTop += (firstRow.getBoundingClientRect().top - top) / scale
+      pendingLocation.current = null; pendingAnchor.current = null
+      setPositioned(true)
+    } else if (pendingAnchor.current) {
+      const anchor = pendingAnchor.current, section = pageRefs.current.get(anchor.page)
+      const row = anchor.key && section ? [...section.querySelectorAll<HTMLElement>('[data-question-key]')].find(node => node.dataset.questionKey === anchor.key) : null
+      if (section) list.scrollTop += ((row || section).getBoundingClientRect().top - top) / scale - anchor.offset
+      pendingAnchor.current = null
+    }
+  }, [open, priorityReady, pages, failures, pageTarget, search, records, selected, saving])
+  function locatePage(id: string) { pendingLocation.current = id; setSearch(''); setPageTarget({ id }) }
 
   useEffect(() => {
     if (!open) return
@@ -66,7 +101,7 @@ function QuestionRecordsPanel({ open, project, controller, onClose }: Props) {
   async function submitWrite() {
     const pending = pendingWrite.current
     if (writeActive.current || !pending) return false
-    savedScroll.current = listRef.current?.scrollTop ?? null
+    pendingAnchor.current = captureAnchor()
     writeActive.current = true; setSaving(true); setRecordError(''); setFeedback('')
     try {
       const value = await request<RecordsDocument>(recordsPath, body({ expected_version: pending.version, records: pending.records }, 'PUT'))
@@ -85,50 +120,52 @@ function QuestionRecordsPanel({ open, project, controller, onClose }: Props) {
     } finally { writeActive.current = false; setSaving(false) }
   }
 
-  useEffect(() => {
-    if (!open) return
+  useLayoutEffect(() => {
+    if (!open) { opened.current = false; return }
     let live = true
+    const opening = !opened.current
+    opened.current = true
     const cached = new Map<string, PageData>()
     for (const page of project.pages) {
-      const data = controller.pages.get(page.id)?.data
-      if (data) cached.set(page.id, data)
+      const data = controller.pages.get(page.id)?.data || pagesSnapshot.current.get(page.id)
+      if (data && data.revision >= page.revision) cached.set(page.id, data)
     }
+    if (opening) {
+      setSearch(''); setPriorityReady(false); setPositioned(false)
+      const id = project.pages.some(page => page.id === currentPageId) ? currentPageId : project.pages[0]?.id
+      pendingLocation.current = id || null
+      setPageTarget(id ? { id } : null)
+    } else pendingAnchor.current = captureAnchor()
     setPages(cached); setFailures(new Map()); setLoading(true)
-    const pending = project.pages.filter(page => !cached.has(page.id))
-    let cursor = 0
-    // Read uncached pages directly: EditorState.load can restore and auto-save drafts.
-    const load = async () => {
-      while (live && cursor < pending.length) {
-        const page = pending[cursor++]
-        try {
-          const data = await request<PageData>(`${projectPath(project.id)}/pages/${page.id}`)
-          if (live) setPages(previous => new Map(previous).set(page.id, controller.pages.get(page.id)?.data || data))
-        } catch (error) {
-          if (live) setFailures(previous => new Map(previous).set(page.id, (error as Error).message))
-        }
-      }
-    }
-    void Promise.all(Array.from({ length: Math.min(6, pending.length) }, load)).then(() => { if (live) setLoading(false) })
+    // Direct reads never restore or auto-save unrelated editor drafts.
+    void loadQuestionPages<PageData>({
+      pageIds: project.pages.map(page => page.id), currentPageId, cached,
+      load: id => request<PageData>(`${projectPath(project.id)}/pages/${id}`),
+      isActive: () => live,
+      onBatch: (loaded, errors, priorityDone) => {
+        if (!live) return
+        if (!pendingLocation.current) pendingAnchor.current = captureAnchor()
+        setPages(previous => {
+          const next = new Map(previous)
+          for (const [id, data] of loaded) next.set(id, controller.pages.get(id)?.data || data)
+          return next
+        })
+        setFailures(previous => new Map([...previous, ...errors]))
+        if (priorityDone) setPriorityReady(true)
+      },
+    }).finally(() => { if (live) { setLoading(false); setPriorityReady(true); if (!project.pages.length) setPositioned(true) } })
     return () => { live = false }
-  }, [open, project.id, project.pages, controller, attempt])
+  }, [open, project.id, project.pages, controller, currentPageId, attempt])
 
-  const texts = useMemo(() => project.pages.flatMap((page, pageIndex) => (pages.get(page.id)?.items || []).map((item, itemIndex) => ({
-    key: JSON.stringify([page.id, item._id]), pageId: page.id, pageNumber: pageIndex + 1, pageName: page.name,
-    itemId: item._id, itemNumber: itemIndex + 1, text: item.text,
-  }))), [project.pages, pages])
+  const texts = useMemo(() => questionReferences(project, pages), [project, pages])
   const query = search.trim().toLocaleLowerCase()
   const visible = texts.filter(text => !query || text.text.toLocaleLowerCase().includes(query))
-  const selectedTexts = [...selected.values()].sort((a, b) => a.pageNumber - b.pageNumber || a.itemNumber - b.itemNumber)
+  const selectedTexts = [...selected.values()]
   const selectedPages = new Set(selectedTexts.map(text => text.pageId)).size
   const viewed = records.find(record => record.id === viewingId)
   const visibleKeys = new Set(visible.map(text => text.key))
   const selectedVisibleCount = visible.filter(text => selected.has(text.key)).length
 
-  useEffect(() => {
-    if (!open || loading || !pageTarget || search) return
-    const list = listRef.current, section = pageRefs.current.get(pageTarget.id)
-    if (list && section) list.scrollTo({ top: list.scrollTop + section.getBoundingClientRect().top - list.getBoundingClientRect().top - list.clientTop })
-  }, [open, loading, pageTarget, search])
 
   function toggle(text: TextReference, checked: boolean) {
     setSelected(previous => {
@@ -169,13 +206,13 @@ function QuestionRecordsPanel({ open, project, controller, onClose }: Props) {
     </div>)
   }
 
-  return <Modal title={<div className="pl-question-header-line"><strong>疑問記錄 · {project.name}</strong><span>只讀 · 跨頁多選</span><small>{saving ? '保存中…' : '隨項目 JSON 保存與匯出'}</small></div>} open={open} width="calc(100vw - 16px)" className="pl-question-modal" onCancel={onClose} closable={!saving} keyboard={!saving} maskClosable={!saving}
+  return <Modal title={<div className="pl-question-header-line"><strong>疑問記錄 · {project.name}</strong><span>只讀 · 跨頁多選</span><small>{saving ? '保存中…' : '隨項目 JSON 保存與匯出'}</small></div>} open={open} transitionName="" maskTransitionName="" width="calc(100vw - 16px)" className="pl-question-modal" onCancel={onClose} closable={!saving} keyboard={!saving} maskClosable={!saving}
     footer={null}>
     <div className="pl-question-layout">
       <section className="pl-question-source" aria-label="項目全部文本">
         <div className="pl-question-filters">
           <Input.Search size="small" aria-label="搜尋文本" placeholder="搜尋" allowClear value={search} onChange={event => setSearch(event.target.value)} />
-          <Select size="small" aria-label="定位頁碼" placeholder="定位頁碼" showSearch optionFilterProp="label" value={pageTarget?.id} onSelect={id => { setSearch(''); setPageTarget({ id }) }}
+          <Select size="small" aria-label="定位頁碼" placeholder="定位頁碼" showSearch optionFilterProp="label" value={pageTarget?.id} onSelect={locatePage}
             options={project.pages.map((page, index) => ({ value: page.id, label: `第 ${index + 1} 頁 · ${page.name}` }))} />
         <div className="pl-question-selection-bar">
           <Checkbox checked={visible.length > 0 && selectedVisibleCount === visible.length} indeterminate={selectedVisibleCount > 0 && selectedVisibleCount < visible.length}
@@ -188,18 +225,14 @@ function QuestionRecordsPanel({ open, project, controller, onClose }: Props) {
           <span className="pl-question-muted">{visible.length === texts.length ? `${texts.length} 條` : `${visible.length}／${texts.length}`}</span>
         </div>
         </div>
-        {loading && <div className="pl-question-loading"><Spin size="small" /> 正在讀取全項目文本（{pages.size}／{project.pages.length} 頁）</div>}
-        {failures.size > 0 && <Alert type="warning" showIcon message={`${failures.size} 頁讀取失敗，其餘文本仍可選取。`}
-          description={<><div>{project.pages.filter(page => failures.has(page.id)).map(page => `第 ${project.pages.findIndex(candidate => candidate.id === page.id) + 1} 頁：${failures.get(page.id)}`).join('；')}</div>
-            <Button size="small" onClick={() => setAttempt(value => value + 1)} disabled={loading}>重試讀取</Button></>} />}
-        <div className="pl-question-text-list" ref={listRef}>
+        <div className="pl-question-text-list" ref={listRef} aria-busy={loading} style={{ visibility: positioned ? 'visible' : 'hidden' }}>
           {project.pages.map((page, pageIndex) => {
             const items = visible.filter(text => text.pageId === page.id)
             if (!items.length && query) return null
-            return <section className="pl-question-page" key={page.id} ref={node => { if (node) pageRefs.current.set(page.id, node); else pageRefs.current.delete(page.id) }} aria-label={`第 ${pageIndex + 1} 頁文本`}>
+            return <section className="pl-question-page" data-question-page={page.id} key={page.id} ref={node => { if (node) pageRefs.current.set(page.id, node); else pageRefs.current.delete(page.id) }} aria-label={`第 ${pageIndex + 1} 頁文本`}>
               <h4 className="pl-question-sr-only">第 {pageIndex + 1} 頁 · {page.name}</h4>
               {!items.length && <div className="pl-question-empty-page pl-question-muted">第 {pageIndex + 1} 頁 · {pages.has(page.id) ? '無文本' : failures.has(page.id) ? '讀取失敗' : '讀取中…'}</div>}
-              {items.map(text => <div key={text.key} className={`pl-question-text-row${selected.has(text.key) ? ' is-selected' : ''}`}>
+              {items.map(text => <div key={text.key} data-question-key={text.key} className={`pl-question-text-row${selected.has(text.key) ? ' is-selected' : ''}`}>
                 <Checkbox disabled={saving || retryPending} checked={selected.has(text.key)} onChange={event => toggle(text, event.target.checked)} aria-label={`選取第 ${text.pageNumber} 頁第 ${text.itemNumber} 框`}>
                   <span className="pl-question-text-label" title={`第 ${text.pageNumber} 頁第 ${text.itemNumber} 框`}>{text.pageNumber}·{text.itemNumber}</span>
                   <span className="pl-question-text">{text.text.replace(/\s*\n\s*/g, ' ') || <span className="pl-question-muted">（空文字）</span>}</span>
@@ -211,6 +244,13 @@ function QuestionRecordsPanel({ open, project, controller, onClose }: Props) {
         </div>
       </section>
       <aside className="pl-question-compose" aria-label="疑問與記錄">
+        <div className="pl-question-load-status" role="status" aria-live="polite">
+          <span>{loading && <Spin size="small" />}{loading ? '讀取文本' : '文本'} {pages.size}／{project.pages.length} 頁</span>
+          {failures.size > 0 && <Button size="small" disabled={loading} onClick={() => setAttempt(value => value + 1)}>重試讀取</Button>}
+        </div>
+        {failures.size > 0 && <Alert type="warning" showIcon message={`${failures.size} 頁讀取失敗，其餘文本仍可選取。`}
+          description={<><div>{project.pages.filter(page => failures.has(page.id)).map(page => `第 ${project.pages.findIndex(candidate => candidate.id === page.id) + 1} 頁：${failures.get(page.id)}`).join('；')}</div>
+</>} />}
         {recordError && <Alert type="error" showIcon message={recordError} action={retryPending ? <Button size="small" loading={saving} onClick={() => void submitWrite()}>重試保存</Button> : <Button size="small" disabled={saving} onClick={() => setRecordsAttempt(value => value + 1)}>重新載入</Button>} />}
         {recordsLoading && <Spin size="small" />}
         {editingId && <div className="pl-question-edit-heading"><strong>修改疑問</strong><Button size="small" disabled={saving || retryPending} onClick={() => { clearDraft(); setFeedback('') }}>取消修改</Button></div>}

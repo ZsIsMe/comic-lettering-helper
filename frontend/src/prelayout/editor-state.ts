@@ -2,6 +2,7 @@ import { body, projectPath, request } from './api'
 import { type Item, type PageData, type Project } from './types'
 
 type Draft = { revision: number; items: Item[] }
+type Batch = { pages: string[] }
 type State = { data: PageData; undo: Item[][]; redo: Item[][]; dirty: boolean; version: number; error: string; saving: boolean; conflict: boolean;
   pending?: { revision: number; items: Item[]; operation_id: string; version: number }; server?: PageData }
 const copy = <T,>(value: T): T => structuredClone(value)
@@ -31,6 +32,9 @@ export class EditorState {
   private inflight = new Map<string, Promise<boolean>>()
   private persistence = new Map<string, Promise<unknown>>()
   private groups = new Map<string, { key: string; time: number }>()
+  // Keep ordinary item snapshots public for the before/after preview, with shared
+  // transaction metadata only for snapshots that belong to a cross-page edit.
+  private batches = new WeakMap<Item[], Batch>()
   private textDraft: { page: string; finish: () => void; changed: boolean } | null = null
   constructor(readonly project: string) {}
   beginTextDraft(page: string, finish: () => void) {
@@ -87,20 +91,89 @@ export class EditorState {
     const state = this.pages.get(id)
     if (!state) return
     const previous = this.groups.get(id), time = performance.now()
-    if (record && (!group || previous?.key !== group || (!continuing && time - previous.time > 350))) { state.undo.push(copy(undoSnapshot || state.data.items)); state.undo = state.undo.slice(-100); state.redo = [] }
+    if (record && (!group || previous?.key !== group || (!continuing && time - previous.time > 350))) {
+      this.invalidateRedo(id)
+      state.undo.push(copy(undoSnapshot || state.data.items)); this.trimUndo(id)
+    }
     if (group) this.groups.set(id, { key: group, time }); else this.groups.delete(id)
+    this.applyItems(id, items); this.changed(id)
+  }
+  editBatch(changes: ReadonlyMap<string, Item[]>) {
+    this.textDraft?.finish()
+    const prepared = [...changes].map(([id, items]) => {
+      const state = this.pages.get(id)
+      if (!state) throw new Error('跨頁修改前請先載入所有選中頁面。')
+      return { id, state, items: copy(items), before: copy(state.data.items) }
+    }).filter(page => JSON.stringify(page.items) !== JSON.stringify(page.before))
+    if (!prepared.length) return
+    const batch: Batch = { pages: prepared.map(page => page.id) }
+    for (const page of prepared) this.invalidateRedo(page.id)
+    for (const page of prepared) {
+      this.groups.delete(page.id)
+      this.batches.set(page.before, batch); page.state.undo.push(page.before)
+      this.applyItems(page.id, page.items)
+    }
+    // All pages reach the new state before any subscribers observe the batch.
+    for (const page of prepared) this.trimUndo(page.id)
+    for (const page of prepared) this.changed(page.id)
+  }
+  private applyItems(id: string, items: Item[]) {
+    const state = this.pages.get(id)!
     state.data.items = copy(items); delete state.data.reviewed_revision; state.dirty = true; state.version += 1
-    this.persist(id); this.emit(id); this.schedule(id)
+  }
+  private changed(id: string) { this.persist(id); this.emit(id); this.schedule(id) }
+  private invalidateRedo(id: string, visited = new Set<string>()) {
+    if (visited.has(id)) return
+    visited.add(id)
+    const state = this.pages.get(id)
+    if (!state) return
+    const discarded = state.redo; state.redo = []
+    for (const snapshot of discarded) {
+      for (const page of this.batches.get(snapshot)?.pages || []) this.invalidateRedo(page, visited)
+    }
+  }
+  private discardUndo(id: string, count: number) {
+    const state = this.pages.get(id)
+    if (!state) return
+    const discarded = state.undo.splice(0, count)
+    for (const snapshot of discarded) {
+      const batch = this.batches.get(snapshot)
+      if (!batch) continue
+      for (const page of batch.pages) {
+        const index = this.pages.get(page)?.undo.findIndex(entry => this.batches.get(entry) === batch) ?? -1
+        // A lost history entry is a barrier: older snapshots on another page
+        // cannot jump over that transaction and silently restore stale text.
+        if (index >= 0) this.discardUndo(page, index + 1)
+      }
+    }
+  }
+  private trimUndo(id: string) {
+    const length = this.pages.get(id)!.undo.length
+    if (length > 100) this.discardUndo(id, length - 100)
   }
   endGroup(id: string) { this.groups.delete(id) }
   undo(id: string, redo = false) {
     this.textDraft?.finish()
-    const state = this.pages.get(id)
-    if (!state) return
-    const from = redo ? state.redo : state.undo, to = redo ? state.undo : state.redo
-    const items = from.pop()
-    if (!items) return
-    to.push(copy(state.data.items)); this.edit(id, items, false)
+    const direction = redo ? 'redo' : 'undo', opposite = redo ? 'undo' : 'redo'
+    let target = id
+    const visited = new Set<string>()
+    while (!visited.has(target)) {
+      visited.add(target)
+      const snapshot = this.pages.get(target)?.[direction].at(-1)
+      if (!snapshot) return
+      const batch = this.batches.get(snapshot), ids = batch?.pages || [target]
+      const blocker = batch && ids.find(page => this.batches.get(this.pages.get(page)?.[direction].at(-1) || []) !== batch)
+      // Preserve chronology: first undo/redo the intervening operation on the
+      // other page, rather than replacing its more recent content wholesale.
+      if (blocker) { target = blocker; continue }
+      for (const page of ids) {
+        const state = this.pages.get(page)!, items = state[direction].pop()!, current = copy(state.data.items)
+        if (batch) this.batches.set(current, batch)
+        state[opposite].push(current); this.groups.delete(page); this.applyItems(page, items)
+      }
+      for (const page of ids) this.changed(page)
+      return
+    }
   }
   private persist(id: string, clear = false) {
     const state = this.pages.get(id)
@@ -168,12 +241,17 @@ export class EditorState {
     const server = await request<PageData>(`${projectPath(this.project)}/pages/${id}`)
     state.server = copy(server); state.data.revision = server.revision; state.version += 1; state.conflict = false; state.pending = undefined; state.error = ''
     if (keepLocal) { state.dirty = true; await this.save(id) }
-    else { state.undo.push(copy(state.data.items)); state.data = server; state.dirty = false; this.persist(id, true); this.emit(id) }
+    else {
+      this.invalidateRedo(id); this.groups.delete(id)
+      state.undo.push(copy(state.data.items)); this.trimUndo(id)
+      state.data = server; state.dirty = false; this.persist(id, true); this.emit(id)
+    }
   }
   async reload() {
     if (this.dirty) throw new Error('尚有未保存的修改，請先保存再重新載入。')
     await Promise.all(this.persistence.values())
     const ids = [...this.pages.keys()]
+    this.groups.clear(); this.batches = new WeakMap()
     for (const id of ids) { this.pages.delete(id); this.emit(id) }
     await Promise.all(ids.map(id => this.load(id)))
   }
@@ -182,7 +260,8 @@ export class EditorState {
       const data = await request<PageData>(`${projectPath(this.project)}/pages/${id}`)
       if (state.dirty) throw new Error('文字已有修改，請先處理保存版本。')
       if (JSON.stringify(data.items) !== JSON.stringify(state.data.items)) {
-        state.undo.push(copy(state.data.items)); state.undo = state.undo.slice(-100); state.redo = []
+        this.invalidateRedo(id); this.groups.delete(id)
+        state.undo.push(copy(state.data.items)); this.trimUndo(id)
       }
       state.data = data; state.version += 1; state.pending = undefined; state.error = ''; state.conflict = false
       this.persist(id, true); this.emit(id)
@@ -204,7 +283,8 @@ export class EditorState {
       clearTimeout(this.timers.get(page.id)); this.groups.delete(page.id)
       state.data = data[index]; state.server = copy(data[index]); state.version += 1
       // Earlier per-page snapshots must not silently reintroduce text from before a project-wide replacement.
-      state.undo = []; state.redo = []; state.pending = undefined; state.error = ''; state.conflict = false
+      this.discardUndo(page.id, state.undo.length); this.invalidateRedo(page.id)
+      state.pending = undefined; state.error = ''; state.conflict = false
       this.persist(page.id, true); this.emit(page.id)
     }
     await Promise.all(changed.map(page => this.persistence.get(page.id)))

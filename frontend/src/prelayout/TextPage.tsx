@@ -4,7 +4,7 @@ import { type Item, type Page, type CharacterBox, uid } from './types'
 import { EditorState } from './editor-state'
 import { PreviewLayer } from './PreviewLayer'
 import { textStyle } from './layout-review'
-import { moved, resized, transform, type Selection, type PagePointer, type VisibleRegion } from './geometry'
+import { selectionIds, selectTextItem, moved, resized, transform, type Selection, type PagePointer, type VisibleRegion } from './geometry'
 import { adjustedItems, type TextAdjustment } from './shortcuts'
 import { CharacterOverlay, type CharacterOverlayHandle } from './CharacterOverlay'
 import { InlineTextEditor } from './InlineTextEditor'
@@ -27,12 +27,13 @@ const quickControls = [
   { kind: 'orientation' },
 ] as const satisfies readonly { kind: QuickControlKind }[]
 
-export const TextPage = memo(function TextPage({ project, page, scale, edge, clean, difference, differenceColor, differenceOpacity, showText = true, readonly, controller, selection, onSelect, onInteracting, showMeasure, onMeasure, region, detailed, interacting, onPointer, groupNames = [] }: {
+export const TextPage = memo(function TextPage({ project, page, scale, edge, clean, difference, differenceColor, differenceOpacity, showText = true, readonly, controller, selection, onSelect, onInteracting, showMeasure, onMeasure, region, detailed, interacting, onPointer, onAdjust, groupNames = [] }: {
   project: string; page: Page; scale: number; edge: number; clean: boolean; readonly?: boolean;
   difference: boolean; differenceColor: string; differenceOpacity: number; showText?: boolean;
   controller: EditorState; selection: Selection; onSelect: (selection: Selection) => void; onInteracting: (id: string | null) => void;
   showMeasure: boolean; onMeasure: (index: number, page: string) => void;
   region: VisibleRegion | null; detailed: boolean; interacting: boolean; onPointer: (pointer: PagePointer | null) => void;
+  onAdjust?: (adjustment: TextAdjustment) => boolean;
   groupNames?: readonly string[];
 }) {
   useSyncExternalStore(callback => controller.subscribe(page.id, callback), () => controller.tick(page.id))
@@ -74,9 +75,12 @@ export const TextPage = memo(function TextPage({ project, page, scale, edge, cle
     if (readonly || !showText || event.button !== 0 || !scene.current || !state) return
     event.stopPropagation(); event.preventDefault()
     scene.current.closest<HTMLElement>('.pl-viewport')?.focus({ preventScroll: true })
-    let ids = selection.page === page.id && selection.ids.includes(item._id) ? selection.ids : [item._id]
-    if (event.shiftKey) ids = selection.page === page.id ? [...new Set([...selection.ids, item._id])] : [item._id]
-    onSelect({ page: page.id, ids }); onInteracting(page.id)
+    const next = selectTextItem(selection, page.id, item._id, event.shiftKey)
+    onSelect(next)
+    // Shift only changes selection, so selecting another page cannot move its text.
+    if (event.shiftKey) return
+    const ids = selectionIds(next, page.id)
+    onInteracting(page.id)
     const rect = scene.current.getBoundingClientRect()
     const center = [rect.left + item.x * page.width * scale, rect.top + item.y * page.height * scale]
     const originals = structuredClone(state.data.items.filter(value => ids.includes(value._id)))
@@ -126,6 +130,7 @@ export const TextPage = memo(function TextPage({ project, page, scale, edge, cle
   function adjust(adjustment: TextAdjustment) {
     const state = controller.pages.get(page.id)
     if (readonly || !showText || interacting || dragging.current || !state || selection.page !== page.id) return
+    if (onAdjust && adjustment.kind !== 'move') { onAdjust(adjustment); return }
     const items = adjustedItems(state.data.items, selection.ids, adjustment, page.width, page.height)
     if (items !== state.data.items) controller.edit(page.id, items)
   }
@@ -137,7 +142,7 @@ export const TextPage = memo(function TextPage({ project, page, scale, edge, cle
     setEditing({ id: item._id, x: event.clientX, y: event.clientY })
     return true
   }
-  const selected = selection.page === page.id ? selection.ids : []
+  const selected = selectionIds(selection, page.id)
   return <div className="pl-page" data-page={page.id} data-readonly={!!readonly} style={{ width: page.width * scale, height: page.height * scale }} onPointerMove={event => {
     if (interacting || dragging.current) return
     const rect = event.currentTarget.getBoundingClientRect()
@@ -149,7 +154,7 @@ export const TextPage = memo(function TextPage({ project, page, scale, edge, cle
     <div className="pl-scene" ref={scene} style={{ width: page.width, height: page.height, transform: `scale(${scale})` }} onDoubleClick={add} onPointerDown={event => {
       if (readonly || !showText || event.button !== 0) return
       scene.current?.closest<HTMLElement>('.pl-viewport')?.focus({ preventScroll: true })
-      onSelect({ page: page.id, ids: [] })
+      if (!event.shiftKey) onSelect({ page: page.id, ids: [] })
     }}>
       <PreviewLayer project={project} page={page} edge={edge} scale={scale} clean={clean && !!page.clean} region={region} detailed={detailed} interacting={interacting} />
       {difference && !!page.clean && !readonly && <DifferenceOverlay project={project} page={page} edge={edge} interacting={interacting} color={differenceColor} opacity={differenceOpacity} />}
@@ -163,7 +168,7 @@ export const TextPage = memo(function TextPage({ project, page, scale, edge, cle
         }} onPointerMove={move} onPointerUp={event => end(event)} onPointerCancel={event => end(event, true)} onDoubleClick={event => { beginInlineEdit(event, item) }}>
         {editing?.id === item._id ? <InlineTextEditor key={item._id} item={item} page={page.id} controller={controller} point={editing} pageWidth={page.width} scale={scale} onSplit={ids => onSelect({ page: page.id, ids: [ids.at(-1)!] })} onFinish={() => setEditing(current => current?.id === item._id ? null : current)} /> : <DisplayText text={item.text} orientation={item.orientation} />}
         <span className="pl-font-label pl-current-font" aria-label={`分組與字號 ${textInfoLabel(item, groupNames)}`} title={textInfoLabel(item, groupNames)} style={{ fontSize: 11 / scale, padding: `${2 / scale}px ${4 / scale}px`, bottom: -19 / scale, transform: `rotate(${item.rotation}deg)`, transformOrigin: 'top right' }}>{typeof item.groupId === 'number' && groupNames[item.groupId] ? <><GroupName name={groupNames[item.groupId]} index={item.groupId} />，{fontLabel(item['font-size'])}</> : <>未分組，{fontLabel(item['font-size'])}</>}</span>
-        {selected.includes(item._id) && editing?.id !== item._id && <>
+        {selection.page === page.id && selected.includes(item._id) && editing?.id !== item._id && <>
           {frameControls.map(corner => <button key={`${corner.x}-${corner.y}`} type="button" className="pl-text-step" aria-label={corner.label} title={`${corner.hint}（套用所有選取文字）`} style={{
             width: 22 / scale, height: 22 / scale, fontSize: 17 / scale, borderWidth: 1 / scale,
             [corner.x]: -6 / scale, [corner.y]: -6 / scale,

@@ -1,6 +1,32 @@
 import type { Item, Measure } from './types'
 
-export type Selection = { page: string; ids: string[] }
+export type Selection = { page: string; ids: string[]; byPage?: Record<string, string[]>; order?: { page: string; id: string }[] }
+export function selectionPages(selection: Selection): Record<string, string[]> {
+  return Object.fromEntries(Object.entries({ ...selection.byPage, [selection.page]: selection.ids }).filter(([, ids]) => ids.length))
+}
+export function selectionIds(selection: Selection, page: string): string[] {
+  return page === selection.page ? selection.ids : selection.byPage?.[page] || []
+}
+export function selectionOrder(selection: Selection): { page: string; id: string }[] {
+  const pages = selectionPages(selection), seen = new Set<string>()
+  return [...(selection.order || []), ...Object.entries(pages).flatMap(([page, ids]) => ids.map(id => ({ page, id })))].filter(value => {
+    const key = JSON.stringify([value.page, value.id])
+    if (!pages[value.page]?.includes(value.id) || seen.has(key)) return false
+    seen.add(key); return true
+  })
+}
+export function selectTextItem(selection: Selection, page: string, id: string, additive: boolean): Selection {
+  const pages = selectionPages(selection), existing = pages[page] || []
+  const order = selectionOrder(selection).filter(value => !(additive && existing.includes(id) && value.page === page && value.id === id))
+  if (additive && !existing.includes(id)) order.push({ page, id })
+  if (!additive && !existing.includes(id)) return { page, ids: [id] }
+  const ids = additive ? existing.includes(id) ? existing.filter(value => value !== id) : [...existing, id] : existing
+  pages[page] = ids
+  const entries = Object.entries(pages).filter(([, values]) => values.length)
+  if (!entries.length) return { page, ids: [] }
+  const active = ids.length ? page : entries[entries.length - 1][0]
+  return { page: active, ids: pages[active], byPage: Object.fromEntries(entries), order }
+}
 export type PagePointer = { page: string; x: number; y: number }
 export type VisibleRegion = { x: number; y: number; width: number; height: number }
 export const color = (value: string) => value === 'black' ? '#000000' : value === 'white' ? '#ffffff' : value.startsWith('#') ? value : `#${value}`

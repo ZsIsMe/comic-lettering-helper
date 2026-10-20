@@ -83,3 +83,7 @@
 .pl-compact-workspace .pl-items-list button span{max-width:100%}
 @media(max-width:1100px){.pl-compact-workspace:not(.pl-focus-mode) .pl-layout{grid-template-columns:minmax(0,1fr) 220px}}
 @media(max-width:760px){.pl-compact-workspace:not(.pl-focus-mode) .pl-layout{grid-template-columns:minmax(0,1fr) 200px}}
+
+.pl-selection-summary{display:flex;flex-wrap:wrap;align-items:center;gap:3px 6px;padding:4px 0;color:#824522;font-size:12px;border-bottom:1px solid #e3dbcf}.pl-selection-summary small{flex-basis:100%;font-size:11px;line-height:1.5;color:#73695e}
+
+.pl-inline-question{display:flex;flex-wrap:wrap;justify-content:flex-end;gap:4px;margin:5px 0}.pl-inline-question textarea{width:100%}.pl-inline-question small{flex-basis:100%;color:#b23b2b;font-size:11px;line-height:1.5}

@@ -64,3 +64,7 @@
 .pl-question-record-line .ant-btn { padding-inline: 3px; font-size: 11px; }
 .pl-question-record-detail { padding: 3px 2px; }
 .pl-question-record-summary:focus-visible { outline: 2px solid #1677ff; outline-offset: 1px; }
+
+.pl-question-text-list{scrollbar-gutter:stable;scroll-behavior:auto}.pl-question-header-line>span{display:inline-flex;align-items:center;gap:6px;min-width:0}.pl-question-page{min-height:22px}
+
+.pl-question-load-status{display:flex;align-items:center;justify-content:space-between;gap:4px;min-height:24px;font-size:11px;color:#667085}.pl-question-load-status>span{display:inline-flex;align-items:center;gap:6px;white-space:nowrap;font-variant-numeric:tabular-nums}.pl-question-load-status .ant-btn{font-size:11px;padding-inline:5px}

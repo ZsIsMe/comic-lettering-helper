@@ -2,12 +2,14 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import type { Page, Project } from './types'
 import { EditorState } from './editor-state'
 import { TextPage } from './TextPage'
+import type { TextAdjustment } from './shortcuts'
 import type { PagePointer, Selection, VisibleRegion } from './geometry'
 type Row = { page: Page; top: number; height: number; scale: number }
 type Anchor = { id: string; offset: number; x: number; side: number; viewX: number; viewY: number }
 
-export function ContinuousPages({ project, controller, selection, onSelect, zoom, compare, clean, difference, differenceColor, differenceOpacity, showText, showMeasure, jump, onCurrent, onMeasure, onZoom, onPointer, onFontWheel, onInteractionChange }: {
+export function ContinuousPages({ project, controller, selection, onSelect, onAdjust, zoom, compare, clean, difference, differenceColor, differenceOpacity, showText, showMeasure, jump, onCurrent, onMeasure, onZoom, onPointer, onFontWheel, onInteractionChange }: {
   project: Project; controller: EditorState; selection: Selection; onSelect: (value: Selection) => void;
+  onAdjust?: (adjustment: TextAdjustment) => boolean;
   zoom: number; compare: boolean; clean: boolean; difference: boolean; differenceColor: string; differenceOpacity: number; showText: boolean; showMeasure: boolean; jump: { id: string; version: number; y?: number } | null;
   onCurrent: (id: string) => void; onMeasure: (index: number, page: string) => void; onZoom: (value: number) => void;
   onPointer: (pointer: PagePointer | null) => void;
@@ -130,7 +132,7 @@ export function ContinuousPages({ project, controller, selection, onSelect, zoom
     })
   }, [project.id])
   // Keep the selected/focused page alive through offscreen editing, as well as the active gesture.
-  const visible = rows.filter(row => row.page.id === interacting || (selection.ids.length && row.page.id === selection.page) || (row.top + row.height > area.top - area.height && row.top < area.top + area.height * 2))
+  const visible = rows.filter(row => row.page.id === interacting || (selection.ids.length > 0 && row.page.id === selection.page) || (row.top + row.height > area.top - area.height && row.top < area.top + area.height * 2))
   const last = rows.at(-1)
   return <div className="pl-viewport" ref={viewport} onScroll={scroll} aria-label="連續漫畫頁面" tabIndex={0}>
     <div className="pl-page-track" style={{ height: (last ? last.top + last.height : 200) + 24, width: wide }}>
@@ -143,7 +145,7 @@ export function ContinuousPages({ project, controller, selection, onSelect, zoom
           const right = Math.min(row.page.width, (area.left + area.width - left - side * (width + 20)) / row.scale), bottom = Math.min(row.page.height, (area.top + area.height - row.top - 28) / row.scale)
           return right > x && bottom > y ? { x, y, width: right - x, height: bottom - y } : null
         }
-        const common = { project: project.id, page: row.page, scale: row.scale, edge, controller, selection, onSelect, onInteracting: interactionChanged, onMeasure, onPointer, detailed: settled, interacting: !!interacting, groupNames, differenceColor, differenceOpacity }
+        const common = { project: project.id, page: row.page, scale: row.scale, edge, controller, selection, onSelect, onAdjust, onInteracting: interactionChanged, onMeasure, onPointer, detailed: settled, interacting: !!interacting, groupNames, differenceColor, differenceOpacity }
         return <section className="pl-page-row" key={row.page.id} style={{ top: row.top, height: row.height, width: wide }}>
           <div className="pl-page-caption">{row.page.name}{compare ? ' · 左：預排版　右：原圖與偵測框' : clean && !row.page.clean ? ' · 原圖（尚無去字預覽）' : clean && row.page.clean_kind === 'inpainted' ? ' · inpainted 預覽' : clean ? ' · 去字圖' : ' · 原圖'}</div>
           <div className="pl-page-pair">
