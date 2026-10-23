@@ -15,6 +15,8 @@ import { usePrelayoutAgent } from './usePrelayoutAgent'
 import { TextReplacementModal } from './TextReplacementModal'
 import { QuestionRecordsModal } from './QuestionRecordsModal'
 import { InlineQuestionRecord } from './InlineQuestionRecord'
+import type { TextReference } from './question-references'
+import { questionReferencePage, questionReferenceItem } from './question-navigation'
 import bundledFontUrl from '../assets/fonts/toolbox-demibold-v2.7.ttf?url'
 import { displayFontUrl } from './display-font'
 import { LocalFontPicker } from './LocalFontPicker'
@@ -22,7 +24,10 @@ import { loadLocalFont } from './local-fonts'
 import { getFontCatalogue, refreshFontCatalogue, subscribeFontCatalogue } from './font-catalogue'
 import { groupFontChanges } from './group-fonts'
 import { GroupImportModal } from './GroupImportModal'
+import { downloadDiscussion, downloadMeo as downloadMeoFile } from './download-discussion'
+import { ProjectExportGuard } from './export-guard'
 import type { GroupImportResult } from './group-import'
+import { AlignmentControls } from './AlignmentControls'
 import './styles.css'
 
 const showCleanUpload = false
@@ -116,7 +121,7 @@ function Workspace({ project: initial, promptDetection, onExit, onReadyToLeave }
   const [differenceStyle] = useState(differenceStylePreference)
   const [current, setCurrent] = useState(initial.pages[0].id), [zoom, setZoom] = useState<number>(Math.max(.5, Math.min(3, Number(view.zoom) || 1))), [compare, setCompare] = useState(view.compare !== false), [clean, setClean] = useState(view.clean !== false), [difference, setDifference] = useState(view.difference === true), [showText, setShowText] = useState(view.showText !== false), [showMeasure, setShowMeasure] = useState(view.showMeasure !== false)
   const [differenceColor, setDifferenceColor] = useState(differenceStyle.color), [differenceOpacity, setDifferenceOpacity] = useState(differenceStyle.opacity)
-  const [jump, setJump] = useState<{ id: string; version: number; y?: number } | null>(null), [error, setError] = useState(''), [busy, setBusy] = useState(false)
+  const [jump, setJump] = useState<{ id: string; version: number; x?: number; y?: number } | null>(null), [error, setError] = useState(''), [busy, setBusy] = useState(false)
   const [pendingOnly, setPendingOnly] = useState(false)
   const [availability, setAvailability] = useState<Availability | null>(null), [task, setTask] = useState<Detection | null>(null)
   const [detectOpen, setDetectOpen] = useState(promptDetection)
@@ -124,6 +129,12 @@ function Workspace({ project: initial, promptDetection, onExit, onReadyToLeave }
   const [groupOpen, setGroupOpen] = useState(false), [groupDraft, setGroupDraft] = useState<string[]>([]), [newGroupName, setNewGroupName] = useState('')
   const [replacementOpen, setReplacementOpen] = useState(false)
   const [questionsOpen, setQuestionsOpen] = useState(false)
+  const [questionExportPending, setQuestionExportPending] = useState(false)
+  const [inlineQuestionPending, setInlineQuestionPending] = useState(false)
+  const exportGuard = useMemo(() => new ProjectExportGuard(), [])
+  const operationCount = useRef(0)
+  const questionPendingChanged = useCallback((pending: boolean) => { exportGuard.setPending('questions', pending); setQuestionExportPending(pending) }, [exportGuard])
+  const inlinePendingChanged = useCallback((pending: boolean) => { exportGuard.setPending('inline', pending); setInlineQuestionPending(pending) }, [exportGuard])
   const [questionsPage, setQuestionsPage] = useState(initial.pages[0].id)
   const [showService, setShowService] = useState(false)
   const [moreToolsOpen, setMoreToolsOpen] = useState(false)
@@ -206,8 +217,9 @@ function Workspace({ project: initial, promptDetection, onExit, onReadyToLeave }
     })().catch(e => setError(e.message)).finally(() => { refreshingDetection.current = false })
   }, [task, controller, initial.id])
   async function execute(fn: () => Promise<void>) {
+    operationCount.current += 1; exportGuard.invalidate()
     setBusy(true); setError('')
-    try { await fn() } catch (e) { setError((e as Error).message) } finally { setBusy(false) }
+    try { await fn() } catch (e) { setError((e as Error).message) } finally { operationCount.current -= 1; setBusy(operationCount.current > 0) }
   }
   async function openGroupOrganizer() {
     if (!await controller.flush()) throw new Error('文字尚未保存，請先處理保存衝突')
@@ -292,6 +304,20 @@ function Workspace({ project: initial, promptDetection, onExit, onReadyToLeave }
     if (!delta) return
     controller.edit(selection.page, state.data.items.map(item => selection.ids.includes(item._id)
       ? moved(item, axis === 'x' ? delta : 0, axis === 'y' ? delta : 0, state.data.width, state.data.height) : item))
+  }
+  const questionNavigation = useRef(0)
+  useEffect(() => () => { questionNavigation.current += 1 }, [])
+  async function navigateQuestion(reference: TextReference) {
+    const generation = ++questionNavigation.current
+    controller.finishTextDraft()
+    const page = questionReferencePage(project.pages, reference)
+    const loaded = await controller.load(page.id)
+    if (generation !== questionNavigation.current) return
+    const item = questionReferenceItem(loaded.data.items, reference)
+    setShowText(true)
+    setCurrent(page.id)
+    setSelection({ page: page.id, ids: [item._id] })
+    setJump({ id: page.id, x: item.x, y: item.y, version: performance.now() })
   }
   const select = useCallback((value: Selection) => setSelection(value), [])
   const currentPage = useCallback((id: string) => { setCurrent(id); setSelection(value => value.ids.length ? value : { page: id, ids: [] }) }, [])
@@ -441,7 +467,10 @@ function Workspace({ project: initial, promptDetection, onExit, onReadyToLeave }
       await Promise.all(result.pages.filter(page => page.id === current).map(page => controller.load(page.id)))
     }) })
   }
-  function downloadMeo() { void execute(async () => { if (await controller.flush()) window.location.assign(`${projectPath(project.id)}/export/bt`) }) }
+  function exportProject(markdown: boolean) {
+    if (operationCount.current || busy || activeDetection(task)) return
+    void execute(() => markdown ? downloadDiscussion(project, () => controller.flush(), exportGuard) : downloadMeoFile(project, () => controller.flush(), exportGuard))
+  }
   const onMeasure = useCallback((index: number, pageId: string) => {
     const state = controller.pages.get(pageId)
     const measure = state?.data.measure[index], box = measure?.xyxy_pixel
@@ -455,7 +484,7 @@ function Workspace({ project: initial, promptDetection, onExit, onReadyToLeave }
   return <main className={`pl-shell pl-workspace pl-compact-workspace ${showService ? 'pl-show-service' : ''} ${focus ? 'pl-focus-mode' : ''}`}>{modalContext}{noticesContext}{agent.review}
     <TextReplacementModal open={replacementOpen} project={project} controller={controller} onClose={() => setReplacementOpen(false)}
       onBusyChange={setBusy} onProject={setProject} onReviewPage={go} />
-    <QuestionRecordsModal currentPageId={questionsPage} open={questionsOpen} project={project} controller={controller} onClose={() => setQuestionsOpen(false)} />
+    <QuestionRecordsModal onExportPendingChange={questionPendingChanged} currentPageId={questionsPage} open={questionsOpen} project={project} controller={controller} onClose={() => setQuestionsOpen(false)} />
     <Modal title="預排版快捷鍵與滑鼠操作" open={shortcutOpen} onCancel={() => setShortcutOpen(false)} width="calc(100vw - 32px)" centered className="pl-shortcut-modal" footer={<Button onClick={() => setShortcutOpen(false)}>關閉</Button>}>
       <ShortcutHelp collapsible={false} />
     </Modal>
@@ -527,7 +556,7 @@ function Workspace({ project: initial, promptDetection, onExit, onReadyToLeave }
       <Space size={4} wrap>
         <Popover open={moreToolsOpen} onOpenChange={setMoreToolsOpen} trigger="click" placement="bottomRight" title="匯入與準備" content={<div className="pl-more-tools"><Space size={4} wrap>
             {(['bt', 'labelplus', 'clean'] as const).filter((kind): boolean => kind !== 'clean' || showCleanUpload).map(kind => <Button size="small" key={kind} disabled={busy} onClick={() => { importKind.current = kind; if (fileInput.current) { fileInput.current.accept = kind === 'bt' ? '.json' : kind === 'labelplus' ? '.txt' : '.png,.jpg,.jpeg'; fileInput.current.multiple = kind === 'clean'; fileInput.current.click() } }}>{kind === 'bt' ? '開啟 Meo.json' : kind === 'labelplus' ? '匯入LP.txt' : '上傳去字圖'}</Button>)}
-            <Button size="small" onClick={() => { setMoreToolsOpen(false); downloadMeo() }}>匯出 Meo.json</Button>
+            <Button size="small" disabled={busy || questionExportPending || inlineQuestionPending || activeDetection(task)} onClick={() => { setMoreToolsOpen(false); exportProject(false) }}>匯出 Meo.json</Button>
             <Button size="small" onClick={() => { setMoreToolsOpen(false); setDetectionToolsOpen(true) }}>偵測與字級</Button>
             <Button size="small" href="/downloads/LabelPlus_Ps_Script_ZS-1.8.0.zip" download="LabelPlus_Ps_Script_ZS-1.8.0.zip">配套PS腳本</Button>
         </Space></div>}><Button size="small">匯入與準備 ▾{activeDetection(task) ? ' · 偵測中' : ''}</Button></Popover>
@@ -545,7 +574,8 @@ function Workspace({ project: initial, promptDetection, onExit, onReadyToLeave }
               if (!await controller.flush()) throw new Error('文字尚未保存，請先處理保存錯誤或版本衝突。')
               setReplacementOpen(true)
             })}>批量替換</Button>
-      <Button size="small" disabled={busy || activeDetection(task)} onClick={() => { setQuestionsPage(current); setQuestionsOpen(true) }}>導出疑問記錄</Button>
+      <Button size="small" disabled={busy || activeDetection(task)} title="查看、新增與修改疑問記錄" onClick={() => { setQuestionsPage(current); setQuestionsOpen(true) }}>疑問記錄</Button>
+      <Button size="small" disabled={busy || questionExportPending || inlineQuestionPending || activeDetection(task)} title={inlineQuestionPending ? '疑問保存結果尚未確認，請先在右側重試保存' : questionExportPending ? '疑問保存結果尚未確認，請先在疑問記錄中重試保存' : '下載 Markdown：疑問置前，附逐頁全文、原文、註解與概括'} onClick={() => exportProject(true)}>導出疑問記錄</Button>
     </Space></div>
     <div className="pl-tool-row pl-display-tools"><span className="pl-tool-label">顯示</span><Space size={[8, 4]} wrap>
       <Select size="small" aria-label="縮放" title="相對適合寬度的縮放比例" value={zoom} onChange={setZoom} options={[...new Set([.5, .75, 1, 1.5, 2, 3, zoom])].sort((a, b) => a - b).map(value => ({ value, label: value === 1 ? '適合寬度' : `${Math.round(value * 100)}%` }))} />
@@ -561,16 +591,13 @@ function Workspace({ project: initial, promptDetection, onExit, onReadyToLeave }
       onReview={reviewed => void execute(() => setReviewed(reviewed))} onFinishAndNext={() => void execute(finishAndNext)} busy={busy || saving} focus={focus} onFocus={setFocus} />
     <div className="pl-layout">
       <ContinuousPages project={project} controller={controller} selection={selection} onSelect={select} onAdjust={adjust} zoom={zoom} onZoom={setZoom} compare={compare} clean={clean} difference={difference} differenceColor={differenceColor} differenceOpacity={differenceOpacity} showText={showText} showMeasure={showMeasure} jump={jump} onCurrent={currentPage} onMeasure={onMeasure} onPointer={pointerChanged} onFontWheel={fontWheel} onInteractionChange={interactionChanged} />
-      <aside className="pl-inspector">
+      <aside className="pl-inspector" aria-label="文字編輯">
         <div className="pl-inspector-title"><h2>文字編輯</h2><Tooltip title="雙擊頁面文字可原位編輯；Mac 也可用 ⌘＋單擊，並支援直排。Enter 換行；⌘／Ctrl＋Enter 完成；Esc 保存並結束編輯。"><button type="button" className="pl-help" aria-label="文字編輯說明">?</button></Tooltip></div>{state?.conflict && <Space wrap><Button onClick={() => void execute(() => controller.resolve(selection.page, true))}>保留我的草稿</Button><Button onClick={() => void execute(() => controller.resolve(selection.page, false))}>載入伺服器版</Button></Space>}
         {allSelected.length > 0 && <div className="pl-selection-summary"><span>已選 {selectedPageCount} 頁 · {allSelected.length} 框</span><Button size="small" onClick={() => setSelection({ page: current, ids: [] })}>清除</Button>{crossPage && <small>樣式與分組套用全部；文字、位置、拖曳、複製及刪除僅作用於第 {project.pages.findIndex(page => page.id === selection.page) + 1} 頁所選框。</small>}</div>}
-        <InlineQuestionRecord project={project} controller={controller} selection={selection} onSaved={saved => {
-          setSelection(current => JSON.stringify(selectionPages(current)) === JSON.stringify(selectionPages(saved)) ? { page: current.page, ids: [] } : current)
-          notices.success('已添加疑問記錄')
-        }} />
         <details open className="pl-groups-top"><summary>分組</summary><Space wrap>{groupNames.map((name, index) => <Tooltip key={`${index}-${name}`} title={selected.length ? `切換選取文字至「${name}」` : '請先選取文字'}><Button size="small" type={selectedGroupIds.size === 1 && selectedGroupId === index ? 'primary' : 'default'} disabled={!selected.length} onClick={() => patch({ groupId: index })}><GroupName name={name} index={index} /></Button></Tooltip>)}{!groupNames.length && <span className="pl-muted">尚無分組</span>}<Button size="small" onClick={() => void execute(openGroupOrganizer)}>整理分組</Button></Space></details>
         {first ? <><label>文字 {selected.length > 1 && `· 本頁已選 ${selected.length} 條`}<Input.TextArea autoSize={{ minRows: 3, maxRows: 7 }} value={first.text} onChange={e => patch({ text: e.target.value })} /></label>
           <div className="pl-two-fields"><label>X 位置（像素）<InputNumber aria-label="X 位置（像素）" min={0} max={state?.data.width} step={1} precision={1} value={state ? Math.round(first.x * state.data.width * 10) / 10 : 0} onChange={value => moveSelected('x', value)} /></label><label>Y 位置（像素）<InputNumber aria-label="Y 位置（像素）" min={0} max={state?.data.height} step={1} precision={1} value={state ? Math.round(first.y * state.data.height * 10) / 10 : 0} onChange={value => moveSelected('y', value)} /></label></div>
+          <AlignmentControls controller={controller} selection={selection} pageLabel={`第 ${project.pages.findIndex(page => page.id === selection.page) + 1} 頁`} disabled={busy || !showText} onApplied={() => exportGuard.invalidate()} />
           <div className="pl-two-fields"><label>角度<InputNumber aria-label="角度" value={mixed('rotation') ? null : first.rotation} placeholder="混合" min={-180} max={180} step={1} onChange={v => v !== null && patch({ rotation: v })} /></label><label>方向<Select value={mixed('orientation') ? undefined : first.orientation} placeholder="混合" onChange={v => patch({ orientation: v })} options={[{ value: 'vertical', label: '直排' }, { value: 'horizontal', label: '橫排' }]} /></label></div>
           <LocalFontPicker value={first.font} values={allSelected.map(item => item.font)} mixed={mixed('font')} selectionKey={allSelected.map(item => item._id).join(',')} onChange={font => patch({ font })} />
           <div className="pl-four-fields"><label>字級<InputNumber aria-label="字級" value={mixed('font-size') ? null : first['font-size']} placeholder="混合" min={1} max={999} onChange={v => v !== null && patch({ 'font-size': v })} /></label><label>文字色{mixed('color') && '（混合）'}<input aria-label="文字色" type="color" value={color(first.color)} onChange={e => patch({ color: e.target.value })} /></label><label>描邊粗細<InputNumber aria-label="描邊粗細" min={0} max={99} value={mixed('stroke-weight') ? null : first['stroke-weight']} placeholder="混合" onChange={v => v !== null && patch({ 'stroke-weight': v })} /></label><label>描邊色{mixed('stroke-color') && '（混合）'}<input aria-label="描邊色" type="color" value={color(first['stroke-color'])} onChange={e => patch({ 'stroke-color': e.target.value })} /></label></div>
@@ -580,6 +607,12 @@ function Workspace({ project: initial, promptDetection, onExit, onReadyToLeave }
         <details><summary>常用文字框</summary>{clipboard.map(item => <div className="pl-clipboard" key={item._id}><button title="暫存此框，再用 F2 貼到指標位置" onClick={() => { setMemory(structuredClone(item)); notices.info('已暫存，將指標移到頁面後按 F2 貼上') }}>{item.text || '空文字'}</button><Button size="small" onClick={() => void execute(async () => { const next = clipboard.filter(i => i._id !== item._id); await request(`${base}/preferences`, body(next, 'PUT')); setClipboard(next) })}>移除</Button></div>)}</details>
 
         {!fontReady && <p className="pl-muted">預覽字型尚未載入，目前暫用系統字型。</p>}
+      </aside>
+      <aside className="pl-inspector pl-question-inspector" aria-label="疑問記錄">
+        <InlineQuestionRecord refreshKey={questionsOpen} onNavigate={navigateQuestion} onExportPendingChange={inlinePendingChanged} project={project} controller={controller} selection={selection} onSaved={saved => {
+          setSelection(current => JSON.stringify(selectionPages(current)) === JSON.stringify(selectionPages(saved)) ? { page: current.page, ids: [] } : current)
+          notices.success('已添加疑問記錄')
+        }} />
       </aside>
     </div>
   </main>

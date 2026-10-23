@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import { Alert, Button, Checkbox, Empty, Input, Modal, Popconfirm, Select, Spin } from 'antd'
+import { Alert, Button, Checkbox, Empty, Input, Modal, Select, Spin } from 'antd'
 import { body, projectPath, request } from './api'
 import type { EditorState } from './editor-state'
 import type { PageData, Project } from './types'
@@ -9,13 +9,13 @@ import './question-records.css'
 
 type QuestionRecord = { id: string; note: string; texts: TextReference[]; createdAt: string; updatedAt: string }
 type RecordsDocument = { version: number; records: QuestionRecord[] }
-type Props = { currentPageId: string; open: boolean; project: Project; controller: EditorState; onClose: () => void }
+type Props = { currentPageId: string; open: boolean; project: Project; controller: EditorState; onClose: () => void; onExportPendingChange?: (pending: boolean) => void }
 
 export function QuestionRecordsModal(props: Props) {
   return <QuestionRecordsPanel key={props.project.id} {...props} />
 }
 
-function QuestionRecordsPanel({ open, project, controller, onClose, currentPageId }: Props) {
+function QuestionRecordsPanel({ open, project, controller, onClose, currentPageId, onExportPendingChange }: Props) {
   const [pages, setPages] = useState<Map<string, PageData>>(new Map())
   const [failures, setFailures] = useState<Map<string, string>>(new Map())
   const [loading, setLoading] = useState(false)
@@ -45,6 +45,7 @@ function QuestionRecordsPanel({ open, project, controller, onClose, currentPageI
   const writeActive = useRef(false)
   const [retryPending, setRetryPending] = useState(false)
   const pendingWrite = useRef<{ version: number; records: QuestionRecord[]; complete: () => void } | null>(null)
+  useEffect(() => () => { onExportPendingChange?.(false) }, [onExportPendingChange])
   const recordsPath = `${projectPath(project.id)}/question-records`
   function captureAnchor() {
     const list = listRef.current
@@ -102,7 +103,7 @@ function QuestionRecordsPanel({ open, project, controller, onClose, currentPageI
     const pending = pendingWrite.current
     if (writeActive.current || !pending) return false
     pendingAnchor.current = captureAnchor()
-    writeActive.current = true; setSaving(true); setRecordError(''); setFeedback('')
+    writeActive.current = true; onExportPendingChange?.(true); setSaving(true); setRecordError(''); setFeedback('')
     try {
       const value = await request<RecordsDocument>(recordsPath, body({ expected_version: pending.version, records: pending.records }, 'PUT'))
       setRecords(value.records); setRecordVersion(value.version)
@@ -117,7 +118,7 @@ function QuestionRecordsPanel({ open, project, controller, onClose, currentPageI
       setRecordError(conflict ? '記錄已有更新，請重新載入後再修改。未送出的疑問已保留。' : `保存失敗：${(error as Error).message}。可重試，疑問內容已保留。`)
       if (conflict) setRecordsReady(false)
       return false
-    } finally { writeActive.current = false; setSaving(false) }
+    } finally { writeActive.current = false; setSaving(false); onExportPendingChange?.(pendingWrite.current !== null) }
   }
 
   useLayoutEffect(() => {
@@ -185,7 +186,7 @@ function QuestionRecordsPanel({ open, project, controller, onClose, currentPageI
     const texts = selectedTexts.map(text => ({ ...text }))
     const next = editingId
       ? records.map(record => record.id === editingId ? { ...record, note: note.trim(), texts, updatedAt: now } : record)
-      : [{ id: crypto.randomUUID(), note: note.trim(), texts, createdAt: now, updatedAt: now }, ...records]
+      : [...records, { id: crypto.randomUUID(), note: note.trim(), texts, createdAt: now, updatedAt: now }]
     await persist(next, () => { setFeedback(editingId ? '已更新' : '已保存'); clearDraft() })
   }
   function editRecord(record: QuestionRecord) {
@@ -206,7 +207,7 @@ function QuestionRecordsPanel({ open, project, controller, onClose, currentPageI
     </div>)
   }
 
-  return <Modal title={<div className="pl-question-header-line"><strong>導出疑問記錄 · {project.name}</strong><span>只讀 · 跨頁多選</span><small>{saving ? '保存中…' : '隨項目 JSON 保存與匯出'}</small></div>} open={open} transitionName="" maskTransitionName="" width="calc(100vw - 16px)" className="pl-question-modal" onCancel={onClose} closable={!saving} keyboard={!saving} maskClosable={!saving}
+  return <Modal title={<div className="pl-question-header-line"><strong>疑問記錄 · {project.name}</strong><span>只讀 · 跨頁多選</span><small>{saving ? '保存中…' : '隨項目保存'}</small></div>} open={open} transitionName="" maskTransitionName="" width="calc(100vw - 16px)" className="pl-question-modal" onCancel={onClose} closable={!saving} keyboard={!saving} maskClosable={!saving}
     footer={null}>
     <div className="pl-question-layout">
       <section className="pl-question-source" aria-label="項目全部文本">
@@ -272,13 +273,12 @@ function QuestionRecordsPanel({ open, project, controller, onClose, currentPageI
             <div className="pl-question-record-line">
               <button type="button" className="pl-question-record-summary" aria-expanded={viewingId === record.id}
                 onClick={() => setViewingId(viewingId === record.id ? null : record.id)} title={record.note}>
-                <span>{viewingId === record.id ? '▾' : '▸'}{records.length - index}</span><span className="pl-question-record-title">{record.note}</span>
+                <span>{viewingId === record.id ? '▾' : '▸'}{index + 1}</span><span className="pl-question-record-title">{record.note}</span>
               </button>
               <span className="pl-question-record-count" title={`${record.texts.length} 條文本 · ${new Set(record.texts.map(text => text.pageId)).size} 頁`}>{record.texts.length}條</span>
-              <Button type="text" size="small" disabled={saving || retryPending || !recordsReady} aria-label={`修改疑問 ${records.length - index}`} onClick={() => editRecord(record)}>改</Button>
-              <Popconfirm title="刪除此條疑問記錄？" okText="刪除" cancelText="取消" okButtonProps={{ danger: true }} onConfirm={() => deleteRecord(record.id)}>
-                <Button type="text" size="small" danger disabled={saving || retryPending || !recordsReady} aria-label={`刪除疑問 ${records.length - index}`}>刪</Button>
-              </Popconfirm>
+              <Button type="text" size="small" disabled={saving || retryPending || !recordsReady} aria-label={`修改疑問 ${index + 1}`} onClick={() => editRecord(record)}>改</Button>
+              <Button type="text" size="small" danger disabled={saving || retryPending || !recordsReady} aria-label={`刪除疑問 ${index + 1}`}
+                onClick={() => void deleteRecord(record.id)}>刪</Button>
             </div>
             {viewed?.id === record.id && <div className="pl-question-record-detail"><p className="pl-question-record-note">{record.note}</p><p className="pl-question-muted">{record.texts.length} 條 · {new Set(record.texts.map(text => text.pageId)).size} 頁 · {new Date(record.updatedAt).toLocaleString()}</p>{references(record.texts)}</div>}
           </article>)}

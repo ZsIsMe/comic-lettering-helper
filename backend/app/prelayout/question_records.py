@@ -22,6 +22,27 @@ def _timestamp(value):
         raise ValueError('疑問記錄的時間格式無效') from exc
     if parsed.tzinfo is None:
         raise ValueError('疑問記錄的時間必須包含時區')
+    return parsed
+
+
+def chronological_records(records):
+    """Sort dated records oldest first, stably; keep undated legacy slots fixed.
+
+    This helper only reorders a new list and does not validate legacy export data
+    or mutate records/text references. Aware datetimes compare actual instants,
+    including timestamps expressed with different timezone offsets.
+    """
+    result, dated = list(records), []
+    for index, record in enumerate(result):
+        try:
+            timestamp = _timestamp(record.get('createdAt'))
+        except ValueError:
+            continue
+        dated.append((index, timestamp, record))
+    ordered = sorted(dated, key=lambda entry: entry[1])
+    for (index, _, _), (_, _, record) in zip(dated, ordered):
+        result[index] = record
+    return result
 
 
 def _snapshot_characters(value, label):
@@ -90,7 +111,7 @@ def validate_records(records):
         if total_texts > 20000 or total_characters > 16_000_000:
             raise ValueError('疑問記錄總量超過限制')
     # Do not resolve against live pages: removed/reimported items remain readable history.
-    return copy.deepcopy(records)
+    return chronological_records(copy.deepcopy(records))
 
 
 def validate_question_records(value):

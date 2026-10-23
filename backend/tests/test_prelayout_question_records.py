@@ -298,3 +298,65 @@ def test_validated_original_snapshots_are_deep_copies(chapter):
     record['texts'][0]['pageSummary']['notes'].append('後改')
     assert copied[0]['texts'][0]['source'] == {'unknown': [{'note': '原文'}]}
     assert copied[0]['texts'][0]['pageSummary'] == {'notes': ['概括']}
+
+
+def test_chronological_validation_uses_creation_instant_with_stable_ties(chapter):
+    _, _, record = chapter
+    record['texts'].reverse()
+    newest = {**record, 'id': 'newest', 'createdAt': '2026-10-19T10:00:01Z'}
+    # +08:00 is the earliest instant despite its greater wall-clock hour.
+    oldest = {**record, 'id': 'oldest', 'createdAt': '2026-10-19T12:00:00+08:00',
+              'updatedAt': '2026-10-22T23:00:00Z'}
+    tied_first = {**record, 'id': 'tie-first', 'createdAt': '2026-10-19T10:00:00Z'}
+    tied_second = {**record, 'id': 'tie-second', 'createdAt': '2026-10-19T11:00:00+01:00'}
+    records = [newest, tied_first, oldest, tied_second]
+    before = copy.deepcopy(records)
+    result = validate_records(records)
+    assert [item['id'] for item in result] == ['oldest', 'tie-first', 'tie-second', 'newest']
+    assert result[0]['updatedAt'] == oldest['updatedAt']
+    assert all(item['texts'] == record['texts'] for item in result)
+    result[0]['texts'][0]['text'] = 'caller mutation'
+    assert records == before
+
+
+def test_legacy_reverse_records_read_and_meo_export_are_chronological_without_writes(chapter):
+    store, pid, record = chapter
+    record['texts'].reverse()
+    oldest = {**record, 'id': 'oldest', 'note': '舊問題', 'createdAt': '2026-10-18T10:00:00Z',
+              'updatedAt': '2026-10-22T10:00:00Z'}
+    newest = {**record, 'id': 'newest', 'note': '新問題', 'createdAt': '2026-10-20T10:00:00Z'}
+    # Seed a historical newest-first manifest in this temporary test project.
+    project = store.read(pid)
+    project['template']['questionRecords'] = {'version': 7, 'records': [newest, oldest]}
+    store.write(project)
+    before = disk_snapshot(store, pid)
+    expected = {'version': 7, 'records': [oldest, newest]}
+    assert store.question_records(pid) == expected
+    exported = store.translation(pid)
+    assert exported['questionRecords'] == expected
+    assert exported['questionRecords']['records'][0]['texts'] == record['texts']
+    assert store.read(pid)['template']['questionRecords']['records'] == [newest, oldest]
+    exported['questionRecords']['records'][0]['texts'][0]['text'] = 'caller mutation'
+    assert store.translation(pid)['questionRecords'] == expected
+    assert disk_snapshot(store, pid) == before
+    # A retry in either order is idempotent even with the previous version.
+    assert store.save_question_records(pid, 6, [oldest, newest]) == expected
+    assert store.save_question_records(pid, 6, [newest, oldest]) == expected
+    assert disk_snapshot(store, pid) == before
+
+
+def test_chronological_save_and_retry_preserve_text_selection_order(chapter):
+    store, pid, record = chapter
+    record['texts'].reverse()
+    newest = {**record, 'id': 'newest', 'createdAt': '2026-10-20T10:00:00Z'}
+    oldest = {**record, 'id': 'oldest', 'createdAt': '2026-10-18T10:00:00Z'}
+    saved = store.save_question_records(pid, 0, [newest, oldest])
+    assert saved == {'version': 1, 'records': [oldest, newest]}
+    before = disk_snapshot(store, pid)
+    assert store.save_question_records(pid, 0, [newest, oldest]) == saved
+    assert store.save_question_records(pid, 0, [oldest, newest]) == saved
+    assert disk_snapshot(store, pid) == before
+    edited = {**oldest, 'updatedAt': '2026-10-23T10:00:00Z', 'note': '編輯舊問題'}
+    result = store.save_question_records(pid, 1, [newest, edited])
+    assert result['records'] == [edited, newest]
+    assert all(item['texts'] == record['texts'] for item in result['records'])

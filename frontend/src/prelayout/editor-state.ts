@@ -37,6 +37,7 @@ export class EditorState {
   private batches = new WeakMap<Item[], Batch>()
   private textDraft: { page: string; finish: () => void; changed: boolean } | null = null
   constructor(readonly project: string) {}
+  finishTextDraft() { this.textDraft?.finish() }
   beginTextDraft(page: string, finish: () => void) {
     this.textDraft?.finish()
     const session = { page, finish, changed: false }

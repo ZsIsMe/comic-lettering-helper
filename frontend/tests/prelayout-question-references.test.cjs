@@ -73,3 +73,13 @@ test('does not invent optional snapshot fields without source metadata', () => {
   const emptySummary = questionReferences({ ...project, template: { page_summary: { '001.jpg': '' } } }, pages())[0]
   assert.equal(emptySummary.pageSummary, '')
 })
+
+
+test('legacy summary filenames match a unique image stem and preserve explicit clears', () => {
+  const png = { ...project, pages: project.pages.map(page => ({ ...page, name: page.name.replace('.jpg', '.png') })) }
+  const capture = summaries => questionReferences({ ...png, template: { page_summary: summaries } }, pages())[0]
+  assert.equal(capture({ '001.JPG': '舊檔名概括' }).pageSummary, '舊檔名概括')
+  assert.equal(capture({ '001.JPG': '舊概括', '001.png': null }).pageSummary, null)
+  assert.equal(capture({ '001.JPG': '舊概括', '001.png': '' }).pageSummary, '')
+  assert.equal('pageSummary' in capture({ '001.jpg': '不明一', '001.jpeg': '不明二' }), false)
+})

@@ -19,8 +19,9 @@ from PIL import Image
 from prelayout_core.data import identifier, read_json, validate_items, validate_measure, parse_translation, export_item, match_translation
 from prelayout_core.characters import character_pages
 from .text_replacements import replacement, validate_request
-from .question_records import rebind_imported_records, validate_question_records, validate_records
+from .question_records import chronological_records, rebind_imported_records, validate_question_records, validate_records
 from .import_metadata import labelplus_indices, merge_template, preserve_item_information
+from .discussion_export import render_discussion
 
 
 class Conflict(ValueError):
@@ -515,9 +516,21 @@ class PrelayoutStore:
 
     def translation(self, pid):
         project = self.read(pid)
-        return {**copy.deepcopy(project['template']), 'transMap': {
+        template = copy.deepcopy(project['template'])
+        if 'questionRecords' in template:
+            questions = template['questionRecords']
+            questions['records'] = chronological_records(questions.get('records', []))
+        return {**template, 'transMap': {
             page['name']: [export_item(item) for item in read_json((self.directory(pid) / page['state']).read_bytes())['items']]
             for page in project['pages']}}
+
+    def discussion(self, pid):
+        # Read the title, current question records and every page as one snapshot.
+        with self.lock(pid):
+            title = self.read(pid)['name']
+            data = self.translation(pid)
+        safe_name = re.sub(r'[\\/\x00-\x1f\x7f]', '_', title).strip(' .') or '項目'
+        return f'{safe_name}_疑問記錄.md', render_discussion(data, title)
 
     def import_translation(self, pid, raw, kind, expected_revision, apply=False):
         with self.lock(pid):

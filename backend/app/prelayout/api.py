@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import asyncio
 import re
+from urllib.parse import quote
 
 from fastapi import APIRouter, Body, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import FileResponse, Response
@@ -218,6 +219,14 @@ def router(store, detector, max_bytes):
             data = call(store.translation, pid)
             return Response(json.dumps(data, ensure_ascii=False, indent=2), media_type='application/json',
                             headers={'Content-Disposition': 'attachment; filename="Meo.json"'})
+
+    @api.get('/projects/{pid}/export/discussion')
+    def export_discussion(pid: str):
+        filename, content = call(store.discussion, pid)
+        return Response(content, media_type='text/markdown; charset=utf-8',
+                        headers={'Content-Disposition': 'attachment; filename="discussion.md"; '
+                                 f"filename*=UTF-8''{quote(filename, safe='')}",
+                                 'Cache-Control': 'no-store'})
 
     @api.post('/projects/{pid}/matches')
     def matches(pid: str):

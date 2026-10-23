@@ -10,7 +10,7 @@ type Anchor = { id: string; offset: number; x: number; side: number; viewX: numb
 export function ContinuousPages({ project, controller, selection, onSelect, onAdjust, zoom, compare, clean, difference, differenceColor, differenceOpacity, showText, showMeasure, jump, onCurrent, onMeasure, onZoom, onPointer, onFontWheel, onInteractionChange }: {
   project: Project; controller: EditorState; selection: Selection; onSelect: (value: Selection) => void;
   onAdjust?: (adjustment: TextAdjustment) => boolean;
-  zoom: number; compare: boolean; clean: boolean; difference: boolean; differenceColor: string; differenceOpacity: number; showText: boolean; showMeasure: boolean; jump: { id: string; version: number; y?: number } | null;
+  zoom: number; compare: boolean; clean: boolean; difference: boolean; differenceColor: string; differenceOpacity: number; showText: boolean; showMeasure: boolean; jump: { id: string; version: number; x?: number; y?: number } | null;
   onCurrent: (id: string) => void; onMeasure: (index: number, page: string) => void; onZoom: (value: number) => void;
   onPointer: (pointer: PagePointer | null) => void;
   onFontWheel: (event: WheelEvent) => boolean; onInteractionChange: (value: boolean) => void;
@@ -114,8 +114,16 @@ export function ContinuousPages({ project, controller, selection, onSelect, onAd
     if (!jump || jump.version === lastJump.current) return
     lastJump.current = jump.version
     const row = rows.find(row => row.page.id === jump.id)
-    if (row && viewport.current) viewport.current.scrollTop = row.top + (jump.y === undefined ? 0 : 28 + jump.y * row.page.height * row.scale - viewport.current.clientHeight / 2)
-  }, [jump, rows])
+    if (row && viewport.current) {
+      const element = viewport.current
+      element.scrollTop = Math.max(row.top, row.top + (jump.y === undefined ? 0 : 28 + jump.y * row.page.height * row.scale - element.clientHeight / 2))
+      if (jump.x !== undefined) {
+        const width = row.page.width * row.scale
+        const left = (wide - width * (compare ? 2 : 1) - (compare ? 20 : 0)) / 2
+        element.scrollLeft = Math.max(0, left + jump.x * width - element.clientWidth / 2)
+      }
+    }
+  }, [jump, rows, wide, compare])
   const scroll = useCallback(() => {
     if (scrollFrame.current) return
     scrollFrame.current = requestAnimationFrame(() => {
