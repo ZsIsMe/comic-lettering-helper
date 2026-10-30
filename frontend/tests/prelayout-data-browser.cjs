@@ -53,9 +53,9 @@ async function until(fn,label){const start=Date.now();while(!await fn()){if(Date
   await until(async()=>!await page.locator('.ant-modal-wrap:visible').count(),'BT roundtrip');
   const imported=await(await page.request.get(api)).json();const items=(await read()).items;
   assert.equal(items.length,2);assert(imported.pages[0].clean);
-  await button('項目列表').click();const card=page.locator('.pl-project-card').filter({hasText:'瀏覽器資料流程（合成）'});await card.getByRole('button',{name:/改\s*名/}).click();
+  await button('項目列表').click();const card=page.getByRole('article').filter({hasText:'瀏覽器資料流程（合成）'});await card.getByRole('button',{name:/改\s*名/}).click();
   await page.locator('.ant-modal:visible input').fill('重新命名（合成）');await page.locator('.ant-modal:visible .ant-btn-primary').click();
-  const renamed=page.locator('.pl-project-card').filter({hasText:'重新命名（合成）'});await renamed.waitFor();await renamed.getByRole('button',{name:/刪\s*除/}).click();await page.locator('.ant-modal:visible .ant-btn-primary').click();await renamed.waitFor({state:'detached'});
+  const renamed=page.getByRole('article').filter({hasText:'重新命名（合成）'});await renamed.waitFor();await renamed.getByRole('button',{name:/刪\s*除/}).click();await page.locator('.ant-modal:visible .ant-btn-primary').click();await renamed.waitFor({state:'detached'});
   assert.deepEqual(errors,[]);fs.writeFileSync(path.join(output,'data-browser-report.json'),JSON.stringify({passed:true,errors,checks:['create','missing-font/model manual editing','600px viewport','BT import','edit','persistent clipboard','conflict resolution','failed save/draft recovery','LabelPlus groups','pending jump','clean pairing','BT-only export and roundtrip','rename','delete']},null,2));console.log('PASS data browser flow');
  }catch(e){await page.screenshot({path:path.join(output,'data-failure.png')}).catch(()=>{});fs.writeFileSync(path.join(output,'data-browser-report.json'),JSON.stringify({passed:false,error:String(e),errors,createdId},null,2));throw e}finally{await browser.close()}
 })().catch(e=>{console.error(e);process.exitCode=1});

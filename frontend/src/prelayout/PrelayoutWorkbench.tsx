@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { Alert, Button, Checkbox, Empty, Input, InputNumber, Modal, Popover, Select, Space, Spin, Tag, Tooltip, message } from 'antd'
-import { base, body, files, previewUrl, projectPath, request } from './api'
+import { base, body, files, projectPath, request } from './api'
 import { type Availability, type Detection, type Item, type Project, activeDetection, uid } from './types'
 import { EditorState } from './editor-state'
 import { ContinuousPages } from './ContinuousPages'
@@ -28,33 +28,23 @@ import { downloadDiscussion, downloadMeo as downloadMeoFile } from './download-d
 import { ProjectExportGuard } from './export-guard'
 import type { GroupImportResult } from './group-import'
 import { AlignmentControls } from './AlignmentControls'
+import { loadViewPreferences, saveViewPreferences } from './view-preferences'
+import { ProjectLibrary } from './ProjectLibrary'
+import { loadProjectView, saveProjectView } from './project-view'
 import './styles.css'
 
 const showCleanUpload = false
-const defaultDifferenceColor = '#ff288c'
-const defaultDifferenceOpacity = .4
 const detectionMethodOptions = [
   { value: 'ocr_aligned', label: 'OCR 對齊逐字計算' },
   { value: 'single_char', label: '單字框計算' },
   { value: 'fixed', label: '固定字體大小' },
 ]
 
-function differenceStylePreference() {
-  try {
-    const value = JSON.parse(localStorage.getItem('pl-difference-style') || '{}')
-    const opacity = Number(value.opacity)
-    return {
-      color: typeof value.color === 'string' && /^#[0-9a-f]{6}$/i.test(value.color) ? value.color : defaultDifferenceColor,
-      opacity: Number.isFinite(opacity) && opacity >= 0 && opacity <= 1 ? opacity : defaultDifferenceOpacity,
-    }
-  } catch {
-    return { color: defaultDifferenceColor, opacity: defaultDifferenceOpacity }
-  }
-}
-
 export default function PrelayoutWorkbench({ onExit, onReadyToLeave }: { onExit: () => void; onReadyToLeave?: (handler: () => Promise<boolean>) => void }) {
   const [modal, modalContext] = Modal.useModal()
   const [projects, setProjects] = useState<Project[]>([]), [current, setCurrent] = useState<Project | null>(null)
+  const [projectView, setProjectView] = useState(loadProjectView)
+  const [projectQuery, setProjectQuery] = useState('')
   const [error, setError] = useState(''), [busy, setBusy] = useState(false), [createOpen, setCreateOpen] = useState(false)
   const [newProjectId, setNewProjectId] = useState<string | null>(null)
   const [name, setName] = useState(''), [images, setImages] = useState<File[]>([])
@@ -70,7 +60,7 @@ export default function PrelayoutWorkbench({ onExit, onReadyToLeave }: { onExit:
     try { await fn() } catch (e) { setError((e as Error).message) } finally { setBusy(false) }
   }
   if (current) return <Workspace key={current.id} project={current} promptDetection={newProjectId === current.id} onReadyToLeave={onReadyToLeave} onExit={async () => { localStorage.removeItem('pl-last-project'); setNewProjectId(null); setCurrent(null); await reload() }} />
-  return <main className="pl-shell pl-home">{modalContext}
+  return <main className={`pl-shell pl-home${projectView === 'list' ? ' pl-home--list' : ''}`}>{modalContext}
     <header className="pl-home-header"><div><span className="pl-kicker">LETTERING STUDIO</span><h1>漫畫預排版</h1><p>匯入譯文，在連續漫畫頁上調整文字與樣式。</p></div><Space wrap>
       <Button onClick={onExit}>返回圖片修復</Button>
       <Button href="/downloads/LabelPlus_Ps_Script_ZS-1.8.0.zip" download="LabelPlus_Ps_Script_ZS-1.8.0.zip">配套PS腳本</Button>
@@ -81,14 +71,10 @@ export default function PrelayoutWorkbench({ onExit, onReadyToLeave }: { onExit:
       <Button type="primary" onClick={() => setCreateOpen(true)}>新建預排版</Button>
     </Space></header>
     {error && <Alert type="error" showIcon message={error} />}
-    {busy ? <Spin /> : projects.length ? <div className="pl-project-grid">{projects.map(project => <article key={project.id} className="pl-project-card">
-      <button className="pl-cover" onClick={() => setCurrent(project)}><img src={previewUrl(project.id, project.pages[0], 384)} loading="lazy" alt={project.name} /></button>
-      <h2>{project.name}</h2><p>{project.pages.length} 頁 · {new Date(project.updated_at).toLocaleString()}</p>
-      <Space><Button type="primary" onClick={() => setCurrent(project)}>繼續預排版</Button><Button onClick={() => {
+    {busy ? <Spin /> : projects.length ? <ProjectLibrary projects={projects} view={projectView} query={projectQuery} onQueryChange={setProjectQuery} onViewChange={view => { setProjectView(view); saveProjectView(view) }} onOpen={setCurrent} onRename={project => {
         let next = project.name
         modal.confirm({ title: '重新命名', content: <Input defaultValue={next} onChange={e => { next = e.target.value }} />, onOk: () => action(async () => { await request(projectPath(project.id), body({ name: next }, 'PATCH')); await reload() }) })
-      }}>改名</Button><Button danger onClick={() => modal.confirm({ title: `刪除「${project.name}」？`, content: '將刪除此預排版項目的圖片、文字及進度。', okButtonProps: { danger: true }, onOk: () => action(async () => { await request(projectPath(project.id), { method: 'DELETE' }); await reload() }) })}>刪除</Button></Space>
-    </article>)}</div> : <Empty description="建立預排版項目，先上傳漫畫原圖" />}
+      }} onDelete={project => modal.confirm({ title: `刪除「${project.name}」？`, content: '將刪除此預排版項目的圖片、文字及進度。', okButtonProps: { danger: true }, onOk: () => action(async () => { await request(projectPath(project.id), { method: 'DELETE' }); await reload() }) })} /> : <Empty description="建立預排版項目，先上傳漫畫原圖" />}
     <Modal title="新建預排版項目" open={createOpen} onCancel={() => setCreateOpen(false)} okText="建立項目" confirmLoading={busy} okButtonProps={{ disabled: !images.length }} onOk={() => void action(async () => {
       const data = new FormData(); data.append('name', name); images.forEach(file => data.append('source_files', file, file.name))
       const created = await request<Project>(`${base}/projects`, { method: 'POST', body: data }); setNewProjectId(created.id); setCurrent(created); setCreateOpen(false); setImages([]); setName('')
@@ -116,11 +102,10 @@ function Workspace({ project: initial, promptDetection, onExit, onReadyToLeave }
     } catch { /* Use the full range when a preference is unavailable. */ }
     return [1, initial.pages.length]
   })
-  const [focus, setFocus] = useState(false)
-  const [view] = useState(() => { try { return JSON.parse(localStorage.getItem(`pl-view-${initial.id}`) || '{}') } catch { return {} } })
-  const [differenceStyle] = useState(differenceStylePreference)
-  const [current, setCurrent] = useState(initial.pages[0].id), [zoom, setZoom] = useState<number>(Math.max(.5, Math.min(3, Number(view.zoom) || 1))), [compare, setCompare] = useState(view.compare !== false), [clean, setClean] = useState(view.clean !== false), [difference, setDifference] = useState(view.difference === true), [showText, setShowText] = useState(view.showText !== false), [showMeasure, setShowMeasure] = useState(view.showMeasure !== false)
-  const [differenceColor, setDifferenceColor] = useState(differenceStyle.color), [differenceOpacity, setDifferenceOpacity] = useState(differenceStyle.opacity)
+  const [view] = useState(() => loadViewPreferences(initial.id))
+  const [focus, setFocus] = useState(view.focus)
+  const [current, setCurrent] = useState(initial.pages[0].id), [zoom, setZoom] = useState(view.zoom), [compare, setCompare] = useState(view.compare), [clean, setClean] = useState(view.clean), [difference, setDifference] = useState(view.difference), [showText, setShowText] = useState(view.showText), [showMeasure, setShowMeasure] = useState(view.showMeasure)
+  const [differenceColor, setDifferenceColor] = useState(view.differenceColor), [differenceOpacity, setDifferenceOpacity] = useState(view.differenceOpacity)
   const [jump, setJump] = useState<{ id: string; version: number; x?: number; y?: number } | null>(null), [error, setError] = useState(''), [busy, setBusy] = useState(false)
   const [pendingOnly, setPendingOnly] = useState(false)
   const [availability, setAvailability] = useState<Availability | null>(null), [task, setTask] = useState<Detection | null>(null)
@@ -136,7 +121,7 @@ function Workspace({ project: initial, promptDetection, onExit, onReadyToLeave }
   const questionPendingChanged = useCallback((pending: boolean) => { exportGuard.setPending('questions', pending); setQuestionExportPending(pending) }, [exportGuard])
   const inlinePendingChanged = useCallback((pending: boolean) => { exportGuard.setPending('inline', pending); setInlineQuestionPending(pending) }, [exportGuard])
   const [questionsPage, setQuestionsPage] = useState(initial.pages[0].id)
-  const [showService, setShowService] = useState(false)
+  const [showService, setShowService] = useState(view.showService)
   const [moreToolsOpen, setMoreToolsOpen] = useState(false)
   const [detectionToolsOpen, setDetectionToolsOpen] = useState(false)
   const groupCatalogue = useSyncExternalStore(subscribeFontCatalogue, getFontCatalogue)
@@ -182,9 +167,8 @@ function Workspace({ project: initial, promptDetection, onExit, onReadyToLeave }
   const errors = [...controller.pages.values()].filter(state => state.error).map(state => `${project.pages.find(page => page.id === state.data.id)?.name || state.data.id}：${state.error}`)
   const saving = [...controller.pages.values()].some(state => state.saving)
   useEffect(() => { try { localStorage.setItem(`pl-review-range-${initial.id}`, JSON.stringify(range)) } catch { /* Optional range preference. */ } }, [initial.id, range])
-  useEffect(() => { try { localStorage.setItem(`pl-view-${initial.id}`, JSON.stringify({ zoom, compare, clean, difference, showText, showMeasure })) } catch { /* Optional view preferences. */ } }, [initial.id, zoom, compare, clean, difference, showText, showMeasure])
+  useEffect(() => { saveViewPreferences({ zoom, compare, clean, difference, showText, showMeasure, differenceColor, differenceOpacity, focus, showService }) }, [zoom, compare, clean, difference, showText, showMeasure, differenceColor, differenceOpacity, focus, showService])
   useEffect(() => { if (!showText) { pointer.current = null; setSelection(value => value.ids.length ? { page: value.page, ids: [] } : value) } }, [showText])
-  useEffect(() => { try { localStorage.setItem('pl-difference-style', JSON.stringify({ color: differenceColor, opacity: differenceOpacity })) } catch { /* Optional browser preference. */ } }, [differenceColor, differenceOpacity])
   useEffect(() => {
     void request<Item[]>(`${base}/preferences`).then(setClipboard).catch(e => setError(e.message))
     const refresh = () => { void request<Availability>(`${base}/availability`).then(setAvailability).catch(() => {}); void request<Detection | null>(`${projectPath(initial.id)}/detections`).then(setTask).catch(() => {}) }
