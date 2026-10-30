@@ -3,6 +3,7 @@ import { type Item, type PageData, type Project } from './types'
 
 type Draft = { revision: number; items: Item[] }
 type Batch = { pages: string[] }
+type SaveTask = { page_id: string; version: number; reviewed?: boolean; status: 'pending' | 'saved' | 'failed'; error: string; promise: Promise<boolean> }
 type State = { data: PageData; undo: Item[][]; redo: Item[][]; dirty: boolean; version: number; error: string; saving: boolean; conflict: boolean;
   pending?: { revision: number; items: Item[]; operation_id: string; version: number }; server?: PageData }
 const copy = <T,>(value: T): T => structuredClone(value)
@@ -30,6 +31,7 @@ export class EditorState {
   private ticks = new Map<string, number>()
   private timers = new Map<string, ReturnType<typeof setTimeout>>()
   private inflight = new Map<string, Promise<boolean>>()
+  private saveTasks = new Map<string, SaveTask>()
   private persistence = new Map<string, Promise<unknown>>()
   private groups = new Map<string, { key: string; time: number }>()
   // Keep ordinary item snapshots public for the before/after preview, with shared
@@ -191,7 +193,7 @@ export class EditorState {
   async save(id: string): Promise<boolean> {
     clearTimeout(this.timers.get(id))
     const running = this.inflight.get(id)
-    if (running) { await running; return this.save(id) }
+    if (running) { if (!await running) return false; return this.save(id) }
     const state = this.pages.get(id)
     if (!state?.dirty) return true
     if (state.conflict) return false
@@ -212,35 +214,103 @@ export class EditorState {
       } finally { state.saving = false; this.emit(id) }
     })()
     this.inflight.set(id, promise)
-    try { return await promise } finally { this.inflight.delete(id) }
+    try { return await promise } finally { if (this.inflight.get(id) === promise) this.inflight.delete(id) }
+  }
+  /** Register before starting I/O so navigation and leave guards see the entire operation. */
+  startSave(id: string, reviewed?: boolean): SaveTask {
+    this.textDraft?.finish()
+    const state = this.pages.get(id)
+    if (!state) throw new Error('保存前請先載入頁面。')
+    const previous = this.saveTasks.get(id)
+    if (previous?.status === 'pending') {
+      if (previous.version === state.version && (reviewed === undefined || previous.reviewed === reviewed)) return previous
+      throw new Error('此頁仍在背景保存，請稍後重新檢查再保存。')
+    }
+    if (previous?.status === 'failed' && reviewed === undefined && previous.reviewed !== undefined) {
+      if (previous.version !== state.version) throw new Error('文字版本已變更，請重新檢查並明確指定 reviewed 後再保存。')
+      reviewed = previous.reviewed
+    }
+    const task: SaveTask = { page_id: id, version: state.version, reviewed, status: 'pending', error: '', promise: Promise.resolve(false) }
+    this.saveTasks.set(id, task)
+    task.promise = Promise.resolve().then(async () => {
+      try {
+        if (!await this.save(id)) throw new Error(state.error || '文字保存失敗。')
+        if (reviewed !== undefined) await this.writeReview(id, reviewed, task.version)
+        task.status = 'saved'; task.error = ''; state.error = ''
+        return true
+      } catch (error) {
+        task.status = 'failed'; task.error = (error as Error).message; state.error = task.error
+        if ((error as Error & { status?: number }).status === 409) state.conflict = true
+        this.persist(id)
+        return false
+      } finally { state.saving = false; this.emit(id) }
+    })
+    state.saving = true; this.emit(id)
+    return task
+  }
+  get saveStatus() {
+    const tasks = [...this.saveTasks.values()].map(({ page_id, version, reviewed, status, error }) => ({ page_id, version, reviewed, status, error }))
+    const pending_saves = tasks.filter(task => task.status === 'pending')
+    const save_failures = tasks.filter(task => task.status === 'failed')
+    return { status: save_failures.length ? 'failed' : pending_saves.length || this.dirty ? 'pending' : 'saved', pending_saves, save_failures }
+  }
+  /** Explicit save/leave actions retry transport errors; stale completion intents require a fresh review request. */
+  retryFailedSaves() {
+    for (const [id, task] of this.saveTasks) {
+      if (task.status !== 'failed') continue
+      const state = this.pages.get(id)!
+      if (state.conflict || (task.reviewed !== undefined && task.version !== state.version)) continue
+      this.startSave(id, task.reviewed)
+    }
   }
   async flush() {
     this.textDraft?.finish()
-    for (const [id] of this.pages) {
-      if (!await this.save(id)) return false
-      if (this.pages.get(id)?.dirty && !await this.save(id)) return false
+    this.retryFailedSaves()
+    // Re-scan after every await: edits and other-page background saves can arrive during I/O.
+    while (true) {
+      const pending = [...this.saveTasks.values()].filter(task => task.status === 'pending')
+      if (pending.length) {
+        const results = await Promise.all(pending.map(task => task.promise))
+        if (results.some(saved => !saved)) return false
+        continue
+      }
+      if ([...this.saveTasks.values()].some(task => task.status === 'failed')) return false
+      const dirty = [...this.pages].find(([, state]) => state.dirty)
+      if (!dirty) return !this.dirty
+      if (!await this.save(dirty[0])) return false
     }
-    return !this.dirty
   }
-  async markReviewed(id: string, reviewed: boolean) {
-    this.textDraft?.finish()
-    if (!await this.save(id)) throw new Error('文字尚未保存，請先處理保存錯誤。')
-    const state = await this.load(id)
-    const version = state.version
+  private async writeReview(id: string, reviewed: boolean, version: number) {
+    const state = this.pages.get(id)!
+    if (state.version !== version || state.dirty) {
+      delete state.data.reviewed_revision; this.emit(id)
+      throw new Error('保存期間文字已有修改，請重新檢查後標記完成。')
+    }
+    state.saving = true; this.emit(id)
     const data = await request<PageData>(`${projectPath(this.project)}/pages/${id}/review`, body({ expected_revision: state.data.revision, reviewed }, 'PUT'))
     if (state.version !== version || state.dirty) {
       // A concurrent local edit must never acquire the older revision's completion marker.
       delete state.data.reviewed_revision
-      this.emit(id)
       throw new Error('保存期間文字已有修改，請重新檢查後標記完成。')
     }
-    state.data = data; state.server = copy(data); this.emit(id)
+    state.data = data; state.server = copy(data); state.error = ''; this.persist(id, true); this.emit(id)
+  }
+  async markReviewed(id: string, reviewed: boolean) {
+    this.textDraft?.finish()
+    if (!this.pages.has(id)) await this.load(id)
+    const task = this.startSave(id, reviewed)
+    if (!await task.promise) throw new Error(task.error)
   }
   async resolve(id: string, keepLocal: boolean) {
     const state = this.pages.get(id)
     if (!state) return
+    const saving = this.saveTasks.get(id)
+    if (saving?.status === 'pending') await saving.promise
+    const version = state.version
     const server = await request<PageData>(`${projectPath(this.project)}/pages/${id}`)
+    if (state.version !== version) throw new Error('載入期間文字已有修改，請重新處理保存版本。')
     state.server = copy(server); state.data.revision = server.revision; state.version += 1; state.conflict = false; state.pending = undefined; state.error = ''
+    this.saveTasks.delete(id)
     if (keepLocal) { state.dirty = true; await this.save(id) }
     else {
       this.invalidateRedo(id); this.groups.delete(id)
@@ -290,7 +360,7 @@ export class EditorState {
     }
     await Promise.all(changed.map(page => this.persistence.get(page.id)))
   }
-  get dirty() { return !!this.textDraft?.changed || [...this.pages.values()].some(state => state.dirty) }
+  get dirty() { return !!this.textDraft?.changed || [...this.pages.values()].some(state => state.dirty) || [...this.saveTasks.values()].some(task => task.status !== 'saved') }
   get editing() { return this.textDraft !== null }
   dispose() { this.timers.forEach(clearTimeout) }
 }

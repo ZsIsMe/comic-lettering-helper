@@ -28,7 +28,7 @@ export function usePrelayoutAgent(options: Options) {
     const identities = new WeakMap<object, string>()
     const tokenFor = (state: object & { version: number; data: PageData }, id: string) => {
       if (!identities.has(state)) identities.set(state, crypto.randomUUID())
-      return `${identities.get(state)}:${id}:${state.version}:${state.data.reviewed_revision ?? 'pending'}:${latest.current.range.join('-')}`
+      return `${identities.get(state)}:${id}:${state.version}:${latest.current.range.join('-')}`
     }
     function available(write = false) {
       const o = latest.current
@@ -44,7 +44,7 @@ export function usePrelayoutAgent(options: Options) {
       const id = latest.current.current, state = await controller.load(id)
       available(write)
       if (id !== latest.current.current) throw new Error('目前頁面已變更，請重新檢查。')
-      if (state.conflict || state.error) throw new Error(state.error || '請先處理頁面保存衝突。')
+      if (write && (state.conflict || state.error || controller.saveStatus.save_failures.length)) throw new Error(state.error || '請先處理頁面保存錯誤或衝突。')
       if (token !== undefined && token !== tokenFor(state, id)) throw new Error('頁面已變更，請重新執行 prelayout_inspect_page。')
       return { id, state }
     }
@@ -99,15 +99,18 @@ export function usePrelayoutAgent(options: Options) {
     }
     async function inspect() {
       const { id, state } = await target()
-      const version = tokenFor(state, id), page = structuredClone(state.data)
-      const measurement = await measurePage(page)
+      const version = tokenFor(state, id)
+      const measurement = await measurePage(structuredClone(state.data))
       await target(version)
+      // Background persistence can change revisions/completion without changing item geometry or the token.
+      const page = structuredClone(state.data)
       const o = latest.current
       const pages = o.project.pages.map((p, index) => {
         const s = controller.pages.get(p.id), data = s?.data || p
         return { page_id: p.id, number: index + 1, name: p.name, reviewed: !s?.dirty && data.reviewed_revision === data.revision }
       })
       return {
+        ...controller.saveStatus, error: state.error, conflict: state.conflict,
         token: version, project_id: o.project.id, page_id: id, page_number: pages.find(p => p.page_id === id)?.number,
         width: page.width, height: page.height, revision: page.revision, dirty: state.dirty, saving: state.saving,
         reviewed: !state.dirty && page.reviewed_revision === page.revision, range: o.range, pages,
@@ -191,26 +194,44 @@ export function usePrelayoutAgent(options: Options) {
       },
       undo: async args => { const { id } = await checked(args.token, true); controller.undo(id); setReview(null); await ready(id); return inspect() },
       save: async args => {
-        for (const value of [args.reviewed, args.advance]) if (value !== undefined && typeof value !== 'boolean') throw new Error('保存選項必須是布林值。')
-        const { id } = await checked(args.token, true)
-        if (!await controller.flush()) throw new Error('保存失敗，請處理頁面錯誤後重試。')
-        await checked(args.token, true)
-        if (args.reviewed !== undefined || args.advance) {
-          const o = latest.current, number = o.project.pages.findIndex(page => page.id === id) + 1
+        for (const value of [args.reviewed, args.advance, args.wait]) if (value !== undefined && typeof value !== 'boolean') throw new Error('保存選項必須是布林值。')
+        if (args.next_page_id !== undefined && (typeof args.next_page_id !== 'string' || !args.next_page_id)) throw new Error('請提供下一頁的穩定 ID。')
+        if (args.advance && args.next_page_id !== undefined) throw new Error('advance 不可與 next_page_id 同時使用。')
+        if (args.wait === false && args.advance) throw new Error('非阻塞保存請使用明確的 next_page_id，不可使用 advance。')
+        // Saving is also the retry path, so errors remain inspectable without blocking this action.
+        const { id } = await checked(args.token)
+        available(true)
+        const o = latest.current, number = o.project.pages.findIndex(page => page.id === id) + 1
+        if (args.reviewed !== undefined || args.advance || args.wait === false || args.next_page_id !== undefined) {
           if (number < o.range[0] || number > o.range[1]) throw new Error('目前頁面不在校對範圍，請先跳至範圍內。')
-          await controller.markReviewed(id, args.advance ? true : args.reviewed!)
-          await o.refreshProject()
+        }
+        if (args.wait === false && number === o.range[1]) throw new Error('校對範圍最後一頁必須等待保存完成。')
+        if (args.next_page_id !== undefined) {
+          const nextNumber = o.project.pages.findIndex(page => page.id === args.next_page_id) + 1
+          if (!nextNumber || nextNumber < o.range[0] || nextNumber > o.range[1]) throw new Error('下一頁不存在或不在校對範圍。')
+          await controller.load(args.next_page_id)
+          await checked(args.token); available(true)
+        }
+        const task = controller.startSave(id, args.advance ? true : args.reviewed)
+        if (args.wait !== false) {
+          if (!await controller.flush()) return { ...await inspect(), saved_page_id: id, status: 'failed' }
+          await checked(args.token)
+          if (args.reviewed !== undefined || args.advance) await latest.current.refreshProject()
         }
         setReview(null)
-        if (args.advance) {
-          const o = latest.current, pages = o.project.pages.slice(o.range[0] - 1, o.range[1])
+        if (args.next_page_id !== undefined) {
+          latest.current.go(args.next_page_id)
+          await ready(args.next_page_id)
+        } else if (args.advance) {
+          const current = latest.current, pages = current.project.pages.slice(current.range[0] - 1, current.range[1])
           const start = pages.findIndex(page => page.id === id)
           for (let offset = 1; offset <= pages.length; offset++) {
             const page = pages[(start + offset + pages.length) % pages.length], state = await controller.load(page.id)
-            if (state.dirty || state.data.reviewed_revision !== state.data.revision) { o.go(page.id); await ready(page.id); break }
+            if (state.dirty || state.data.reviewed_revision !== state.data.revision) { current.go(page.id); await ready(page.id); break }
           }
         }
-        return inspect()
+        return { ...await inspect(), saved_page_id: id, saved_page_version: task.version,
+          saved_page_dirty: !!controller.pages.get(id)?.dirty, saved_page_status: task.status === 'saved' && controller.pages.get(id)?.dirty ? 'pending' : task.status }
       },
       navigate: async args => {
         await checked(args.token, true)

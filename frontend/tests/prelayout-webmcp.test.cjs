@@ -161,6 +161,13 @@ test('tool schemas are strict, unsupported context is harmless, and writes proxy
   const selection = { token: 'current-token', item_id: 'stable-a', selection_start: 1, selection_end: 3 }
   assert.deepEqual(await split.execute(selection), { content: [{ type: 'text', text: '{"method":"split"}' }] })
   assert.deepEqual(calls.at(-1), ['split', selection])
+  const save = registered.get('prelayout_save_page')
+  assert.deepEqual(save.inputSchema.required, ['token'])
+  assert.equal(save.inputSchema.properties.wait.default, true)
+  assert.equal(save.inputSchema.properties.next_page_id.type, 'string')
+  const saving = { token: 'current-token', reviewed: true, wait: false, next_page_id: 'next-page' }
+  await save.execute(saving)
+  assert.deepEqual(calls.at(-1), ['save', saving])
   const view = registered.get('prelayout_set_view')
   assert.deepEqual(view.inputSchema.properties.mode.enum, ['overlay', 'original', 'final'])
   assert.equal(view.inputSchema.properties.show_text.type, 'boolean')
