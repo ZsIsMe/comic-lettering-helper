@@ -92,7 +92,7 @@ CTD 流程同時生成來源核心的 `inpainted` 去字預覽：沿用 OpenCV T
 
 「上傳去字圖」入口目前隱藏，介面使用生成的 `inpainted` 預覽；底層去字圖匯入功能與既有資產保留。
 
-檔案入口名稱為「開啟 Meo.json」「匯出 Meo.json」「匯入LP.txt」。匯出下載名為 `Meo.json`，沿用既有 JSON 結構及舊檔相容性；LabelPlus 仍匯入 `.txt`。
+檔案入口名稱為「開啟 Meo.json」「匯出 Meo.json」「匯入LP.txt」。匯出下載名為 `項目名_Meo.json`（例如 `選秀王30_Meo.json`），檔名不支援的字元會替換為底線；沿用既有 JSON 結構及舊檔相容性。LabelPlus 仍匯入 `.txt`。
 
 ### 預排版快捷鍵
 

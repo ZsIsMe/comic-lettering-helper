@@ -1,9 +1,13 @@
 import { projectPath } from './api'
 import { ProjectExportGuard } from './export-guard'
 
-export function discussionFilename(name: string): string {
+function safeProjectName(name: string): string {
   const safe = Array.from(name).map(char => char.charCodeAt(0) < 32 || '<>:"/\\|?*'.includes(char) ? '_' : char).join('').trim().slice(0, 120)
-  return `${safe || '項目'}_疑問記錄.md`
+  return safe || '項目'
+}
+
+export function discussionFilename(name: string): string {
+  return `${safeProjectName(name)}_疑問記錄.md`
 }
 
 async function downloadProject(projectId: string, endpoint: string, filename: string, flush: () => Promise<boolean>, guard: ProjectExportGuard, markdown: boolean): Promise<void> {
@@ -29,6 +33,7 @@ export function downloadDiscussion(project: { id: string; name: string }, flush:
   return downloadProject(project.id, 'discussion', discussionFilename(project.name), flush, guard, true)
 }
 
-export function downloadMeo(project: { id: string }, flush: () => Promise<boolean>, guard: ProjectExportGuard): Promise<void> {
-  return downloadProject(project.id, 'bt', 'Meo.json', flush, guard, false)
+export function downloadMeo(project: { id: string; name: string }, flush: () => Promise<boolean>, guard: ProjectExportGuard): Promise<void> {
+  const filename = `${safeProjectName(project.name)}_Meo.json`
+  return downloadProject(project.id, 'bt', filename, flush, guard, false)
 }

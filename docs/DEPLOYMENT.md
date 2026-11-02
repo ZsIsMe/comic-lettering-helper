@@ -677,6 +677,8 @@ PDF 中文字型：支援 `CJK_FONT_PATH` 及腳本旁 `fonts/SourceHanSansTC-Re
 
 預排版工具列提供兩個獨立功能：「疑問記錄」開啟管理視窗，用於新增、修改及刪除問題；「導出疑問記錄」直接下載 Markdown。Meo.json 匯出仍在「匯入與準備」中，保留完整項目資料。
 
+工作台匯出 Meo JSON 的下載名為 `項目名_Meo.json`。此命名變更僅需更新前端構建，無資料遷移；驗收時確認下載名包含當前項目名且內容可正常匯入。
+
 獨立討論稿匯出：`python3 scripts/export-discussion.py Meo.json discussion.md --title 項目名稱`；只測一頁可加 `--page 8`。來源完整時保留原文、每頁概括與註釋，疑問統一置前，頁內編號列出，文字換行以字面 `\n` 表示；不含使用者資料或模型。
 
 ## 0.2.24：本機字體與分組字體

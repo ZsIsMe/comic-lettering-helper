@@ -47,6 +47,12 @@ test('project filename cannot introduce directories or invalid filename characte
   assert.equal(api.discussionFilename('../A/B\\C:題'), '.._A_B_C_題_疑問記錄.md')
   assert.equal(api.discussionFilename(''), '項目_疑問記錄.md')
 })
+test('Meo download uses a safe project name with a fallback', async () => {
+  const api = exporter(async () => downloadResponse(false, new Blob(['{}'])))
+  await api.downloadMeo({ id: 'p1', name: '選秀王/番外:1' }, async () => true, new api.ProjectExportGuard())
+  await api.downloadMeo({ id: 'p1', name: '' }, async () => true, new api.ProjectExportGuard())
+  assert.deepEqual(api.downloads.map(item => item.name), ['選秀王_番外_1_Meo.json', '項目_Meo.json'])
+})
 
 const project = { id: 'p1', name: '選秀王' }
 const deferred = () => { let resolve; const promise = new Promise(done => { resolve = done }); return { promise, resolve } }
@@ -103,6 +109,6 @@ for (const markdown of [true, false]) {
     assert.deepEqual(api.downloads, [])
     await download(api, async () => true, guard)
     assert.equal(api.urls[0], bytes)
-    assert.equal(api.downloads[0].name, markdown ? '選秀王_疑問記錄.md' : 'Meo.json')
+    assert.equal(api.downloads[0].name, markdown ? '選秀王_疑問記錄.md' : '選秀王_Meo.json')
   })
 }
