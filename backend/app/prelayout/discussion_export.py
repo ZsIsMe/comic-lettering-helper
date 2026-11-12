@@ -96,7 +96,7 @@ def render_discussion(data, title, page_number=None):
         raise ValueError('來源須包含 transMap')
     if page_number is not None and (type(page_number) is not int or not 1 <= page_number <= len(pages)):
         raise ValueError('頁數超出來源範圍')
-    lines = [f'# {literal(title)}｜疑問記錄', '', '請回答問題。', '', '## 疑問記錄', '']
+    lines = [f'# {literal(title)}｜疑問記錄', '', '請回答問題。複雜的或開放的部分提供2~3種選擇。', '', '## 疑問記錄', '']
     records = chronological_records(data.get('questionRecords', {}).get('records', []))
     if not records:
         lines += ['（目前沒有疑問記錄。）', '']

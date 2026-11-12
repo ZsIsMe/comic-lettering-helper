@@ -66,7 +66,7 @@ def test_full_text_metadata_and_compact_layout():
     data = snapshot()
     original = copy.deepcopy(data)
     result = render_discussion(data, '中文項目')
-    assert result.startswith('# 中文項目｜疑問記錄\n\n請回答問題。')
+    assert result.startswith('# 中文項目｜疑問記錄\n\n請回答問題。複雜的或開放的部分提供2~3種選擇。\n')
     assert '（目前沒有疑問記錄。）' in result
     assert result.index('## 疑問記錄') < result.index('## 文件附註') < result.index('## 逐頁全文')
     assert '文件備註\\n請留意術語' in result
@@ -170,7 +170,7 @@ def test_endpoint_attachment_utf8_filename_and_not_found(chapter):
         assert response.headers['cache-control'] == 'no-store'
         assert response.headers['content-disposition'].startswith('attachment;')
         assert unquote(response.headers['content-disposition'].split("filename*=UTF-8''")[1]) == '中文項目_疑問記錄.md'
-        assert '請回答問題。' in response.content.decode('utf-8')
+        assert '請回答問題。複雜的或開放的部分提供2~3種選擇。' in response.content.decode('utf-8')
         assert client.get('/api/prelayout/projects/pl_' + 'f' * 32 + '/export/discussion').status_code == 404
         meo = client.get(f'/api/prelayout/projects/{pid}/export/bt')
         assert meo.headers['content-type'] == 'application/json'
