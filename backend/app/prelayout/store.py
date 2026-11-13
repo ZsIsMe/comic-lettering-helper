@@ -18,6 +18,7 @@ from PIL import Image
 
 from prelayout_core.data import identifier, read_json, validate_items, validate_measure, parse_translation, export_item, match_translation
 from prelayout_core.characters import character_pages
+from prelayout_core.preview import compose_inpainted
 from .text_replacements import replacement, validate_request
 from .question_records import chronological_records, rebind_imported_records, validate_question_records, validate_records
 from .import_metadata import labelplus_indices, merge_template, preserve_item_information
@@ -644,8 +645,12 @@ class PrelayoutStore:
                 x, y, w, h = region
                 if min(x, y) < 0 or min(w, h) < 1 or max(w, h) > 8192 or x + w > page['width'] or y + h > page['height']:
                     raise ValueError('局部預覽範圍無效')
-            path = root / (page['clean'] if clean and page['clean'] else f'originals/{page["name"]}')
-            key = hashlib.sha256(f'{page["sha256"]}:{page["clean"] if clean else "source"}:{edge}:{region}'.encode()).hexdigest()
+            use_clean = bool(clean and page['clean'])
+            overlay = use_clean and page.get('clean_kind') == 'inpainted'
+            path = root / (page['clean'] if use_clean else f'originals/{page["name"]}')
+            background = page['clean'] if use_clean else 'source'
+            version = 'composite-v1:' if overlay else ''
+            key = hashlib.sha256(f'{version}{page["sha256"]}:{background}:{edge}:{region}'.encode()).hexdigest()
             cache = root / 'previews' / f'{key}.jpg'
             with self.lock(f'preview:{pid}:{key}'):
                 with self.lock(f'preview-cache:{pid}'):
@@ -653,17 +658,22 @@ class PrelayoutStore:
                         payload = cache.read_bytes()
                         os.utime(cache, None)
                         return payload, key
-                with Image.open(path) as source:
-                    if region is None:
-                        # JPEG can reduce its decoder working set before materializing pixels.
-                        source.draft('RGB', (edge, edge))
-                        source.thumbnail((edge, edge))
-                        image = source.convert('RGB')
-                    else:
-                        image = source.crop((x, y, x + w, y + h)).convert('RGB')
-                        image.thumbnail((edge, edge))
+                if overlay:
+                    image = compose_inpainted(root / 'originals' / page['name'], path, region)
+                    image.thumbnail((edge, edge))
+                else:
+                    with Image.open(path) as source:
+                        if region is None:
+                            # JPEG can reduce its decoder working set before materializing pixels.
+                            source.draft('RGB', (edge, edge))
+                            source.thumbnail((edge, edge))
+                            image = source.convert('RGB')
+                        else:
+                            image = source.crop((x, y, x + w, y + h)).convert('RGB')
+                            image.thumbnail((edge, edge))
+                with image:
                     output = io.BytesIO(); image.save(output, 'JPEG', quality=88)
-                    payload = output.getvalue(); image.close()
+                    payload = output.getvalue()
                 with self.lock(f'preview-cache:{pid}'):
                     cache.parent.mkdir(exist_ok=True)
                     cache.write_bytes(payload)
@@ -682,14 +692,20 @@ class PrelayoutStore:
             os.close(fd)
             try:
                 with zipfile.ZipFile(name, 'w', compression=zipfile.ZIP_DEFLATED, compresslevel=1) as archive:
+                    written = set()
+                    def write_asset(path, relative):
+                        name = f'prelayout/{relative}'
+                        if name not in written:
+                            archive.write(path, name)
+                            written.add(name)
                     archive.writestr('prelayout/project.json', json.dumps(project, ensure_ascii=False))
                     for page in project['pages']:
                         for relative in (f'originals/{page["name"]}', page['state'], page['clean']):
                             if relative:
-                                archive.write(root / relative, f'prelayout/{relative}')
+                                write_asset(root / relative, relative)
                     for path in (root / 'imports').glob('*'):
                         if path.is_file() and not path.is_symlink():
-                            archive.write(path, f'prelayout/{path.relative_to(root)}')
+                            write_asset(path, path.relative_to(root))
                     # Only the immutable, published detection referenced by this snapshot belongs in it.
                     did = project.get('detection_id')
                     if did:
@@ -699,7 +715,7 @@ class PrelayoutStore:
                         archive.writestr(f'prelayout/detections/{did}/task.json', json.dumps(task, ensure_ascii=False))
                         for path in (folder / 'output').rglob('*'):
                             if path.is_file() and not path.is_symlink():
-                                archive.write(path, f'prelayout/{path.relative_to(root)}')
+                                write_asset(path, path.relative_to(root))
                 return Path(name)
             except BaseException:
                 Path(name).unlink(missing_ok=True)
@@ -813,10 +829,17 @@ class PrelayoutStore:
                 state['operations'] = []
                 atomic_json(content / page['state'], state)
                 if page.get('clean'):
-                    with Image.open(asset(page['clean'], 'clean')) as image:
+                    inpainted = page.get('clean_kind') == 'inpainted'
+                    if inpainted:
+                        expected = f'detections/{project.get("detection_id")}/output/inpainted/{Path(page["name"]).stem}.png'
+                        if page['clean'] != expected:
+                            raise ValueError('封存修補層不屬於目前偵測頁面')
+                    with Image.open(asset(page['clean'], 'detections' if inpainted else 'clean')) as image:
                         image.load()
                         if image.size != (page['width'], page['height']) or image.getexif().get(274, 1) != 1:
                             raise ValueError('封存去字圖尺寸不符')
+                        if inpainted and (image.format != 'PNG' or image.mode != 'RGBA'):
+                            raise ValueError('封存修補層必須是 RGBA PNG')
             did = project.get('detection_id')
             if did:
                 if not re.fullmatch(r'd_[a-f0-9]{32}', did):
@@ -853,6 +876,9 @@ class PrelayoutStore:
                 task_path.parent.rename(task_path.parent.with_name(new_id))
                 if old_id == project.get('detection_id'):
                     project['detection_id'] = new_id
+                    for page in project['pages']:
+                        if page.get('clean') and page.get('clean_kind') == 'inpainted':
+                            page['clean'] = f'detections/{new_id}/output/inpainted/{Path(page["name"]).stem}.png'
             atomic_json(content / 'project.json', project)
             content.rename(self.projects / project['id'])
             return project

@@ -233,6 +233,7 @@ make verify-local
 
 ## 漫畫排版執行方式
 
-- 漫畫預排版、看圖校對及排版修改一律由目前主代理直接使用 Codex 內建瀏覽器執行，不啟動或委派子代理。此規則優先於上方一般子代理分工規則。
+- 漫畫看圖校對及排版修改一律由目前主代理直接使用 Codex 內建瀏覽器執行，不啟動或委派子代理。此規則優先於上方一般子代理分工規則。
+- 預排版原圖匯入、OCR 字級計算及譯稿自動匹配使用 `.agents/skills/prelayout-import/SKILL.md` 與 `scripts/import_prelayout.py`，透過既有正式 API 執行；不直接寫入伺服器項目 JSON。這類準備不代表已人工校對，不能標記頁面完成。工具程式的探索、實作與測試沿用上方子代理分工規則。
 - 使用者輸入舊的 `@comic-proofreader` 名稱也不代表恢復子代理；將它理解為使用自動預排版 Skill，仍由主代理直接操作。
 - 操作規範見 `.agents/skills/auto-prelayout/SKILL.md`。

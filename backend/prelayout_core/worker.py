@@ -63,7 +63,8 @@ def run_ctd(folder, record, images, models):
     core._write_json(str(images / 'ctd' / 'progressing' / core.LINE_TRANS_MAP_JSON), lines)
     progress(folder, 'aligning', 0, len(names))
     aligned, _ = core._align_pages(str(images), paths, block, save_center_preview=False, need_neck=True,
-                                  on_page=lambda done, total: progress(folder, 'aligning', done, total))
+                                  on_page=lambda done, total: progress(folder, 'aligning', done, total),
+                                  save_neck_preview=False, save_align_masks=False)
     core._write_json(str(images / 'ctd' / 'progressing' / core.ALIGNED_BOX_MAP_JSON), aligned)
     method = {'single_char': 'char_box', 'fixed': 'fixed'}.get(record['options']['method'], 'ocr_aligned')
     progress(folder, 'measuring', 0, len(names))
@@ -80,15 +81,11 @@ def run_ctd(folder, record, images, models):
     atomic_json(images / 'ctd' / 'measure.json', measure)
     atomic_json(images / 'ctd' / 'measure.debug.json', debug)
     progress(folder, 'measuring', len(names), len(names))
-    # The upstream inpainted PNG is an alpha patch, not a complete background.
-    from .preview import composite_inpainted
+    # Keep the alpha patch only; the preview API composites it onto the original.
     progress(folder, 'previewing', 0, len(names))
-    print('生成 inpainted 預覽（OpenCV Telea，radius=3，mask_expansion=5）', flush=True)
+    print('生成 inpainted 透明修補層（OpenCV Telea，radius=3，mask_expansion=5）', flush=True)
     core._write_inpainted_images(str(images), paths, names, block)
-    for index, name in enumerate(names, 1):
-        composite_inpainted(images / name, Path(paths['inpainted']) / f'{Path(name).stem}.png',
-                            images / 'ctd' / 'backgrounds' / f'{Path(name).stem}.png')
-        progress(folder, 'previewing', index, len(names))
+    progress(folder, 'previewing', len(names), len(names))
 
 
 def run_ocr(folder, record, images, models):

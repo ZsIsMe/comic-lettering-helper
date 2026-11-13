@@ -316,15 +316,16 @@ def test_inpainted_publication_requires_all_pages_and_keeps_text(store, project)
     before = store.read(pid); text = store.translation(pid)
     detector = PrelayoutDetection(Settings(), store, ResourceGate())
     atomic_json(folder / 'output' / 'complete.json', {'pages': [p['name'] for p in project['pages']], 'inpainted': True})
-    backgrounds = folder / 'output' / 'backgrounds'; backgrounds.mkdir()
-    (backgrounds / '2.png').write_bytes(picture(fill='#506070'))
+    overlays = folder / 'output' / 'inpainted'; overlays.mkdir()
+    Image.new('RGBA', (300, 400), '#506070').save(overlays / '2.png')
     with pytest.raises(FileNotFoundError): detector.publish(pid, did)
     assert store.read(pid) == before
-    (backgrounds / '10.png').write_bytes(picture(fill='#506070'))
+    Image.new('RGBA', (300, 400), '#506070').save(overlays / '10.png')
     detector.publish(pid, did)
     result = store.read(pid)
     assert result['detection_id'] == did
-    assert all(p['clean_kind'] == 'inpainted' and p['clean'].startswith('clean/') for p in result['pages'])
+    assert all(p['clean_kind'] == 'inpainted' and p['clean'] == f'detections/{did}/output/inpainted/{Path(p["name"]).stem}.png' for p in result['pages'])
+    assert not (store.directory(pid) / 'clean').exists()
     assert 'reviewed_revision' not in result['pages'][0]
     assert store.translation(pid) == text
     clean, clean_key = store.preview(pid, page['id'], 384, True)
