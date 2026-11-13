@@ -10,9 +10,9 @@ import subprocess
 import urllib.request
 from pathlib import Path
 
-from PIL import Image
-
 from prelayout_core.data import identifier, read_json, validate_measure
+from prelayout_core.characters import validate_character_boxes
+from prelayout_core.preview import load_overlay
 from .store import Conflict, atomic_json, now
 
 ACTIVE = {'queued', 'validating', 'detecting', 'aligning', 'measuring', 'previewing', 'calibrating', 'publishing', 'cancelling', 'recovery_required'}
@@ -311,16 +311,19 @@ class PrelayoutDetection:
             project = self.store.read(pid)
             if complete['pages'] != [p['name'] for p in project['pages']]:
                 raise ValueError('偵測輸出頁面不完整')
-            validate_measure(read_json((folder / 'measure.json').read_bytes()), project['pages'])
+            measure = validate_measure(read_json((folder / 'measure.json').read_bytes()), project['pages'])
+            for page in project['pages']:
+                page_measure = read_json((folder / 'page-measures' / f'{page["id"]}.json').read_bytes())
+                if page_measure != measure['pages'][page['name']]:
+                    raise ValueError('逐頁量測與正式量測不一致')
+                validate_character_boxes(read_json((folder / 'page-characters' / f'{page["id"]}.json').read_bytes()), page)
             if complete.get('inpainted') is True:
                 pending = []
                 for page in project['pages']:
-                    relative = f'detections/{did}/output/inpainted/{Path(page["name"]).stem}.png'
+                    relative = f'detections/{did}/output/inpainted/{Path(page["name"]).stem}.npz'
                     overlay = self.store.directory(pid) / relative
-                    with Image.open(overlay) as image:
-                        image.load()
-                        if image.format != 'PNG' or image.mode != 'RGBA' or image.size != (page['width'], page['height']):
-                            raise ValueError('inpainted 必須是與原圖同尺寸的 RGBA PNG')
+                    with load_overlay(overlay, (page['width'], page['height'])):
+                        pass
                     pending.append((page, relative))
             else:
                 pending = []

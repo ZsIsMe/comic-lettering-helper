@@ -11,6 +11,8 @@ from app.prelayout.detection import PrelayoutDetection
 from app.prelayout.store import PrelayoutStore, atomic_json
 from app.resources import ResourceGate
 from prelayout_core.data import identifier
+from prelayout_core.preview import save_overlay
+import numpy as np
 
 
 @pytest.fixture
@@ -23,10 +25,13 @@ def task(tmp_path):
     folder = store.directory(pid) / 'detections' / did
     inputs = folder / 'input'; inputs.mkdir(parents=True)
     (inputs / '1.png').write_bytes(image.getvalue())
-    overlay = folder / 'output' / 'inpainted' / '1.png'
+    overlay = folder / 'output' / 'inpainted' / '1.npz'
     overlay.parent.mkdir(parents=True)
-    Image.new('RGBA', (40, 60), (10, 20, 30, 128)).save(overlay)
+    save_overlay(Image.new('RGBA', (40, 60), (10, 20, 30, 128)), overlay)
     atomic_json(folder / 'output' / 'measure.json', {'pages': {'1.png': []}})
+    page = project['pages'][0]
+    atomic_json(folder / 'output' / 'page-measures' / f'{page["id"]}.json', [])
+    atomic_json(folder / 'output' / 'page-characters' / f'{page["id"]}.json', [])
     atomic_json(folder / 'output' / 'complete.json', {'pages': ['1.png'], 'inpainted': True})
     atomic_json(folder / 'task.json', {'id': did, 'project_id': pid, 'state': 'publishing',
                                      'created_at': '2026-11-13T00:00:00Z', 'pid': None,
@@ -40,16 +45,16 @@ def test_success_reclaims_only_input_and_publication_is_idempotent(task):
     store, pid = detector.store, project['id']
     source = store.directory(pid) / 'originals' / '1.png'
     original = source.read_bytes()
-    patch = (folder / 'output' / 'inpainted' / '1.png').read_bytes()
+    patch = (folder / 'output' / 'inpainted' / '1.npz').read_bytes()
     detector.publish(pid, did)
     published = store.read(pid)
-    assert published['pages'][0]['clean'] == f'detections/{did}/output/inpainted/1.png'
+    assert published['pages'][0]['clean'] == f'detections/{did}/output/inpainted/1.npz'
     assert detector.status(pid)['state'] == 'completed'
     assert not (folder / 'input').exists()
     assert not (store.directory(pid) / 'clean').exists()
     assert not (folder / 'output' / 'backgrounds').exists()
     assert source.read_bytes() == original
-    assert (folder / 'output' / 'inpainted' / '1.png').read_bytes() == patch
+    assert (folder / 'output' / 'inpainted' / '1.npz').read_bytes() == patch
     page = published['pages'][0]
     store.review_page(pid, page['id'], page['revision'], True)
     reviewed = store.read(pid)
@@ -88,10 +93,10 @@ def test_preexisting_task_without_cleanup_policy_is_not_reclaimed_on_start(task)
 @pytest.mark.parametrize('invalid', ['missing', 'rgb', 'size', 'corrupt'])
 def test_invalid_overlay_preserves_input_and_old_project(task, invalid):
     detector, project, did, folder = task
-    path = folder / 'output' / 'inpainted' / '1.png'
+    path = folder / 'output' / 'inpainted' / '1.npz'
     if invalid == 'missing': path.unlink()
-    elif invalid == 'rgb': Image.new('RGB', (40, 60)).save(path)
-    elif invalid == 'size': Image.new('RGBA', (41, 60)).save(path)
+    elif invalid == 'rgb': np.savez_compressed(path, overlay=np.zeros((60,40,3), dtype=np.uint8))
+    elif invalid == 'size': save_overlay(Image.new('RGBA', (41, 60)), path)
     else: path.write_bytes(b'invalid PNG')
     before = detector.store.read(project['id'])
     with pytest.raises((ValueError, OSError)):

@@ -20,6 +20,7 @@ function harness(fetch, withHost = false, measure = async () => ({ risks: [], re
     Date: { now: () => clock += 250 },
     document: { activeElement: null, querySelectorAll: selector => selector.includes('.pl-page') ? [{
       dataset: { page: options.current }, getBoundingClientRect: () => ({ x: 0, y: 0, width: 100, height: 100 }),
+      querySelector: selector => selector === '[data-layer-pending]' && options.layerPending ? {} : null,
       querySelectorAll: () => [{ complete: true, naturalWidth: 100, dataset: { previewReady: 'true' }, decode: async () => {} }],
     }] : [] },
   }
@@ -369,5 +370,18 @@ test('a snapshot-only save reports newer dirty edits as pending instead of saved
   assert.equal(result.saved_page_dirty, true)
   assert.equal(result.saved_page_status, 'pending')
   assert.equal(result.status, 'pending')
+  controller.dispose()
+})
+
+test('WebMCP readiness waits for the complete layer pair rather than an already decoded original alone', async () => {
+  const { controller, host, options } = harness(() => assert.fail('Clean navigation should not save'), true)
+  options.layerPending = true
+  const firstToken = (await host.inspect()).token
+  const pending = await host.navigate({ token: firstToken, page_id: 'page-b' })
+  assert.equal(pending.rendered, false)
+  options.layerPending = false
+  const nextToken = (await host.inspect()).token
+  const ready = await host.navigate({ token: nextToken, page_id: 'page-a' })
+  assert.equal(ready.rendered, true)
   controller.dispose()
 })

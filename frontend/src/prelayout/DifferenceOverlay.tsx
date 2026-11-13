@@ -1,6 +1,5 @@
 import { memo, useEffect, useRef, useState } from 'react'
-import { previewUrl } from './api'
-import { usePreview } from './preview-cache'
+import { baseLayerOptions, useLayeredPreview } from './layered-preview'
 import { paintDifferencePixels } from './difference-mask'
 import type { Page } from './types'
 
@@ -23,10 +22,8 @@ export const DifferenceOverlay = memo(function DifferenceOverlay({ project, page
   const completedMaskKey = useRef('')
   const [painted, setPainted] = useState({ key: '', color: '' })
   const latestColor = useRef(color); latestColor.current = color
-  const sourceUrl = previewUrl(project, page, edge, false), cleanUrl = previewUrl(project, page, edge, true)
-  const source = usePreview(sourceUrl, interacting)
-  const clean = usePreview(cleanUrl, interacting)
-  const key = `${sourceUrl}|${cleanUrl}`
+  const layers = useLayeredPreview(project, page, true, baseLayerOptions(page, edge), interacting)
+  const { source, overlay, key } = layers
 
   useEffect(() => {
     if (canvas.current && completedMask.current && completedMaskKey.current === key) {
@@ -37,31 +34,31 @@ export const DifferenceOverlay = memo(function DifferenceOverlay({ project, page
 
   useEffect(() => {
     const target = canvas.current
-    const before = source.image, after = clean.image
-    if (!target || !before || !after || source.key !== sourceUrl || clean.key !== cleanUrl) return
+    const before = source.image, patch = overlay.image
+    if (!target || !before || !patch || !layers.ready) return
     let cancelled = false
     let frame = 0
-    if (before.naturalWidth !== after.naturalWidth || before.naturalHeight !== after.naturalHeight) return
-    const width = before.naturalWidth, height = before.naturalHeight, rows = Math.min(128, height)
-    const sourceCanvas = document.createElement('canvas'), cleanCanvas = document.createElement('canvas'), resultCanvas = document.createElement('canvas')
-    sourceCanvas.width = cleanCanvas.width = width; sourceCanvas.height = cleanCanvas.height = rows
-    resultCanvas.width = width; resultCanvas.height = height
+    const ratio = Math.min(1, edge / Math.max(before.naturalWidth, before.naturalHeight))
+    const width = Math.max(1, Math.round(before.naturalWidth * ratio)), height = Math.max(1, Math.round(before.naturalHeight * ratio)), rows = Math.min(128, height)
+    const sourceCanvas = document.createElement('canvas'), cleanCanvas = document.createElement('canvas')
+    sourceCanvas.width = cleanCanvas.width = width; sourceCanvas.height = cleanCanvas.height = height
     const sourceContext = sourceCanvas.getContext('2d', { willReadFrequently: true })
     const cleanContext = cleanCanvas.getContext('2d', { willReadFrequently: true })
-    const result = resultCanvas.getContext('2d')
-    if (!sourceContext || !cleanContext || !result) return
+    if (!sourceContext || !cleanContext) return
+    sourceContext.drawImage(before, 0, 0, width, height)
+    cleanContext.drawImage(before, 0, 0, width, height)
+    // Alpha is a coverage mask, not a change mask. Composite the patch first
+    // so a fill matching the original never becomes a false highlight.
+    cleanContext.drawImage(patch, 0, 0, width, height)
     let row = 0
     const paint = () => {
       if (cancelled) return
       const count = Math.min(rows, height - row)
-      sourceContext.clearRect(0, 0, width, rows); cleanContext.clearRect(0, 0, width, rows)
-      sourceContext.drawImage(before, 0, row, width, count, 0, 0, width, count)
-      cleanContext.drawImage(after, 0, row, width, count, 0, 0, width, count)
-      const sourcePixels = sourceContext.getImageData(0, 0, width, count).data
-      const cleanPixels = cleanContext.getImageData(0, 0, width, count).data
+      const sourcePixels = sourceContext.getImageData(0, row, width, count).data
+      const cleanPixels = cleanContext.getImageData(0, row, width, count).data
       const mask = new ImageData(width, count)
       paintDifferencePixels(sourcePixels, cleanPixels, mask.data, 0, width * count)
-      result.putImageData(mask, 0, row)
+      cleanContext.putImageData(mask, 0, row)
       row += count
       if (row < height) {
         frame = requestAnimationFrame(paint)
@@ -71,15 +68,20 @@ export const DifferenceOverlay = memo(function DifferenceOverlay({ project, page
       // calculated. Swap the finished canvas in one task so the user never sees
       // the transparent intermediate strips.
       if (!cancelled) {
-        completedMask.current = resultCanvas
+        completedMask.current = cleanCanvas
         completedMaskKey.current = key
-        drawMask(target, resultCanvas, latestColor.current)
+        drawMask(target, cleanCanvas, latestColor.current)
         setPainted({ key, color: latestColor.current })
+        sourceCanvas.width = 0
       }
     }
     paint()
-    return () => { cancelled = true; cancelAnimationFrame(frame) }
-  }, [clean.image, clean.key, cleanUrl, source.image, source.key, sourceUrl, key])
+    return () => {
+      cancelled = true; cancelAnimationFrame(frame)
+      sourceCanvas.width = 0
+      if (completedMask.current !== cleanCanvas) cleanCanvas.width = 0
+    }
+  }, [overlay.image, source.image, key, layers.ready, edge])
 
   return <canvas ref={canvas} className="pl-difference-overlay" data-ready={painted.key === key && painted.color === color && !!canvas.current?.width} data-color={painted.color} style={{ opacity }} role="img" aria-label="原圖與去字圖差異高亮，彩色區域為已修改像素" />
 })

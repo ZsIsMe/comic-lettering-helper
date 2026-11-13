@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Modal } from 'antd'
-import { previewUrl } from './api'
+import { LayeredImage } from './LayeredImage'
+import { baseLayerOptions } from './layered-preview'
 import { textStyle } from './layout-review'
 import type { Item, PageData } from './types'
 import './layout-review.css'
@@ -16,13 +17,14 @@ function ReviewPanel({ project, page, region, scale, mode, cleanBackground }: { 
   const [x1, y1, x2, y2] = region
   const width = x2 - x1, height = y2 - y1
   const clean = mode !== 'original' && cleanBackground && !!page.clean
-  const src = `${previewUrl(project, page, 3072, clean)}&x=${x1}&y=${y1}&w=${width}&h=${height}`
+  const bounded = baseLayerOptions(page, 3072).edge !== undefined
+  const options = bounded ? { edge: 3072, region: { x: x1, y: y1, width, height } } : {}
   const label = mode === 'before' ? '修改前' : mode === 'edited' ? '修改後' : '原圖'
   return <section className="pl-review-panel" aria-label={label}>
     <h3>{label}</h3>
     <div className="pl-review-crop" style={{ width: width * scale, height: height * scale }}>
       <div className="pl-review-scene pl-shell" style={{ width, height, transform: `scale(${scale})` }}>
-        <img className="pl-review-image" src={src} width={width} height={height} alt={`${page.name} ${label}`} draggable={false} />
+        <LayeredImage project={project} page={page} clean={clean} className="pl-review-image" options={options} errorScale={1 / scale} style={{ left: bounded ? 0 : -x1, top: bounded ? 0 : -y1, width: bounded ? width : page.width, height: bounded ? height : page.height, right: 'auto', bottom: 'auto' }} />
         {mode !== 'original' && page.items.map((item: Item) => <div key={item._id} className="pl-text pl-review-text" style={{ ...textStyle(item, page), left: item.x * page.width - x1, top: item.y * page.height - y1 }}>{<DisplayText text={item.text} orientation={item.orientation} />}</div>)}
       </div>
     </div>

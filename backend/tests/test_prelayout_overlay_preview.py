@@ -8,7 +8,8 @@ from PIL import Image
 
 from app.prelayout.store import PrelayoutStore, atomic_json
 from prelayout_core.data import identifier
-from prelayout_core.preview import compose_inpainted
+from prelayout_core.preview import compose_inpainted, save_overlay
+import numpy as np
 
 
 def image_bytes(image, format='PNG'):
@@ -41,11 +42,14 @@ def install_overlay(store, project, patch):
                          for page in record['pages']}}
     folder = root / 'detections' / did
     for page in record['pages']:
-        relative = f'detections/{did}/output/inpainted/{Path(page["name"]).stem}.png'
+        relative = f'detections/{did}/output/inpainted/{Path(page["name"]).stem}.npz'
         (root / relative).parent.mkdir(parents=True, exist_ok=True)
-        patch.save(root / relative)
+        save_overlay(patch, root / relative)
         page.update(clean=relative, clean_kind='inpainted')
     atomic_json(folder / 'output' / 'measure.json', measure)
+    for page in record['pages']:
+        atomic_json(folder / 'output' / 'page-measures' / f'{page["id"]}.json', measure['pages'][page['name']])
+        atomic_json(folder / 'output' / 'page-characters' / f'{page["id"]}.json', [])
     atomic_json(folder / 'output' / 'complete.json', {'pages': [p['name'] for p in record['pages']], 'inpainted': True})
     atomic_json(folder / 'task.json', {'id': did, 'project_id': project['id'], 'state': 'completed',
                                      'created_at': '2026-11-13T00:00:00Z', 'pid': None})
@@ -97,8 +101,10 @@ def test_composition_preserves_unmasked_pixels_and_partial_alpha(overlay_project
 def test_overlay_preview_rejects_invalid_patch(overlay_project, mode, size, format):
     store, project, _, _, _ = overlay_project
     page = project['pages'][0]
-    (store.directory(project['id']) / page['clean']).write_bytes(image_bytes(Image.new(mode, size), format))
-    with pytest.raises(ValueError, match='RGBA PNG'):
+    path = store.directory(project['id']) / page['clean']
+    if format == 'JPEG': path.write_bytes(image_bytes(Image.new(mode, size), format))
+    else: np.savez_compressed(path, overlay=np.zeros((size[1],size[0],4 if mode=='RGBA' else 3), dtype=np.uint8))
+    with pytest.raises(ValueError):
         store.preview(project['id'], page['id'], 384, True)
 
 
@@ -114,7 +120,7 @@ def test_new_detection_reference_invalidates_preview_cache(overlay_project):
 
     assert new_key != old_key
     assert after != before
-    assert (store.directory(project['id']) / 'previews' / f'{old_key}.jpg').exists()
+    assert not (store.directory(project['id']) / 'previews').exists()
 
 
 def test_archive_stores_patch_once_and_rebinds_detection_reference(overlay_project):
@@ -133,7 +139,7 @@ def test_archive_stores_patch_once_and_rebinds_detection_reference(overlay_proje
         archive.unlink()
     new_page = imported['pages'][0]
     assert imported['detection_id'] != did
-    assert new_page['clean'] == f'detections/{imported["detection_id"]}/output/inpainted/page.png'
+    assert new_page['clean'] == f'detections/{imported["detection_id"]}/output/inpainted/page.npz'
     assert (store.directory(imported['id']) / new_page['clean']).is_file()
     assert store.preview(imported['id'], new_page['id'], 384, True)[0] == before
 
@@ -151,10 +157,10 @@ def test_archive_rejects_foreign_or_invalid_inpainted_asset(overlay_project, alt
     page = record['pages'][0]
     original = page['clean']
     if alteration == 'other_detection':
-        page['clean'] = f'detections/{identifier("d")}/output/inpainted/page.png'
+        page['clean'] = f'detections/{identifier("d")}/output/inpainted/page.npz'
         entries[f'prelayout/{page["clean"]}'] = entries[f'prelayout/{original}']
     elif alteration == 'other_stem':
-        page['clean'] = original.replace('/page.png', '/different.png')
+        page['clean'] = original.replace('/page.npz', '/different.npz')
         entries[f'prelayout/{page["clean"]}'] = entries[f'prelayout/{original}']
     else:
         entries[f'prelayout/{original}'] = image_bytes(Image.new('RGB', (600, 900)))
@@ -163,5 +169,5 @@ def test_archive_rejects_foreign_or_invalid_inpainted_asset(overlay_project, alt
     with zipfile.ZipFile(raw, 'w') as bundle:
         for name, data in entries.items():
             bundle.writestr(name, data)
-    with pytest.raises(ValueError, match='修補層'):
+    with pytest.raises(ValueError, match='修補層|NPZ'):
         store.import_archive(raw.getvalue(), 10_000_000)

@@ -13,7 +13,8 @@ import numpy as np
 import pytest
 from PIL import Image, ImageDraw
 
-from prelayout_core.worker import load, run_ctd
+from prelayout_core.worker import finalize_output, load, run_ctd
+from prelayout_core.preview import load_overlay
 
 
 class FixtureDetector:
@@ -98,7 +99,7 @@ def test_headless_storage_keeps_measurements_and_rgba_without_diagnostics(tmp_pa
     assert not list((output / 'progressing' / 'align' / 'masks').glob('*.npz'))
     assert not list((output / 'progressing' / 'align' / 'neck').glob('*.png'))
     for name in names:
-        with Image.open(output / 'inpainted' / name) as patch:
+        with load_overlay(output / 'inpainted' / name.replace('.png', '.npz')) as patch:
             assert patch.mode == 'RGBA' and patch.size == (600, 900)
             if name == '002.png':
                 assert patch.getchannel('A').getbbox() is None
@@ -119,6 +120,19 @@ def test_headless_storage_keeps_measurements_and_rgba_without_diagnostics(tmp_pa
     assert not errors
     assert load(output / 'measure.json') == expected
     assert len(list((output / 'progressing' / 'align' / 'masks').glob('*.npz'))) == len(names)
+    assert not list((output / 'inpainted').glob('*.png'))
+    # The end of a task keeps complete page results and discards only raw analysis.
+    for page, page_id in zip(record['pages'], ['page-1', 'page-2']):
+        page['id'] = page_id
+    if method == 'ocr_aligned':
+        (output / 'measure_ocr.json').write_text(json.dumps({'pages': {name: [] for name in names}}))
+    finalize_output(output, record)
+    assert not (output / 'progressing').exists()
+    assert not (output / 'measure.debug.json').exists()
+    assert not (output / 'measure_ocr.json').exists()
+    assert load(output / 'measure.json') == expected
+    assert set(p.name for p in (output / 'page-characters').glob('*.json')) == {'page-1.json', 'page-2.json'}
+    assert not any('\n' in p.read_text() for p in (output / 'page-measures').glob('*.json'))
 
 
 def test_neck_preview_switch_preserves_split_result_and_summary(tmp_path, monkeypatch, core):

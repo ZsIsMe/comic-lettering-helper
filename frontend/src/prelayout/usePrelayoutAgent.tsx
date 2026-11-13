@@ -59,7 +59,7 @@ export function usePrelayoutAgent(options: Options) {
       while (alive && Date.now() < until) {
         const node = [...document.querySelectorAll<HTMLElement>('.pl-page[data-readonly="false"]')].find(node => node.dataset.page === id)
         const imgs = node ? [...node.querySelectorAll('img')] : []
-        if (latest.current.current === id && node && imgs.length && imgs.every(img => img.complete && img.naturalWidth > 0 && img.dataset.previewReady === 'true')) {
+        if (latest.current.current === id && node && !node.querySelector('[data-layer-pending]') && imgs.length && imgs.every(img => img.complete && img.naturalWidth > 0 && img.dataset.previewReady === 'true')) {
           const rect = node.getBoundingClientRect(), o = latest.current
           const next = [rect.x, rect.y, rect.width, rect.height, o.compare, o.zoom, o.focus].join(':')
           if (signature !== next) { signature = next; stableSince = Date.now() }
@@ -181,12 +181,13 @@ export function usePrelayoutAgent(options: Options) {
       },
       compare: async args => {
         const reviewId = await showReview(args)
-        let rendered = args.view === 'edited'
+        let rendered = args.view === 'edited' ? await ready(latest.current.current) : false
         const until = Date.now() + 4000
         while (!rendered && alive && Date.now() < until) {
           await pause()
           const imgs = [...document.querySelectorAll<HTMLImageElement>(`.pl-review-${reviewId} img`)]
-          rendered = imgs.length > 0 && imgs.every(img => img.complete && img.naturalWidth > 0)
+          const pending = document.querySelectorAll(`.pl-review-${reviewId} [data-layer-pending]`).length
+          rendered = imgs.length > 0 && !pending && imgs.every(img => img.complete && img.naturalWidth > 0 && img.dataset.previewReady === 'true')
           if (rendered) await Promise.all(imgs.map(img => img.decode().catch(() => {})))
         }
         await new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())))

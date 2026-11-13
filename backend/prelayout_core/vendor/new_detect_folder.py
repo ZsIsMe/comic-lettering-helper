@@ -1552,7 +1552,10 @@ def _write_inpainted_images(
     block_map: dict,
     radius: int = INPAINT_RADIUS,
     mask_expansion: int = INPAINT_MASK_EXPANSION,
+    output_format: str = 'png',
 ) -> None:
+    if output_format not in ('png', 'npz'):
+        raise ValueError('不支援的 inpainted 輸出格式')
     radius = max(1, int(radius))
     mask_expansion = max(1, int(mask_expansion))
     block_pages = block_map.get('blockMap', {})
@@ -1585,7 +1588,12 @@ def _write_inpainted_images(
         inpainted = cv2.cvtColor(inpainted_bgr, cv2.COLOR_BGR2BGRA)
         inpainted[:, :, 3] = inpaint_mask
         inpainted[inpaint_mask == 0, :3] = 0
-        imwrite(_inpainted_path_for_page(paths, page_name), inpainted)
+        destination = _inpainted_path_for_page(paths, page_name)
+        if output_format == 'npz':
+            from prelayout_core.preview import save_overlay
+            save_overlay(cv2.cvtColor(inpainted, cv2.COLOR_BGRA2RGBA), Path(destination).with_suffix('.npz'))
+        else:
+            imwrite(destination, inpainted)
 
 
 def _align_pages(
