@@ -1,5 +1,5 @@
 import { Button, Input, Space } from 'antd'
-import { previewUrl } from './api'
+import { layerUrl } from './api'
 import type { Project } from './types'
 import type { ProjectView } from './project-view'
 
@@ -34,7 +34,7 @@ export function ProjectLibrary({ projects, view, query, onQueryChange, onViewCha
         const updated = new Date(project.updated_at)
         const updatedLabel = view === 'list' ? updated.toLocaleString('zh-TW', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false }) : updated.toLocaleString()
         return <article key={project.id} className={view === 'list' ? 'pl-project-row' : 'pl-project-card'}>
-          {view === 'cards' && <button className="pl-cover" onClick={() => onOpen(project)}><img src={previewUrl(project.id, project.pages[0], 384)} loading="lazy" alt={project.name} /></button>}
+          {view === 'cards' && <button className="pl-cover" onClick={() => onOpen(project)}><img src={layerUrl(project.id, project.pages[0], 'original', { edge: 384 })} loading="lazy" alt={project.name} /></button>}
           <div className="pl-project-summary">
             <h2><button className="pl-project-name" title={project.name} onClick={() => onOpen(project)}>{project.name}</button></h2>
             <p className="pl-project-meta"><span className="pl-project-pages">{project.pages.length} 頁</span><span className="pl-project-progress">已完成 {completed} / {project.pages.length} 頁</span><span className="pl-project-updated" title={`最近更新：${updated.toLocaleString()}`}>{view === 'cards' && '最近更新：'}<time dateTime={project.updated_at}>{updatedLabel}</time></span></p>

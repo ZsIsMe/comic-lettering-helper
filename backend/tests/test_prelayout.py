@@ -15,6 +15,7 @@ from app.prelayout.store import PrelayoutStore, Conflict, atomic_json
 from app.prelayout.detection import PrelayoutDetection
 from app.prelayout.api import router
 from prelayout_core.data import identifier
+from prelayout_core.preview import save_overlay
 
 
 def picture(size=(300, 400), fill='white'):
@@ -23,12 +24,12 @@ def picture(size=(300, 400), fill='white'):
 
 def test_inpainted_overlay_preserves_transparent_pixels_and_checks_size(tmp_path):
     from prelayout_core.preview import composite_inpainted
-    source, overlay, output = (tmp_path / name for name in ('source.png', 'overlay.png', 'preview.png'))
+    source, overlay, output = (tmp_path / name for name in ('source.png', 'overlay.npz', 'preview.png'))
     source.write_bytes(picture((30, 40)))
     patch = Image.new('RGBA', (30, 40), (0, 0, 0, 0))
     patch.putpixel((5, 5), (20, 40, 60, 255))
     patch.putpixel((6, 5), (0, 0, 0, 128))
-    patch.save(overlay)
+    save_overlay(patch, overlay)
     original = source.read_bytes()
     composite_inpainted(source, overlay, output)
     with Image.open(output) as image:
@@ -37,7 +38,7 @@ def test_inpainted_overlay_preserves_transparent_pixels_and_checks_size(tmp_path
         assert image.getpixel((5, 5)) == (20, 40, 60)
         assert image.getpixel((6, 5)) == (127, 127, 127)
     assert source.read_bytes() == original
-    Image.new('RGBA', (31, 40)).save(overlay)
+    save_overlay(Image.new('RGBA', (31, 40)), overlay)
     with pytest.raises(ValueError, match='同尺寸'):
         composite_inpainted(source, overlay, tmp_path / 'bad.png')
     assert not (tmp_path / 'bad.png').exists()
@@ -242,6 +243,8 @@ def test_measure_read_only_and_upstream_matching(store, project):
     path = store.directory(pid) / 'detections' / did / 'output' / 'measure.json'
     atomic_json(path, measure)
     project['detection_id'] = did; store.write(project)
+    for p in project['pages']:
+        atomic_json(path.parent / 'page-characters' / f'{p["id"]}.json', [])
     store.save_page(pid, page['id'], 0, [item()], 'a')
     assert store.page(pid, page['id'])['measure'] == measure['pages']['2.png']
     candidate = store.matches(pid)['data']['transMap']['2.png'][0]
@@ -279,6 +282,9 @@ def install_measure(store, project):
     folder = store.directory(pid) / 'detections' / did
     measure = {'pages': {p['name']: [{'xyxy_pixel': [100, 100, 200, 300], 'center_normalized': [.5, .5], 'font_size': 32, 'orientation': 'vertical', 'text_color': 'white', 'text_has_stroke': True}] for p in project['pages']}}
     atomic_json(folder / 'output' / 'measure.json', measure)
+    for p in project['pages']:
+        atomic_json(folder / 'output' / 'page-measures' / f'{p["id"]}.json', measure['pages'][p['name']])
+        atomic_json(folder / 'output' / 'page-characters' / f'{p["id"]}.json', [])
     atomic_json(folder / 'output' / 'complete.json', {'pages': [p['name'] for p in project['pages']]})
     atomic_json(folder / 'task.json', {'id': did, 'project_id': pid, 'state': 'completed', 'created_at': '2026-09-12T00:00:00Z', 'pid': None})
     record = store.read(pid); record['detection_id'] = did; store.write(record)
@@ -316,15 +322,16 @@ def test_inpainted_publication_requires_all_pages_and_keeps_text(store, project)
     before = store.read(pid); text = store.translation(pid)
     detector = PrelayoutDetection(Settings(), store, ResourceGate())
     atomic_json(folder / 'output' / 'complete.json', {'pages': [p['name'] for p in project['pages']], 'inpainted': True})
-    backgrounds = folder / 'output' / 'backgrounds'; backgrounds.mkdir()
-    (backgrounds / '2.png').write_bytes(picture(fill='#506070'))
-    with pytest.raises(FileNotFoundError): detector.publish(pid, did)
+    overlays = folder / 'output' / 'inpainted'; overlays.mkdir()
+    save_overlay(Image.new('RGBA', (300, 400), '#506070'), overlays / '2.npz')
+    with pytest.raises(ValueError, match='NPZ'): detector.publish(pid, did)
     assert store.read(pid) == before
-    (backgrounds / '10.png').write_bytes(picture(fill='#506070'))
+    save_overlay(Image.new('RGBA', (300, 400), '#506070'), overlays / '10.npz')
     detector.publish(pid, did)
     result = store.read(pid)
     assert result['detection_id'] == did
-    assert all(p['clean_kind'] == 'inpainted' and p['clean'].startswith('clean/') for p in result['pages'])
+    assert all(p['clean_kind'] == 'inpainted' and p['clean'] == f'detections/{did}/output/inpainted/{Path(p["name"]).stem}.npz' for p in result['pages'])
+    assert not (store.directory(pid) / 'clean').exists()
     assert 'reviewed_revision' not in result['pages'][0]
     assert store.translation(pid) == text
     clean, clean_key = store.preview(pid, page['id'], 384, True)
@@ -441,10 +448,15 @@ def test_import_archive_rejects_duplicate_alias_and_foreign_binary(store, projec
     with pytest.raises(ValueError): store.import_archive(b'not a zip', 10000)
 
 
-def test_archive_rebuilds_derived_measures_and_log_download_retains_source(store, project):
+def test_archive_validates_compact_measures_and_log_download_retains_source(store, project):
     did, folder, measure = install_measure(store, project)
     page = project['pages'][0]
     atomic_json(folder / 'output' / 'page-measures' / f'{page["id"]}.json', [])
+    archive = store.export_archive(project['id'])
+    with pytest.raises(ValueError, match='逐頁量測'):
+        store.import_archive(archive.read_bytes(), 10_000_000)
+    archive.unlink()
+    atomic_json(folder / 'output' / 'page-measures' / f'{page["id"]}.json', measure['pages'][page['name']])
     archive = store.export_archive(project['id'])
     imported = store.import_archive(archive.read_bytes(), 10_000_000)
     archive.unlink()
@@ -503,6 +515,9 @@ def test_character_overlay_cache_is_read_only_and_per_page(store, project):
     atomic_json(output / 'measure.debug.json', debug)
     for p in project['pages']:
         atomic_json(output / 'page-measures' / f'{p["id"]}.json', measure['pages'][p['name']])
+    from prelayout_core.characters import character_pages
+    for cid, values in character_pages(output, project['pages']).items():
+        atomic_json(output / 'page-characters' / f'{cid}.json', values)
     before = store.read(project['id'])
     result = store.page(project['id'], page['id'])
     assert len(result['character_boxes']) == 1
@@ -515,16 +530,22 @@ def test_character_overlay_cache_is_read_only_and_per_page(store, project):
     assert store.page(project['id'], page['id']) == result
 
 
-def test_archive_rebuilds_character_overlay_instead_of_trusting_cache(store, project):
+def test_archive_validates_formal_characters_without_raw_debug(store, project):
     _, folder, _ = install_measure(store, project)
     page = project['pages'][0]
-    atomic_json(folder / 'output' / 'measure.debug.json', {'font_size': {page['name']: [{'char_boxes': [{'bbox': [10, 20, 22, 32]}]}]}})
-    atomic_json(folder / 'output' / 'page-characters' / f'{page["id"]}.json', [{'invalid': True}])
+    path = folder / 'output' / 'page-characters' / f'{page["id"]}.json'
+    atomic_json(path, [{'invalid': True}])
+    archive = store.export_archive(project['id'])
+    with pytest.raises(ValueError, match='單字框'):
+        store.import_archive(archive.read_bytes(), 10_000_000)
+    archive.unlink()
+    chars = [{'bbox': [10, 20, 22, 32], 'width': 12, 'height': 12,
+              'source_block_index': 0, 'line_index': 0, 'character_index': 0}]
+    atomic_json(path, chars)
     archive = store.export_archive(project['id'])
     imported = store.import_archive(archive.read_bytes(), 10_000_000)
     archive.unlink()
-    chars = store.page(imported['id'], imported['pages'][0]['id'])['character_boxes']
-    assert len(chars) == 1 and chars[0]['bbox'] == [10, 20, 22, 32]
+    assert store.page(imported['id'], imported['pages'][0]['id'])['character_boxes'] == chars
 
 
 def test_live_recovery_process_group_keeps_gpu_until_children_exit(store, project):
@@ -655,6 +676,8 @@ def test_labelplus_import_auto_matches_completed_detection_only_imported_pages(s
     path = store.directory(pid) / 'detections' / did / 'output' / 'measure.json'
     atomic_json(path, measure)
     project['detection_id'] = did; store.write(project)
+    for p in project['pages']:
+        atomic_json(path.parent / 'page-characters' / f'{p["id"]}.json', [])
     before = store.page(pid, untouched['id'])
     raw = '1, 0\n-\n對話\n-\n備註\n>>>>>>>>[2.jpg]<<<<<<<<\n----------------[1]----------------[0.5,0.5,1]\n譯文\n'.encode()
     store.import_translation(pid, raw, 'labelplus', project['revision'])

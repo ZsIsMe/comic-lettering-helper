@@ -87,3 +87,28 @@ def character_pages(folder: Path, pages, method=None):
     if method is None and (debug or ocr):
         method = load('measure.json').get('font_size_calculation_method')
     return {page['id']: character_boxes(debug, ocr, page['name'], method) for page in pages}
+
+
+def validate_character_boxes(values, page):
+    """Validate the published compact data without needing discarded OCR traces."""
+    if not isinstance(values, list) or len(values) > 100_000:
+        raise ValueError('單字框資料格式或數量無效')
+    limit = max(page['width'], page['height'])
+    for value in values:
+        if not isinstance(value, dict):
+            raise ValueError('單字框資料格式無效')
+        box = value.get('bbox')
+        if (not isinstance(box, list) or len(box) != 4 or
+                any(isinstance(v, bool) or not isinstance(v, (int, float)) or not math.isfinite(v)
+                    or not -2 * limit <= v <= 3 * limit for v in box) or
+                box[2] <= box[0] or box[3] <= box[1]):
+            raise ValueError('單字框座標無效')
+        if any(not positive(value.get(key)) for key in ('width', 'height')):
+            raise ValueError('單字框尺寸無效')
+        if any(type(value.get(key)) is not int or value[key] < 0
+               for key in ('source_block_index', 'line_index', 'character_index')):
+            raise ValueError('單字框索引無效')
+        for key in ('estimated_font_size', 'calculated_font_size'):
+            if key in value and not positive(value[key]):
+                raise ValueError('單字框字級無效')
+    return values

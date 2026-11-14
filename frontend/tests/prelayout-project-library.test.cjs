@@ -25,7 +25,7 @@ const project = {
 function setup(view, query = '', projects = [project]) {
   const previews = [], events = []
   const { ProjectLibrary } = load('ProjectLibrary.tsx', {
-    './api': { previewUrl: (...args) => { previews.push(args); return '/fixture/preview' } },
+    './api': { layerUrl: (...args) => { previews.push(args); return '/fixture/layers/original' } },
   })
   const tree = ProjectLibrary({
     projects, view, query,
@@ -93,7 +93,7 @@ for (const view of ['list', 'cards']) test(`${view} preserves open, rename, dele
   assert.equal(previews.length, view === 'cards' ? 1 : 0)
   assert.equal(html.includes('<img'), view === 'cards')
   if (view === 'cards') {
-    assert.deepEqual(previews[0], [project.id, project.pages[0], 384])
+    assert.deepEqual(previews[0], [project.id, project.pages[0], 'original', { edge: 384 }])
     all.find(node => node.props.className === 'pl-cover').props.onClick()
     assert.deepEqual(events.at(-1), ['open', project])
   }

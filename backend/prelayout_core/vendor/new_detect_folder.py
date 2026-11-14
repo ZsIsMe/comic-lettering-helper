@@ -478,7 +478,7 @@ def _remove_generated_neck_image(path: str) -> None:
 
 
 def _align_concavity_blocks(img, mask, boxes, aligned_items, gray, neck_path,
-                            summary_path, page_name):
+                            summary_path, page_name, save_neck_preview=True):
     candidates, groups = _split_bubble_candidates(gray, cv2.cvtColor(img, cv2.COLOR_BGR2GRAY), boxes)
     merged = list(aligned_items)
 
@@ -523,7 +523,7 @@ def _align_concavity_blocks(img, mask, boxes, aligned_items, gray, neck_path,
             merged[index]['layout_debug']['completion_fallback_reason'] = 'completed_boxes_overlap'
     summary = {'page': page_name, 'method': 'concavity_symmetry_v1',
                'generated': bool(candidates), 'groups': groups}
-    if candidates:
+    if candidates and save_neck_preview:
         imwrite(neck_path, _draw_neck_guides(img, groups))
     else:
         _remove_generated_neck_image(neck_path)
@@ -1552,7 +1552,10 @@ def _write_inpainted_images(
     block_map: dict,
     radius: int = INPAINT_RADIUS,
     mask_expansion: int = INPAINT_MASK_EXPANSION,
+    output_format: str = 'png',
 ) -> None:
+    if output_format not in ('png', 'npz'):
+        raise ValueError('不支援的 inpainted 輸出格式')
     radius = max(1, int(radius))
     mask_expansion = max(1, int(mask_expansion))
     block_pages = block_map.get('blockMap', {})
@@ -1585,7 +1588,12 @@ def _write_inpainted_images(
         inpainted = cv2.cvtColor(inpainted_bgr, cv2.COLOR_BGR2BGRA)
         inpainted[:, :, 3] = inpaint_mask
         inpainted[inpaint_mask == 0, :3] = 0
-        imwrite(_inpainted_path_for_page(paths, page_name), inpainted)
+        destination = _inpainted_path_for_page(paths, page_name)
+        if output_format == 'npz':
+            from prelayout_core.preview import save_overlay
+            save_overlay(cv2.cvtColor(inpainted, cv2.COLOR_BGRA2RGBA), Path(destination).with_suffix('.npz'))
+        else:
+            imwrite(destination, inpainted)
 
 
 def _align_pages(
@@ -1595,6 +1603,8 @@ def _align_pages(
     save_center_preview: bool = False,
     need_neck: bool = True,
     on_page=None,
+    save_neck_preview: bool = True,
+    save_align_masks: bool = True,
 ) -> tuple[dict, dict]:
     aligned_map = {}
     summary = {
@@ -1663,6 +1673,7 @@ def _align_pages(
             aligned_items, neck_summary = _align_concavity_blocks(
                 img, mask, block_boxes, aligned_items, calc_gray,
                 neck_path, neck_summary_path, page_name,
+                save_neck_preview=save_neck_preview,
             )
             if neck_summary.get('groups'):
                 summary['neck_shared_pages'] += 1
@@ -1686,11 +1697,12 @@ def _align_pages(
         aligned_items = _mark_overlap_error_route(aligned_items, overlap_indices, img.shape[:2])
         clean_items = _clean_aligned_items(aligned_items)
         aligned_map[page_name] = clean_items
-        _write_align_masks(
-            _align_mask_path_for_page(paths, page_name),
-            aligned_items,
-            img.shape[:2],
-        )
+        if save_align_masks:
+            _write_align_masks(
+                _align_mask_path_for_page(paths, page_name),
+                aligned_items,
+                img.shape[:2],
+            )
 
         final_boxes_overlap = bool(overlap_indices)
         unresolved_shared_without_guide = any(

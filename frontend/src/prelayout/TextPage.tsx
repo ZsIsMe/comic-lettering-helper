@@ -157,7 +157,7 @@ export const TextPage = memo(function TextPage({ project, page, scale, edge, cle
       if (!event.shiftKey) onSelect({ page: page.id, ids: [] })
     }}>
       <PreviewLayer project={project} page={page} edge={edge} scale={scale} clean={clean && !!page.clean} region={region} detailed={detailed} interacting={interacting} />
-      {difference && !!page.clean && !readonly && <DifferenceOverlay project={project} page={page} edge={edge} interacting={interacting} color={differenceColor} opacity={differenceOpacity} />}
+      {difference && !!page.clean && !readonly && !!region && <DifferenceOverlay project={project} page={page} edge={edge} interacting={interacting} color={differenceColor} opacity={differenceOpacity} />}
       {!readonly && showText && state?.data.items.map(item => <div key={item._id} data-item={item._id} className={`pl-text ${selected.includes(item._id) ? 'selected' : ''} ${editing?.id === item._id ? 'editing' : ''}`} style={{ ...textStyle(item, page), outlineWidth: selected.includes(item._id) ? 1.5 / scale : 0 }}
         onPointerDown={event => {
           if (event.button === 0 && event.metaKey) {

@@ -3,17 +3,20 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import json
 import os
 import shutil
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 from PIL import Image
 
 from app.prelayout.store import atomic_json
 from .data import read_json, validate_measure
-from .characters import character_pages
+from .characters import character_pages, validate_character_boxes
+from .preview import load_overlay
 
 
 def load(path):
@@ -63,7 +66,8 @@ def run_ctd(folder, record, images, models):
     core._write_json(str(images / 'ctd' / 'progressing' / core.LINE_TRANS_MAP_JSON), lines)
     progress(folder, 'aligning', 0, len(names))
     aligned, _ = core._align_pages(str(images), paths, block, save_center_preview=False, need_neck=True,
-                                  on_page=lambda done, total: progress(folder, 'aligning', done, total))
+                                  on_page=lambda done, total: progress(folder, 'aligning', done, total),
+                                  save_neck_preview=False, save_align_masks=False)
     core._write_json(str(images / 'ctd' / 'progressing' / core.ALIGNED_BOX_MAP_JSON), aligned)
     method = {'single_char': 'char_box', 'fixed': 'fixed'}.get(record['options']['method'], 'ocr_aligned')
     progress(folder, 'measuring', 0, len(names))
@@ -80,15 +84,11 @@ def run_ctd(folder, record, images, models):
     atomic_json(images / 'ctd' / 'measure.json', measure)
     atomic_json(images / 'ctd' / 'measure.debug.json', debug)
     progress(folder, 'measuring', len(names), len(names))
-    # The upstream inpainted PNG is an alpha patch, not a complete background.
-    from .preview import composite_inpainted
+    # Keep the alpha patch only; the preview API composites it onto the original.
     progress(folder, 'previewing', 0, len(names))
-    print('生成 inpainted 預覽（OpenCV Telea，radius=3，mask_expansion=5）', flush=True)
-    core._write_inpainted_images(str(images), paths, names, block)
-    for index, name in enumerate(names, 1):
-        composite_inpainted(images / name, Path(paths['inpainted']) / f'{Path(name).stem}.png',
-                            images / 'ctd' / 'backgrounds' / f'{Path(name).stem}.png')
-        progress(folder, 'previewing', index, len(names))
+    print('生成 inpainted 透明修補層（OpenCV Telea，radius=3，mask_expansion=5）', flush=True)
+    core._write_inpainted_images(str(images), paths, names, block, output_format='npz')
+    progress(folder, 'previewing', len(names), len(names))
 
 
 def run_ocr(folder, record, images, models):
@@ -117,6 +117,57 @@ def run_ocr(folder, record, images, models):
     progress(folder, 'calibrating', len(record['pages']), len(record['pages']))
 
 
+def compact_json(path, value):
+    """Compact only published numeric results, without changing project writes."""
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, temporary = tempfile.mkstemp(prefix='.compact-', dir=path.parent)
+    try:
+        with os.fdopen(fd, 'w') as stream:
+            json.dump(value, stream, ensure_ascii=False, allow_nan=False, separators=(',', ':'))
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, path)
+    finally:
+        Path(temporary).unlink(missing_ok=True)
+
+
+def finalize_output(output, record):
+    """Publish complete compact data before discarding this task's raw analysis."""
+    output = Path(output)
+    measure = validate_measure(load(output / 'measure.json'), record['pages'])
+    expected_names = {page['name'] for page in record['pages']}
+    debug = load(output / 'measure.debug.json')
+    if set(debug.get('font_size', {})) != expected_names:
+        raise ValueError('逐字分析輸出頁面不完整')
+    if record['options']['method'] == 'ocr_aligned':
+        if set(load(output / 'measure_ocr.json').get('pages', {})) != expected_names:
+            raise ValueError('OCR 輸出頁面不完整')
+    characters = character_pages(output, record['pages'], record['options']['method'])
+    if set(characters) != {page['id'] for page in record['pages']}:
+        raise ValueError('逐字框輸出頁面不完整')
+    for page in record['pages']:
+        validate_character_boxes(characters[page['id']], page)
+        compact_json(output / 'page-measures' / f'{page["id"]}.json', measure['pages'][page['name']])
+        compact_json(output / 'page-characters' / f'{page["id"]}.json', characters[page['id']])
+    compact_json(output / 'measure.json', measure)
+    for page in record['pages']:
+        if load(output / 'page-measures' / f'{page["id"]}.json') != measure['pages'][page['name']]:
+            raise ValueError('逐頁量測寫入不完整')
+        saved_characters = validate_character_boxes(load(output / 'page-characters' / f'{page["id"]}.json'), page)
+        if saved_characters != characters[page['id']]:
+            raise ValueError('逐字框寫入不完整')
+        with load_overlay(output / 'inpainted' / f'{Path(page["name"]).stem}.npz', (page['width'], page['height'])):
+            pass
+    for name in ('measure.debug.json', 'measure_ocr.json'):
+        (output / name).unlink(missing_ok=True)
+    progressing = output / 'progressing'
+    if progressing.is_symlink():
+        raise ValueError('分析暫存不可為符號連結')
+    if progressing.exists():
+        shutil.rmtree(progressing)
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument('--task', type=Path, required=True)
@@ -143,12 +194,7 @@ def main():
         subprocess.run([sys.executable, '-m', 'prelayout_core.worker', '--task', str(args.task), '--task-id', args.task_id,
                         '--images', str(images), '--phase', phase], check=True)
     progress(folder, 'publishing', len(record['pages']), len(record['pages']))
-    measure = load(images / 'ctd' / 'measure.json')
-    validate_measure(measure, record['pages'])
-    for page in record['pages']:
-        atomic_json(images / 'ctd' / 'page-measures' / f'{page["id"]}.json', measure['pages'][page['name']])
-    for cid, values in character_pages(images / 'ctd', record['pages'], record['options']['method']).items():
-        atomic_json(images / 'ctd' / 'page-characters' / f'{cid}.json', values)
+    finalize_output(images / 'ctd', record)
     (images / 'ctd').rename(folder / 'output')
     atomic_json(folder / 'output' / 'complete.json', {'pages': [page['name'] for page in record['pages']], 'inpainted': True})
 

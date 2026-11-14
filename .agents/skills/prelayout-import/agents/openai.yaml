@@ -1,0 +1,4 @@
+interface:
+  display_name: "預排版匯入"
+  short_description: "由圖片資料夾建立預排版，完成 OCR 並可選匯入 JSON 或 LabelPlus TXT 譯稿"
+  default_prompt: "使用 $prelayout-import 將指定圖片資料夾建立為獨立預排版項目，完成 OCR 字級計算，若有提供譯稿則匯入並自動匹配。"

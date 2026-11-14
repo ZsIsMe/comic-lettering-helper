@@ -12,7 +12,8 @@ from types import SimpleNamespace
 import cv2
 import numpy as np
 from PIL import Image, ImageDraw
-from prelayout_core.worker import run_ctd, load
+from prelayout_core.worker import finalize_output, run_ctd, load
+from prelayout_core.preview import load_overlay
 from prelayout_core.vendor import new_detect_folder as core, measure_ocr
 from prelayout_core.data import validate_measure
 
@@ -39,8 +40,20 @@ def main():
             draw.ellipse((55, 50, 225, 340), outline='black', width=3)
             for y in (95, 150, 210): draw.rectangle((100, y, 145, y + 40), fill='black')
             image.save(images / '001.png'); Image.new('RGB', (600, 900), 'white').save(images / '002.png')
-            record = {'pages': [{'name': name, 'width': 600, 'height': 900} for name in ('001.png', '002.png')], 'options': {'method': method, 'font_size': 24, 'step': 2}}
+            record = {'pages': [{'id': name, 'name': name, 'width': 600, 'height': 900} for name in ('001.png', '002.png')], 'options': {'method': method, 'font_size': 24, 'step': 2}}
             run_ctd(folder, record, images, root / 'external-model-placeholder')
+            assert not (images / 'ctd' / 'backgrounds').exists()
+            assert not list((images / 'ctd' / 'progressing' / 'align' / 'masks').glob('*.npz'))
+            assert not list((images / 'ctd' / 'progressing' / 'align' / 'neck').glob('*.png'))
+            for name in ('001.png', '002.png'):
+                with Image.open(images / name) as original, load_overlay(images / 'ctd' / 'inpainted' / Path(name).with_suffix('.npz')) as patch:
+                    assert patch.mode == 'RGBA' and patch.size == original.size
+                    source = original.convert('RGB')
+                    composite = Image.alpha_composite(source.convert('RGBA'), patch).convert('RGB')
+                    alpha = np.asarray(patch.getchannel('A'))
+                    changed = np.any(np.asarray(source) != np.asarray(composite), axis=2)
+                    assert not np.any(changed & (alpha == 0))
+                    assert bool(np.any(alpha)) == (name == '001.png')
             measure = validate_measure(load(images / 'ctd' / 'measure.json'), record['pages'])
             assert measure['pages']['001.png'], 'Expected the fixture text region'
             assert measure['pages']['002.png'] == [], 'Blank pages must survive'
@@ -78,6 +91,10 @@ def main():
                     page=None, measure_debug_path=None, source_block_index=None, limit_pages=None, limit_items=None,
                     batch_size=32, save_crops=None, dry_run=True)
                 assert set(load(output)['pages']) == {'001.png', '002.png'}
+            finalize_output(images / 'ctd', record)
+            assert not (images / 'ctd' / 'progressing').exists()
+            assert not (images / 'ctd' / 'measure.debug.json').exists()
+            assert not (images / 'ctd' / 'measure_ocr.json').exists()
             print(f'{method}: alignment, measurement and source styling contracts passed', flush=True)
         args.output.parent.mkdir(parents=True, exist_ok=True)
         args.output.write_text(json.dumps({'passed': True, 'synthetic_detector': True, 'gpu_verified': False, 'methods': ['single_char', 'ocr_aligned', 'fixed']}))

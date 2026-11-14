@@ -17,7 +17,8 @@ from pathlib import Path
 from PIL import Image
 
 from prelayout_core.data import identifier, read_json, validate_items, validate_measure, parse_translation, export_item, match_translation
-from prelayout_core.characters import character_pages
+from prelayout_core.characters import validate_character_boxes
+from prelayout_core.preview import compose_inpainted, load_overlay
 from .text_replacements import replacement, validate_request
 from .question_records import chronological_records, rebind_imported_records, validate_question_records, validate_records
 from .import_metadata import labelplus_indices, merge_template, preserve_item_information
@@ -289,14 +290,9 @@ class PrelayoutStore:
                 data = read_json(path.read_bytes())
                 measure = data.get('pages', {}).get(page['name'], [])
             character_path = path.parent / 'page-characters' / f'{page_id}.json'
-            if not character_path.exists():
-                # Older tasks already have the OCR/debug output. Derive all compact
-                # pages once, so subsequent page reads never parse a whole chapter.
-                with self.lock(pid):
-                    if not character_path.exists():
-                        for cid, values in character_pages(path.parent, project['pages']).items():
-                            atomic_json(path.parent / 'page-characters' / f'{cid}.json', values)
-            characters = read_json(character_path.read_bytes())
+            if not character_path.is_file():
+                raise ValueError('缺少正式單字框資料，請重新偵測')
+            characters = validate_character_boxes(read_json(character_path.read_bytes()), page)
         return {**page, **state, 'measure': measure, 'character_boxes': characters}
 
     def save_page(self, pid, page_id, revision, items, operation_id):
@@ -633,47 +629,74 @@ class PrelayoutStore:
             self.write(project)
             return project
 
-    def preview(self, pid, page_id, edge=1536, clean=False, region=None):
+    @staticmethod
+    def _preview_region(page, edge, region):
+        if edge is not None and edge not in (384, 768, 1536, 3072):
+            raise ValueError('預覽級別無效')
+        if region is not None:
+            x, y, w, h = region
+            if min(x, y) < 0 or min(w, h) < 1 or max(w, h) > 8192 or x + w > page['width'] or y + h > page['height']:
+                raise ValueError('局部預覽範圍無效')
+
+    def layer(self, pid, page_id, kind, edge=None, region=None):
+        if kind not in ('original', 'overlay'):
+            raise ValueError('圖片圖層無效')
         with self.reader(pid) as (project, root):
             page = next((p for p in project['pages'] if p['id'] == page_id), None)
             if page is None:
                 raise KeyError('頁面不存在')
-            if edge not in (384, 768, 1536, 3072):
-                raise ValueError('預覽級別無效')
-            if region is not None:
-                x, y, w, h = region
-                if min(x, y) < 0 or min(w, h) < 1 or max(w, h) > 8192 or x + w > page['width'] or y + h > page['height']:
-                    raise ValueError('局部預覽範圍無效')
-            path = root / (page['clean'] if clean and page['clean'] else f'originals/{page["name"]}')
-            key = hashlib.sha256(f'{page["sha256"]}:{page["clean"] if clean else "source"}:{edge}:{region}'.encode()).hexdigest()
-            cache = root / 'previews' / f'{key}.jpg'
-            with self.lock(f'preview:{pid}:{key}'):
-                with self.lock(f'preview-cache:{pid}'):
-                    if cache.exists():
-                        payload = cache.read_bytes()
-                        os.utime(cache, None)
-                        return payload, key
+            self._preview_region(page, edge, region)
+            key = hashlib.sha256(f'layer-v1:{page["sha256"]}:{page["clean"] if kind == "overlay" else "source"}:{edge}:{region}'.encode()).hexdigest()
+            if kind == 'original' and edge is None and region is None:
+                path = root / 'originals' / page['name']
                 with Image.open(path) as source:
-                    if region is None:
-                        # JPEG can reduce its decoder working set before materializing pixels.
-                        source.draft('RGB', (edge, edge))
-                        source.thumbnail((edge, edge))
-                        image = source.convert('RGB')
-                    else:
+                    media = 'image/png' if source.format == 'PNG' else 'image/jpeg'
+                return path.read_bytes(), key, media
+            if kind == 'overlay':
+                if not page.get('clean') or page.get('clean_kind') != 'inpainted':
+                    raise KeyError('此頁尚無透明修補層')
+                image = load_overlay(root / page['clean'], (page['width'], page['height']))
+            else:
+                with Image.open(root / 'originals' / page['name']) as source:
+                    image = source.convert('RGB')
+            with image:
+                if region is not None:
+                    x, y, w, h = region
+                    cropped = image.crop((x, y, x + w, y + h))
+                else:
+                    cropped = image.copy()
+                with cropped:
+                    if edge is not None:
+                        cropped.thumbnail((edge, edge))
+                    payload = io.BytesIO()
+                    cropped.save(payload, 'PNG')
+            return payload.getvalue(), key, 'image/png'
+
+    def preview(self, pid, page_id, edge=1536, clean=False, region=None):
+        # Auxiliary crop/comparison API: render in memory, never persist previews.
+        with self.reader(pid) as (project, root):
+            page = next((p for p in project['pages'] if p['id'] == page_id), None)
+            if page is None:
+                raise KeyError('頁面不存在')
+            self._preview_region(page, edge, region)
+            use_clean = bool(clean and page['clean'])
+            key = hashlib.sha256(f'npz-composite-v1:{page["sha256"]}:{page["clean"] if use_clean else "source"}:{edge}:{region}'.encode()).hexdigest()
+            if use_clean and page.get('clean_kind') == 'inpainted':
+                image = compose_inpainted(root / 'originals' / page['name'], root / page['clean'], region)
+            else:
+                path = root / (page['clean'] if use_clean else f'originals/{page["name"]}')
+                with Image.open(path) as source:
+                    if region is not None:
+                        x, y, w, h = region
                         image = source.crop((x, y, x + w, y + h)).convert('RGB')
-                        image.thumbnail((edge, edge))
-                    output = io.BytesIO(); image.save(output, 'JPEG', quality=88)
-                    payload = output.getvalue(); image.close()
-                with self.lock(f'preview-cache:{pid}'):
-                    cache.parent.mkdir(exist_ok=True)
-                    cache.write_bytes(payload)
-                    files = sorted(cache.parent.glob('*.jpg'), key=lambda f: f.stat().st_mtime)
-                    total = sum(f.stat().st_size for f in files)
-                    for old in files:
-                        if total <= 256 * 1024 * 1024:
-                            break
-                        total -= old.stat().st_size; old.unlink()
-                return payload, key
+                    else:
+                        source.draft('RGB', (edge, edge))
+                        image = source.convert('RGB')
+            with image:
+                image.thumbnail((edge, edge))
+                output = io.BytesIO()
+                image.save(output, 'JPEG', quality=88)
+            return output.getvalue(), key
 
     def export_archive(self, pid):
         with self.reader(pid) as (project, root):
@@ -682,14 +705,20 @@ class PrelayoutStore:
             os.close(fd)
             try:
                 with zipfile.ZipFile(name, 'w', compression=zipfile.ZIP_DEFLATED, compresslevel=1) as archive:
+                    written = set()
+                    def write_asset(path, relative):
+                        name = f'prelayout/{relative}'
+                        if name not in written:
+                            archive.write(path, name)
+                            written.add(name)
                     archive.writestr('prelayout/project.json', json.dumps(project, ensure_ascii=False))
                     for page in project['pages']:
                         for relative in (f'originals/{page["name"]}', page['state'], page['clean']):
                             if relative:
-                                archive.write(root / relative, f'prelayout/{relative}')
+                                write_asset(root / relative, relative)
                     for path in (root / 'imports').glob('*'):
                         if path.is_file() and not path.is_symlink():
-                            archive.write(path, f'prelayout/{path.relative_to(root)}')
+                            write_asset(path, path.relative_to(root))
                     # Only the immutable, published detection referenced by this snapshot belongs in it.
                     did = project.get('detection_id')
                     if did:
@@ -699,7 +728,7 @@ class PrelayoutStore:
                         archive.writestr(f'prelayout/detections/{did}/task.json', json.dumps(task, ensure_ascii=False))
                         for path in (folder / 'output').rglob('*'):
                             if path.is_file() and not path.is_symlink():
-                                archive.write(path, f'prelayout/{path.relative_to(root)}')
+                                write_asset(path, path.relative_to(root))
                 return Path(name)
             except BaseException:
                 Path(name).unlink(missing_ok=True)
@@ -813,10 +842,20 @@ class PrelayoutStore:
                 state['operations'] = []
                 atomic_json(content / page['state'], state)
                 if page.get('clean'):
-                    with Image.open(asset(page['clean'], 'clean')) as image:
-                        image.load()
-                        if image.size != (page['width'], page['height']) or image.getexif().get(274, 1) != 1:
-                            raise ValueError('封存去字圖尺寸不符')
+                    inpainted = page.get('clean_kind') == 'inpainted'
+                    if inpainted:
+                        expected = f'detections/{project.get("detection_id")}/output/inpainted/{Path(page["name"]).stem}.npz'
+                        if page['clean'] != expected:
+                            raise ValueError('封存修補層不屬於目前偵測頁面')
+                    path = asset(page['clean'], 'detections' if inpainted else 'clean')
+                    if inpainted:
+                        with load_overlay(path, (page['width'], page['height'])):
+                            pass
+                    else:
+                        with Image.open(path) as image:
+                            image.load()
+                            if image.size != (page['width'], page['height']) or image.getexif().get(274, 1) != 1:
+                                raise ValueError('封存去字圖尺寸不符')
             did = project.get('detection_id')
             if did:
                 if not re.fullmatch(r'd_[a-f0-9]{32}', did):
@@ -829,12 +868,13 @@ class PrelayoutStore:
                 completed = read_json(asset(f'detections/{did}/output/complete.json', 'detections').read_bytes())
                 if completed.get('pages') != [p['name'] for p in project['pages']]:
                     raise ValueError('封存偵測結果頁面不完整')
-                # Derived caches in an archive must never override the validated source.
-                for page in project['pages']:
-                    atomic_json(content / f'detections/{did}/output/page-measures/{page["id"]}.json', measure['pages'][page['name']])
                 output = content / f'detections/{did}/output'
-                for cid, values in character_pages(output, project['pages'], measure.get('font_size_calculation_method')).items():
-                    atomic_json(output / 'page-characters' / f'{cid}.json', values)
+                for page in project['pages']:
+                    page_measure = read_json(asset(f'detections/{did}/output/page-measures/{page["id"]}.json', 'detections').read_bytes())
+                    if page_measure != measure['pages'][page['name']]:
+                        raise ValueError('封存逐頁量測與正式量測不一致')
+                    chars = read_json(asset(f'detections/{did}/output/page-characters/{page["id"]}.json', 'detections').read_bytes())
+                    validate_character_boxes(chars, page)
             project['id'] = identifier('pl')
             # Older archives may carry a manifest index, but operation records are
             # intentionally outside the legacy archive format.
@@ -853,6 +893,9 @@ class PrelayoutStore:
                 task_path.parent.rename(task_path.parent.with_name(new_id))
                 if old_id == project.get('detection_id'):
                     project['detection_id'] = new_id
+                    for page in project['pages']:
+                        if page.get('clean') and page.get('clean_kind') == 'inpainted':
+                            page['clean'] = f'detections/{new_id}/output/inpainted/{Path(page["name"]).stem}.npz'
             atomic_json(content / 'project.json', project)
             content.rename(self.projects / project['id'])
             return project

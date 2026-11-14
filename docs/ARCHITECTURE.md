@@ -1,5 +1,11 @@
 # 系統架構
 
+## Python 預排版匯入客戶端
+
+`scripts/import_prelayout.py` 是既有 `/api/prelayout` 的客戶端，專案 Skill 位於 `.agents/skills/prelayout-import/`。它先驗證來源圖片與可選譯稿，再串行呼叫建立項目、OCR 偵測、譯稿預覽／套用及匹配預覽／套用，沿用後端 GPU gate、不可變頁面修訂與 expected_revision 檢查。沒有譯稿時只準備原圖與 OCR 量測，不生成文字框。最終透過 API 讀回驗證文字與匹配統計，不直接修改伺服器資料。
+
+原圖／譯稿指紋、項目與任務 ID 及步驟保存在本機 `var/prelayout-imports/`。每次寫入請求前先原子記錄 pending；既有 API 不具備匯入用操作冪等鍵，結果無法確認時停止而非自動重送。正常輪詢中斷可沿用已知 OCR 任務續作，完成後重跑只核驗；不自動取消 OCR、不覆蓋後續人工編輯、不標記校對完成。服務 API、模型、工作流及前端不變。
+
 ## 0.2.21 Flux 白色修復標記（2026-10-11）
 
 批量 `workflows/Flux2-Klein-9B-FP8-Manga-Mask-LanPaint-4step.json` 與手塗 `workflows/handpaint/Flux手塗去字.json` 的 node 284（ColorImage V2）使用白色 `#FFFFFF`，取代灰綠色 `#687771`；node 295 的標題同步改成白色。參考圖仍經同一混合、VAE 編碼及 ReferenceLatent 路徑送入 Flux。node 281 原提示詞與所有其他推理參數保持原樣，`config/components.json` 同步兩份工作流 SHA-256。此變更針對修復區域偏色的排查，尚未驗證生成品質改善。
@@ -83,7 +89,12 @@ ComfyUI 修復 ──┘
 
 撤銷只處理最近一次尚未撤銷的替換，逐框核對目前文字仍等於替換結果，保留後續位置與樣式調整；文字被改動或框被刪除時整批拒絕。前端先保存草稿，套用後只刷新已快取且修訂改變的頁面，清除這些頁面的舊撤銷快照，避免舊快照帶回替換前文字。未確認結果的請求在送出前保存至 localStorage，刷新或斷線後沿用同一操作 ID 重試；伺服器已保存但畫面同步失敗時僅重新載入結果。封存匯入清除不隨既有封存輸出的操作索引。
 
-CTD 階段沿用來源核心的 OpenCV Telea 生成 `output/inpainted/<stem>.png`（RGBA 透明覆蓋層），再與該項目原圖合成至 `output/backgrounds/`。`complete.json` 的 `inpainted: true` 表示需要完整底圖驗證；發布時核對全批 RGB PNG 尺寸，將底圖複製到新的 `clean/` 資產，再一次更新 detection ID 與頁面引用（`clean_kind: inpainted`）。半成品不替換舊底圖，既有 reader 可繼續讀舊資產；文字修訂與原圖不變。底圖版本改變會更新既有預覽快取鍵，沿用分級與圖塊預覽。此 CPU 影像預處理不涉及神經網路推理後備或 ComfyUI。
+CTD 的 headless `inpainted` 輸出直接保存為 `<stem>.npz`，唯一陣列 `overlay` 是原尺寸、C-order uint8 RGBA，透明 RGB 清零。`load_overlay` 檢查 ZIP 唯一成員、NPY header、尺寸／解壓大小與 dtype，且 `allow_pickle=False`；只在記憶體轉成 PNG 供瀏覽器顯示，不落修補 PNG 或完整合成圖。全批驗證後，頁面 `clean` 引用該 detection 內的 NPZ；相同 detection 重複保存不重設人工完成狀態。封存只收一份 NPZ，匯入校驗引用並重綁 detection ID。
+
+`/pages/<id>/layers/original` 原尺寸直接回傳原圖 bytes，`layers/overlay` 回傳記憶體編碼的透明 PNG；可選 edge／region 只產生各獨立層的記憶體縮圖或圖塊。前端共用有上限的 decoded-image cache，兩層同代 ready 才呈現，縮放／捲動不要求後端合成 JPEG；大圖仍採分級與可見圖塊。差異高亮在前端合成 source+overlay 後按實際像素變化計算。輔助 `/preview` 可記憶體合成供比較使用，所有圖片接口 `Cache-Control: no-store`，後端沒有磁碟預覽快取。
+
+worker 在輸出完整的正式 `measure.json`、逐頁量測、精簡單字框與 NPZ 並驗證後，才清除 `measure.debug.json`、`measure_ocr.json` 及 `progressing/`；正式 JSON 使用緊湊格式。頁面讀取不再從 raw OCR 回填單字框，封存校驗並保留精簡結果，不重建或覆寫成空資料。`need_neck=true` 及所有計算參數保持原樣，診斷 PNG／NPZ 輸出關閉。新建任務以 `cleanup_input_after_publish: true` 在結果存入項目、標記 completed 且程序退出後回收 input；失敗／取消保留，清理失敗不降級成功結果，啟動時可重試。舊頁面、撤銷紀錄及其他既有項目不在本輪回收範圍。
+
 
 對照模式順序為左側編輯圖、右側原圖與偵測框，兩側沿用各自的可見區座標與同一捲動／縮放。`characters.py` 從唯讀 `measure.debug.json`／`measure_ocr.json` 提取單字框；OCR 模式沿用來源的 accepted 字元及 accepted font-fit 條件，FS 優先估算值。worker 生成逐頁 `page-characters/`；舊任務首次讀取時一次建立全批精簡快取，後續僅讀本頁，封存匯入重建派生快取。原始 measure、偵測輸出、文字修訂不改寫。前端以一條 SVG path 畫每頁的單字框；rAF 合併 hover 命中測試，重疊時取最小框，只顯示一份 W／H／FS 提示。該層不接收指標事件，拖曳期間暫停 hover，保持文字編輯與區塊套用可用。
 

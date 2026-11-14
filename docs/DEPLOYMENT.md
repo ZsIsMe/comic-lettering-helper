@@ -1,3 +1,9 @@
+# Python 預排版匯入工具
+
+`scripts/import_prelayout.py` 與 `.agents/skills/prelayout-import/` 隨工程保存，使用專案 `.venv/bin/python` 和既有 Pillow／預排版解析器，無需新增模型或 MCP 服務。先啟動既有 6008；本機入口為 `./scripts/start-local.sh --no-open`。預設連線 `http://127.0.0.1:6008`，`--base-url` 可指定已有服務，不自行開關 AutoDL 或重啟服務。
+
+圖片路徑與可選譯稿路徑屬於執行腳本的機器，檔案經既有 multipart API 上傳。`--check-only` 先檢查輸入及 OCR／GPU 可用性；無卡或 GPU 忙碌時停止，不降低計算方式。續作紀錄在本機忽略目錄 `var/prelayout-imports/`，應與該次輸入一起保留；未知寫入結果不得靠刪紀錄重跑。工具不需要部署前後端資產、不變更 ComfyUI，也不代表 AutoDL CUDA 推理已驗證。
+
 # 0.2.20 多區塊修復裁切（2026-10-08，未部署）
 
 前後端需同步更新：修復範圍新增多條水平／垂直線及點亮格子，僅選中裁切工具可操作；各格尺寸顯示在右下方外側，切頁保留 F1／F2／F3 模式。每個點亮格子是獨立推理輸入，全部完成後回貼並發布原尺寸成品，續跑保留已完成區塊。舊矩形設定與任務維持相容，JSON 匯入／匯出接受多線選格資料。沒有改模型工作流或推理參數。本版以同包 GitHub／Gitee 雙 Release 發布，AutoDL 部署尚未執行；涉及新裁切編排，目標 GPU 回歸仍須在部署前執行。
@@ -441,7 +447,9 @@ React 19 的確認視窗使用受控 Modal 或 Modal.useModal。更新前端構�
 
 預排版排版輸出只提供 `Meo.json`，不提供項目 ZIP 匯出或 `/export/archive` API。更新後確認頂部僅有「匯出 Meo.json」，下載前完成保存；關閉及重新開啟網頁仍從伺服器恢復原有項目。既有封存匯入保留相容性，修圖模組的匯出行為不受此設定影響。
 
-偵測任務另自動生成 OpenCV `inpainted` 預覽，無需新增權重或先上傳去字圖。驗收須包括 RGBA 覆蓋層與原圖合成、空白頁原樣保留、全批底圖完成後才發布、文字修訂不變，以及分級預覽讀取。舊任務沒有此產物時沿用原圖或已上傳底圖，重新偵測後取得生成預覽；此變更不啟動 ComfyUI 修圖流程。
+預排版保存單陣列 NPZ overlay，前端原圖／透明層／文字分層渲染，不建立磁碟 JPEG 預覽快取。此項需更新前後端，先完成正式 frontend build，再依既有空閒檢查重啟6008；不需要重啟6006。驗收 NPZ 型別／尺寸、全透明與半透明、原圖及 overlay 獨立接口、差異高亮、局部對比、大頁分塊與載入失敗重試，並確認操作後沒有 `previews/` 或修補 PNG。
+
+偵測完成後保留正式量測及精簡單字框，清除 OCR/debug/progressing，驗收重新匯入譯稿與匹配仍可用、封存往返不丟單字框、缺少正式資料會報錯。輸入副本只在結果成功存入項目且程序退出後回收；失敗／取消及不完整結果保留。不遷移其他既有項目或提供舊 PNG inpainted 兼容分支。真實模型／MPS 測試與 CUDA 驗收分開記錄，來源素材不改。
 
 本地模型測試與鏡像驗收分開：可用工程外已有 CTD／OCR、字型及 Python，Apple Silicon 明確設定 `COMIC_PRELAYOUT_DEVICE=mps`，執行 `prelayout_core.check --device mps` 後，透過網頁 API 測試完整流程。這種模式保持 GPU 任務互斥，不需要啟動 CUDA ComfyUI，也不會自動回退 CPU。鏡像使用預設 `COMIC_PRELAYOUT_DEVICE=cuda`，仍須完成下列 CUDA 和顯存交接驗收；本地 MPS 結果不能代替。資產清單及設定集中於 [README](../README.md#預排版模型與配套資產)。
 

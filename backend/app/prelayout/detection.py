@@ -10,9 +10,9 @@ import subprocess
 import urllib.request
 from pathlib import Path
 
-from PIL import Image
-
 from prelayout_core.data import identifier, read_json, validate_measure
+from prelayout_core.characters import validate_character_boxes
+from prelayout_core.preview import load_overlay
 from .store import Conflict, atomic_json, now
 
 ACTIVE = {'queued', 'validating', 'detecting', 'aligning', 'measuring', 'previewing', 'calibrating', 'publishing', 'cancelling', 'recovery_required'}
@@ -167,6 +167,9 @@ class PrelayoutDetection:
                             self.update(project['id'], record['id'], state='failed', message='服務中斷，原有排版已保留；可重新提交偵測')
                     except Exception as exc:
                         self.update(project['id'], record['id'], state='failed', message=str(exc))
+            elif record and record['state'] == 'completed':
+                # Retry reclamation if the service stopped after publishing the result.
+                await asyncio.to_thread(self.cleanup_input, project['id'], record['id'])
 
     async def _watch_recovered(self, pid, record):
         try:
@@ -237,6 +240,7 @@ class PrelayoutDetection:
                 folder = self.store.directory(pid) / 'detections' / did
                 folder.mkdir(parents=True)
                 record = {'id': did, 'project_id': pid, 'state': 'queued', 'created_at': now(), 'device': self.device,
+                          'cleanup_input_after_publish': True,
                           'options': {'method': method, 'font_size': base, 'step': step},
                           'pages': [{key: page[key] for key in ('id', 'name', 'width', 'height', 'sha256')} for page in project['pages']]}
                 atomic_json(folder / 'task.json', record)
@@ -307,26 +311,55 @@ class PrelayoutDetection:
             project = self.store.read(pid)
             if complete['pages'] != [p['name'] for p in project['pages']]:
                 raise ValueError('偵測輸出頁面不完整')
-            validate_measure(read_json((folder / 'measure.json').read_bytes()), project['pages'])
+            measure = validate_measure(read_json((folder / 'measure.json').read_bytes()), project['pages'])
+            for page in project['pages']:
+                page_measure = read_json((folder / 'page-measures' / f'{page["id"]}.json').read_bytes())
+                if page_measure != measure['pages'][page['name']]:
+                    raise ValueError('逐頁量測與正式量測不一致')
+                validate_character_boxes(read_json((folder / 'page-characters' / f'{page["id"]}.json').read_bytes()), page)
             if complete.get('inpainted') is True:
                 pending = []
                 for page in project['pages']:
-                    background = folder / 'backgrounds' / f'{Path(page["name"]).stem}.png'
-                    with Image.open(background) as image:
-                        image.load()
-                        if image.format != 'PNG' or image.mode != 'RGB' or image.size != (page['width'], page['height']):
-                            raise ValueError('inpainted 預覽尺寸或格式不符')
-                    pending.append((page, background, f'clean/{identifier()}.png'))
-                (self.store.directory(pid) / 'clean').mkdir(exist_ok=True)
-                for page, background, relative in pending:
-                    shutil.copyfile(background, self.store.directory(pid) / relative)
+                    relative = f'detections/{did}/output/inpainted/{Path(page["name"]).stem}.npz'
+                    overlay = self.store.directory(pid) / relative
+                    with load_overlay(overlay, (page['width'], page['height'])):
+                        pass
+                    pending.append((page, relative))
+            else:
+                pending = []
+            published = project.get('detection_id') == did and all(
+                page.get('clean') == relative and page.get('clean_kind') == 'inpainted'
+                for page, relative in pending)
+            if not published:
+                for page, relative in pending:
                     page.update(clean=relative, clean_kind='inpainted')
-            for page in project['pages']:
-                page.pop('reviewed_revision', None)
-            project['detection_id'] = did
-            project['revision'] += 1
-            self.store.write(project)
+                for page in project['pages']:
+                    page.pop('reviewed_revision', None)
+                project['detection_id'] = did
+                project['revision'] += 1
+                self.store.write(project)
             self.update(pid, did, state='completed', message='偵測完成，可預覽匹配並選擇套用；原有文字未更動')
+            self.cleanup_input(pid, did)
+
+    def cleanup_input(self, pid, did):
+        """Reclaim only a completed task's private input, never published assets."""
+        with self.store.lock(pid):
+            task_path = self.task_path(pid, did)
+            record = read_json(task_path.read_bytes())
+            if not record.get('cleanup_input_after_publish') or record['state'] != 'completed' or self.process_alive(record):
+                return
+            inputs = task_path.parent / 'input'
+            try:
+                if inputs.is_symlink():
+                    raise OSError('任務 input 不可為符號連結')
+                if inputs.exists():
+                    shutil.rmtree(inputs)
+            except OSError as exc:
+                # An optional cleanup failure must not invalidate a published result.
+                self.update(pid, did, input_cleanup_error=str(exc))
+            else:
+                if record.get('input_cleanup_error'):
+                    self.update(pid, did, input_cleanup_error=None)
 
     async def cancel(self, pid):
         record = self.status(pid)

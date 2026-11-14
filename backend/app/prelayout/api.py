@@ -204,6 +204,16 @@ def router(store, detector, max_bytes):
                 raise HTTPException(400, '請選擇一份 BT 或 LabelPlus 文件')
             return await run_in_threadpool(call, store.import_translation, pid, data[0][1], kind, expected_revision, apply)
 
+    @api.get('/projects/{pid}/pages/{page_id}/layers/{kind}')
+    def image_layer(pid: str, page_id: str, kind: str, edge: int | None = None,
+                    x: int | None = None, y: int | None = None, w: int | None = None, h: int | None = None):
+        values = (x, y, w, h)
+        if any(v is not None for v in values) and not all(v is not None for v in values):
+            raise HTTPException(400, '局部圖片需完整範圍')
+        with store.preview_slots:
+            payload, key, media = call(store.layer, pid, page_id, kind, edge, values if x is not None else None)
+        return Response(payload, media_type=media, headers={'ETag': f'"{key}"', 'Cache-Control': 'no-store'})
+
     @api.get('/projects/{pid}/pages/{page_id}/preview')
     def preview(pid: str, page_id: str, edge: int = 1536, clean: bool = False, x: int | None = None, y: int | None = None, w: int | None = None, h: int | None = None):
         values = (x, y, w, h)
@@ -211,7 +221,7 @@ def router(store, detector, max_bytes):
             raise HTTPException(400, '局部圖片需完整範圍')
         with store.preview_slots:
             payload, key = call(store.preview, pid, page_id, edge, clean, values if x is not None else None)
-        return Response(payload, media_type='image/jpeg', headers={'ETag': f'"{key}"', 'Cache-Control': 'private, max-age=3600'})
+        return Response(payload, media_type='image/jpeg', headers={'ETag': f'"{key}"', 'Cache-Control': 'no-store'})
 
     @api.get('/projects/{pid}/export/bt')
     def export_bt(pid: str):
