@@ -9,7 +9,7 @@ from fastapi import APIRouter
 
 from . import release_sources
 
-APP_VERSION = "0.2.24"
+APP_VERSION = "1.0.0"
 _lock = threading.Lock()
 _cached = None
 _cached_at = 0.0

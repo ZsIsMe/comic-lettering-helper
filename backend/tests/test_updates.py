@@ -2,7 +2,9 @@ import pytest
 from app import updates
 
 
-def test_stable_versions_numeric_order_and_no_downgrade():
+@pytest.mark.parametrize('current,available', [('0.3.0', True), ('1.0.0', False)])
+def test_stable_versions_numeric_order_and_no_downgrade(monkeypatch, current, available):
+    monkeypatch.setattr(updates, 'APP_VERSION', current)
     result = updates.check_versions([
         {"version": "0.2.0", "source": "github", "release_url": "old"},
         {"version": "0.10.0", "source": "gitee", "release_url": "new"},
@@ -11,7 +13,7 @@ def test_stable_versions_numeric_order_and_no_downgrade():
     assert result["latest_version"] == "0.10.0"
     assert result["source"] == "gitee"
     assert result["release_url"] == "new"
-    assert result["update_available"] is True
+    assert result["update_available"] is available
     assert updates.check_versions(["0.2.0"])["update_available"] is False
     assert updates.check_versions([updates.APP_VERSION])["update_available"] is False
     with pytest.raises(ValueError):

@@ -1,3 +1,9 @@
+# 1.0.0 更新範圍
+
+此版需要同步更新 6008 後端與正式前端資產，仍使用既有 `qwen21-native-int8-v1` 更新契約，不變更模型或推理參數。新預排版任務只產生 NPZ 修補層；舊 PNG 修補層不支援讀取，也不自動遷移或刪除項目。部署前保留既有項目備份；已有 NPZ 項目沿用原圖、排版及修訂資料。
+
+本次發布 GitHub／Gitee 同包 Release，未執行 AutoDL 部署、重啟或鏡像發布。已有本機 MPS CTD／OCR 與正式 API 匯入驗證；不將這些結果視為 AutoDL CUDA 回歸。
+
 # Python 預排版匯入工具
 
 `scripts/import_prelayout.py` 與 `.agents/skills/prelayout-import/` 隨工程保存，使用專案 `.venv/bin/python` 和既有 Pillow／預排版解析器，無需新增模型或 MCP 服務。先啟動既有 6008；本機入口為 `./scripts/start-local.sh --no-open`。預設連線 `http://127.0.0.1:6008`，`--base-url` 可指定已有服務，不自行開關 AutoDL 或重啟服務。
