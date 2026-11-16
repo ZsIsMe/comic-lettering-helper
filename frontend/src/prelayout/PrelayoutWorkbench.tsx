@@ -461,7 +461,7 @@ function Workspace({ project: initial, promptDetection, onExit, onReadyToLeave }
     if (!state || !measure || !box || selection.page !== pageId || !selection.ids.length) { notices.info('先選取同頁文字，再點擊偵測框'); return }
     const center = measure.center_normalized || [(box[0] + box[2]) / 2 / state.data.width, (box[1] + box[3]) / 2 / state.data.height]
     const size = measure.font_size || first?.['font-size'] || 40
-    patch({ x: center[0], y: center[1], xyxy_pixel: box, 'font-size': size, orientation: measure.orientation === 'horizontal' ? 'horizontal' : 'vertical', ...measureStyle(measure, size) })
+    patch({ x: center[0], y: center[1], xyxy_pixel: box, 'font-size': size, orientation: measure.orientation === 'horizontal' ? 'horizontal' : 'vertical', ...measureStyle(measure) })
   }, [controller, first, patch, selection, notices])
   const agent = usePrelayoutAgent({ controller, project, current, busy, fontReady, interacting, range, compare, difference, showText, differenceColor, differenceOpacity, zoom, focus, clean,
     go, setCompare, setClean, setDifference, setShowText, setDifferenceColor, setDifferenceOpacity, setZoom, setFocus, refreshProject: async () => setProject(await request<Project>(projectPath(project.id))) })

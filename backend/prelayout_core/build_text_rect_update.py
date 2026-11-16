@@ -217,13 +217,13 @@ def _default_style() -> dict[str, Any]:
     }
 
 
-def _style_from_match(match: dict[str, Any], font_size: int) -> dict[str, Any]:
+def _style_from_match(match: dict[str, Any]) -> dict[str, Any]:
     text_color = str(match.get("text_color", "black")).lower()
     color = WHITE_HEX if text_color == "white" else BLACK_HEX
     stroke_color = BLACK_HEX if color == WHITE_HEX else WHITE_HEX
     has_stroke = bool(match.get("text_has_stroke", False))
     need_inpaint = bool(match.get("need_inpaint", False))
-    stroke_weight = math.ceil(font_size / 8) if has_stroke or need_inpaint else 0
+    stroke_weight = 4 if has_stroke or need_inpaint else 0
     return {
         OUTPUT_COLOR_KEY: color,
         OUTPUT_STROKE_COLOR_KEY: stroke_color,
@@ -443,7 +443,7 @@ def build_updated_translate(
             )
             new_entry["orientation"] = orientation
             new_entry[OUTPUT_FONT_SIZE_KEY] = font_size
-            style = _style_from_match(match, font_size)
+            style = _style_from_match(match)
             _apply_style(new_entry, style)
             if match.get("source_block_index") is not None:
                 new_entry["match_source_block_index"] = match.get("source_block_index")

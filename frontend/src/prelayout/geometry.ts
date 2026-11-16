@@ -46,10 +46,10 @@ export function resized(item: Item, dx: number, dy: number, width: number, heigh
   const x = item.x * width, y = item.y * height
   return { ...item, xyxy_pixel: [x - w / 2, y - h / 2, x + w / 2, y + h / 2], match_status: 'manual' }
 }
-export function measureStyle(measure: Measure, size: number): Partial<Item> {
+export function measureStyle(measure: Measure): Partial<Item> {
   const textColor = color(measure.text_color || '#000000')
   const stroke = !!measure.text_has_stroke || !!measure.need_inpaint
   return { color: textColor, 'stroke-color': textColor.toLowerCase() === '#ffffff' ? '#000000' : '#ffffff',
-    'stroke-weight': stroke ? Math.ceil(size / 8) : 0, need_inpaint: !!measure.need_inpaint,
+    'stroke-weight': stroke ? 4 : 0, need_inpaint: !!measure.need_inpaint,
     text_has_stroke: !!measure.text_has_stroke, match_source_block_index: measure.source_block_index }
 }
