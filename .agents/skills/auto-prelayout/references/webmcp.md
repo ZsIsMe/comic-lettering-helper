@@ -6,6 +6,7 @@
 
 - `prelayout_inspect_page`：保留完整結果，確認項目、頁面、範圍、修訂、保存狀態及穩定 `_id`。寫入與導航使用最新 token，不用陣列位置代替 ID。
 - `prelayout_patch_page`：同頁原子批次修改。`center` 是原圖像素，不能與 x/y 混用；text 只允許換行。套用共用人工撤銷與自動保存，不自動開對比。
+- `prelayout_split_item`：選取範圍以當前文字的 UTF-16 偏移表示，起點含、終點不含。保留拆前文字，以回傳的 `split.reading_order` 還原各段並核對字元（僅忽略換行）；以 `split.original_item_id`、`split.new_item_id` 和最新 token 定位。中段選取可使原框同時保留前後兩段，不能把文字框陣列順序當作原閱讀順序。若 `applied` 為真但缺 token 或有 warning，先 inspect，不重複拆框。
 - `prelayout_compare_page`：detail 可看最近一次修改前／後及原圖；多個 region 都須核驗，edited 返回畫布。裁切不足就擴大 padding；微小縮圖則回主畫布放大。刷新會失去修改前快照與當前撤銷。
 - `prelayout_save_page`：省略 reviewed 只保存，true 標完成、false 取消完成。依實際 schema，中間頁用 `{token, reviewed:true, wait:false, next_page_id:下一頁ID}` 啟動背景保存並前往指定頁，不等待前頁寫入，也不靠固定延時判成功；接續使用回傳的下一頁資料及 token。背景狀態 pending／failed 須如實保留，失敗依工具提供的重試方式處理。最後一頁、暫停或交付前用 `{token, reviewed:true}`（預設等待）統一確認所有背景保存及完成標記。`advance` 會標完成並跳下一未完成頁，與 `next_page_id` 不同時使用；重校指定範圍用明確頁 ID，避免跳過舊已完成頁。舊前端 schema 未提供背景選項時沿用正式保存，不以未等待的 detached 呼叫繞過工具。
 - `prelayout_navigate_page`：核對目標在授權範圍內，工具本身不限制範圍。
@@ -30,7 +31,7 @@
 
 字面的反斜線+n（`\n`）不同於真正換行。已獲格式修正授權時，在正式文字欄修正、失焦保存，再用公開工具排版；只處理確定的標記，不刪其他反斜線或字母，並當下核對其餘字元保持。
 
-混合字級拆框：雙擊開「原位編輯文字」，選取要獨立的文字後使用「分割」；inspect 取得新 ID，再設樣式與位置。新框可能排在陣列末尾，完整性核對須按原框閱讀順序重組。
+若正式工具未提供拆框，可在原位編輯器選取文字並分割，再 inspect 確認新 ID。
 
 ## 每頁統計
 
