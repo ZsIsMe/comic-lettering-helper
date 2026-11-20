@@ -16,9 +16,16 @@ function harness(fetch, withHost = false, measure = async () => ({ risks: [], re
     indexedDB: { open: () => ({}) }, crypto: { randomUUID: () => 'operation-1' }, performance: { now: () => 0 }, fetch,
     setTimeout: (callback, delay) => { const id = ++nextTimer; if (withHost && delay === 25) queueMicrotask(callback); else timers.set(id, { callback, delay }); return id },
     clearTimeout: id => timers.delete(id),
-    window: { location: { hash: '#/prelayout' } },
+    window: { location: { hash: '#/prelayout' }, innerWidth: 1084, innerHeight: 867 },
+    requestAnimationFrame: callback => queueMicrotask(callback),
     Date: { now: () => clock += 250 },
-    document: { activeElement: null, querySelectorAll: selector => selector.includes('.pl-page') ? [{
+    document: { activeElement: null, querySelector: () => options.previewClosed ? null : {
+      dataset: { open: 'true' }, scrollWidth: 100, clientWidth: 100, scrollHeight: 100, clientHeight: 100,
+      getBoundingClientRect: () => ({ left: 0, top: 0, right: 100, bottom: 100 }),
+      querySelector: () => null,
+      querySelectorAll: selector => selector === '[data-group-label]' ? [{ dataset: { scale: '1' } }] : selector === '.pl-review-panel' ? Array(4).fill({}) :
+        [{ complete: true, naturalWidth: 100, dataset: { previewReady: 'true' }, decode: async () => {} }],
+    }, querySelectorAll: selector => selector.includes('.pl-page') ? [{
       dataset: { page: options.current }, getBoundingClientRect: () => ({ x: 0, y: 0, width: 100, height: 100 }),
       querySelector: selector => selector === '[data-layer-pending]' && options.layerPending ? {} : null,
       querySelectorAll: () => [{ complete: true, naturalWidth: 100, dataset: { previewReady: 'true' }, decode: async () => {} }],
@@ -51,8 +58,8 @@ function harness(fetch, withHost = false, measure = async () => ({ risks: [], re
     new Function('require', 'module', 'exports', ...Object.keys(environment), code)(name => {
       if (name === 'react') return { useEffect: fn => fn(), useLayoutEffect: fn => fn(), useRef: current => ({ current }), useState: initial => [initial, () => {}] }
       if (name === 'react/jsx-runtime') return { jsx: () => null }
-      if (name === './webmcp') return { registerPrelayoutTools: value => { host = value; return () => {} } }
-      if (name === './layout-review') return { measurePage: measure }
+      if (name === './webmcp') return { ...load(path.resolve(__dirname, '../src/prelayout/webmcp.ts')), registerPrelayoutTools: value => { host = value; return () => {} } }
+      if (name === './layout-review') return { measurePage: measure, candidateRegion: () => [0, 0, 100, 100] }
       if (name === './LayoutReview') return { LayoutReview: () => null }
       return load(path.resolve(__dirname, '../src/prelayout', `${name}.ts`))
     }, module, module.exports, ...Object.values(environment))
@@ -61,6 +68,45 @@ function harness(fetch, withHost = false, measure = async () => ({ risks: [], re
   return { controller, state, timers, host, options }
 }
 const response = data => ({ ok: true, json: async () => data })
+
+test('batch candidate preview leaves editor data, completion, undo, saves, and token intact', async () => {
+  const { controller, state, host } = harness(() => assert.fail('Preview must not write'), true)
+  const before = structuredClone(state)
+  const inspected = await host.inspect()
+  const result = await host.previewCandidates({ token: inspected.token, groups: [{ label: '字級與角度', candidates: [
+    { label: 'A', patches: [{ item_id: 'text-a', set: { 'font-size': 30 } }] },
+    { label: 'B', patches: [{ item_id: 'text-a', set: { rotation: 12 } }] },
+  ] }] })
+  assert.equal(result.rendered, true)
+  assert.equal(result.preview_status, 'ready')
+  assert.equal(result.fits_viewport, true)
+  assert.equal(result.panel_count, 4)
+  assert.equal(result.token, inspected.token)
+  assert.equal(result.reviewed, true)
+  assert.deepEqual(result.groups[0].candidates.map(candidate => candidate.label), ['A', 'B'])
+  assert.deepEqual(state, before)
+  assert.equal((await host.inspect()).token, inspected.token)
+  assert.deepEqual(controller.saveStatus.pending_saves, [])
+  controller.dispose()
+})
+
+test('candidate preview rejects a draft changed while its variants are measured', async () => {
+  let harnessResult, measurements = 0
+  const measure = async () => {
+    if (++measurements === 3) harnessResult.controller.edit('page-a', [{ ...harnessResult.state.data.items[0], x: .6 }])
+    return { risks: [], rects: {} }
+  }
+  harnessResult = harness(() => assert.fail('Preview must not write'), true, measure)
+  const { controller, state, host } = harnessResult
+  const inspected = await host.inspect()
+  await assert.rejects(host.previewCandidates({ token: inspected.token, groups: [{ label: '角度', candidates: [
+    { label: 'A', patches: [{ item_id: 'text-a', set: { rotation: 12 } }] },
+  ] }] }), /頁面已變更/)
+  assert.equal(state.data.items[0].rotation, 0)
+  assert.equal(state.data.items[0].x, .6)
+  assert.equal(state.undo.length, 1)
+  controller.dispose()
+})
 
 test('an edit invalidates page completion immediately', () => {
   const { controller, state } = harness(() => assert.fail('Edit should not fetch immediately'))

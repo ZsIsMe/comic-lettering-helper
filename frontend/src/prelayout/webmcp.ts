@@ -5,11 +5,15 @@ import type { Item, PageData } from './types'
 export type PrelayoutSet = Partial<Pick<Item, 'text' | 'x' | 'y' | 'font-size' | 'orientation' | 'rotation' | 'color' | 'stroke-color' | 'stroke-weight'>>
 export type PrelayoutPatch = { item_id: string; set?: PrelayoutSet; center?: [number, number] }
 export type PrelayoutSplit = { token: string; item_id: string; selection_start: number; selection_end: number }
+export type PrelayoutCandidate = { label: string; patches: PrelayoutPatch[] }
+export type PrelayoutCandidateGroup = { label: string; region?: [number, number, number, number]; candidates: PrelayoutCandidate[] }
+export type PrelayoutPreview = { token: string; groups: PrelayoutCandidateGroup[]; padding?: number }
 export type PrelayoutHost = {
   inspect: () => Promise<unknown>
   patch: (args: { token: string; patches: PrelayoutPatch[] }) => Promise<unknown>
   split: (args: PrelayoutSplit) => Promise<unknown>
   compare: (args: { token: string; view: 'edited' | 'original' | 'before' | 'detail'; region?: number; includeOriginal?: boolean; padding?: number }) => Promise<unknown>
+  previewCandidates: (args: PrelayoutPreview) => Promise<unknown>
   undo: (args: { token: string }) => Promise<unknown>
   save: (args: { token: string; reviewed?: boolean; advance?: boolean; wait?: boolean; next_page_id?: string }) => Promise<unknown>
   navigate: (args: { token: string; page_id: string }) => Promise<unknown>
@@ -43,6 +47,19 @@ const splitSchema = object({
   selection_start: { type: 'integer', minimum: 0, description: 'Inclusive UTF-16 offset in the current item text.' },
   selection_end: { type: 'integer', minimum: 1, description: 'Exclusive UTF-16 offset in the current item text; must exceed selection_start.' },
 }, ['token', 'item_id', 'selection_start', 'selection_end'])
+const candidateSchema = object({
+  label: { type: 'string', minLength: 1, maxLength: 80 },
+  patches: { type: 'array', minItems: 1, maxItems: 20, items: patchSchema },
+}, ['label', 'patches'])
+const previewSchema = object({
+  token,
+  groups: { type: 'array', minItems: 1, maxItems: 4, items: object({
+    label: { type: 'string', minLength: 1, maxLength: 80 },
+    region: { type: 'array', items: { type: 'number', minimum: 0 }, minItems: 4, maxItems: 4, description: 'Optional source-image [left, top, right, bottom] context. Expanded to include all target text in every candidate.' },
+    candidates: { type: 'array', minItems: 1, maxItems: 4, items: candidateSchema },
+  }, ['label', 'candidates']) },
+  padding: { type: 'number', minimum: 16, maximum: 300, default: 60 },
+}, ['token', 'groups'])
 
 const allowed = new Set(['text', 'x', 'y', 'font-size', 'orientation', 'rotation', 'color', 'stroke-color', 'stroke-weight'])
 const own = (value: object, key: string) => Object.prototype.hasOwnProperty.call(value, key)
@@ -110,6 +127,40 @@ export function applyPagePatches(page: PageData, patches: PrelayoutPatch[]): Pag
   return { ...page, items: page.items.map(item => changes.get(item._id) || item) }
 }
 
+/** Build every trial from the same draft without touching the editor or its undo/save state. */
+export function preparePreviewCandidates(page: PageData, groups: PrelayoutCandidateGroup[], padding = 60) {
+  finite(padding, 16, 300, '留白範圍')
+  if (!Array.isArray(groups) || !groups.length || groups.length > 4) throw new Error('每次預覽需要 1 至 4 組。')
+  const label = (value: string) => {
+    if (typeof value !== 'string' || !value.trim() || value.length > 80) throw new Error('預覽名稱須為 1 至 80 字。')
+    return value
+  }
+  const names = new Set<string>()
+  return groups.map(group => {
+    if (!group || typeof group !== 'object' || Object.keys(group).some(key => !['label', 'region', 'candidates'].includes(key))) throw new Error('預覽組包含不支援的欄位。')
+    const name = label(group.label)
+    if (names.has(name)) throw new Error('預覽組名稱不可重複。')
+    names.add(name)
+    if (!Array.isArray(group.candidates) || !group.candidates.length || group.candidates.length > 4) throw new Error('每組需要 1 至 4 個候選。')
+    const region = group.region
+    if (region !== undefined && (!Array.isArray(region) || region.length !== 4 || region.some(value => !Number.isFinite(value)) ||
+      region[0] < 0 || region[1] < 0 || region[2] > page.width || region[3] > page.height || region[0] >= region[2] || region[1] >= region[3])) throw new Error('預覽區域須為原圖範圍內有效的左、上、右、下座標。')
+    const candidateNames = new Set<string>()
+    const itemIds = new Set<string>()
+    const candidates = group.candidates.map(candidate => {
+      if (!candidate || typeof candidate !== 'object' || Object.keys(candidate).some(key => !['label', 'patches'].includes(key))) throw new Error('候選包含不支援的欄位。')
+      const name = label(candidate.label)
+      if (candidateNames.has(name)) throw new Error('同組候選名稱不可重複。')
+      candidateNames.add(name)
+      if (!Array.isArray(candidate.patches) || !candidate.patches.length || candidate.patches.length > 20) throw new Error('每個候選需要 1 至 20 項修改。')
+      const result = applyPagePatches(page, candidate.patches)
+      candidate.patches.forEach(patch => itemIds.add(patch.item_id))
+      return { label: name, page: result }
+    })
+    return { label: name, region, itemIds: [...itemIds], candidates }
+  })
+}
+
 /** Split through the same operation as the inline editor, without changing any text characters. */
 export function applyPageSplit(page: PageData, itemId: string, start: number, end: number, makeId?: () => string) {
   if (!page || !Array.isArray(page.items) || typeof page.width !== 'number' || !Number.isFinite(page.width) || page.width <= 0) throw new Error('頁面缺少有效文字項目或頁寬。')
@@ -138,6 +189,7 @@ export function prelayoutToolDefinitions(host: PrelayoutHost): Tool[] {
     ['prelayout_patch_page', 'Atomically edit current draft items by stable ID. Text may change line breaks only. The host validates the current token and saves through its normal editor state.', object({ token, patches: { type: 'array', items: patchSchema, minItems: 1 } }, ['token', 'patches']), 'patch', false],
     ['prelayout_split_item', 'Split a nonempty UTF-16 selection into a new text box using the editor split operation. Preserves all text characters and returns the actual reading-order segments.', splitSchema, 'split', false],
     ['prelayout_compare_page', 'Show the edited, original, before, or latest local before/after detail view for visual review.', object({ token, view: { type: 'string', enum: ['edited', 'original', 'before', 'detail'] }, region: { type: 'integer', minimum: 0 }, includeOriginal: { type: 'boolean' }, padding: { type: 'number', minimum: 16, maximum: 300 } }, ['token', 'view']), 'compare', false],
+    ['prelayout_preview_candidates', 'Render a contact sheet for up to 4 groups with 4 candidates each in one local preview. Every candidate starts from the same current draft and may adjust up to 20 boxes together. Each group shows original, current, and candidates at identical crop and scale. This preview leaves page content, undo, completion, and saves untouched. Inspect rendered and preview groups before capturing one screenshot. Apply the selected patches once with prelayout_patch_page and this token.', previewSchema, 'previewCandidates', true],
     ['prelayout_undo_page', 'Undo the latest draft edit on the current page.', object({ token }, ['token']), 'undo', false],
     ['prelayout_save_page', 'Save through the editor. wait defaults to true and joins all background saves and completion markers; the final page in scope must wait. wait:false registers a tracked background save and may open next_page_id without awaiting server success; returned pending is not saved. Inspect pending_saves/save_failures across pages. reviewed:true marks this exact draft complete, false clears completion; omitted only saves. Explicit saves retry transport failures; conflicts require UI resolution. next_page_id must exist within scope and cannot combine with advance. advance:true waits, marks complete, then opens the next unfinished page; forbidden with wait:false.', object({ token, reviewed: { type: 'boolean' }, advance: { type: 'boolean' }, wait: { type: 'boolean', default: true }, next_page_id: { type: 'string', minLength: 1 } }, ['token']), 'save', false],
     ['prelayout_navigate_page', 'Save as required by the page editor and navigate to a page by its stable page ID.', object({ token, page_id: { type: 'string', minLength: 1 } }, ['token', 'page_id']), 'navigate', false],

@@ -15,7 +15,7 @@ function load(file) {
   }, module, module.exports)
   return module.exports
 }
-const { textStyle, cropRegions } = load(path.resolve(__dirname, '../src/prelayout/layout-review.ts'))
+const { textStyle, cropRegions, candidateRegion, candidateSheetScales } = load(path.resolve(__dirname, '../src/prelayout/layout-review.ts'))
 
 test('shared text style uses original image coordinates and live paint properties', () => {
   const style = textStyle({ x: .25, y: .75, rotation: 23, orientation: 'vertical', 'font-size': 36, color: '000', 'stroke-color': 'white', 'stroke-weight': 4 }, { width: 2000, height: 1000 })
@@ -45,4 +45,35 @@ test('unmeasured IDs produce no crop and invalid geometry cannot enter a region'
   const page = { width: 1000, height: 800 }
   assert.deepEqual(cropRegions(page, page, {}, {}, ['missing'], 80), [])
   assert.deepEqual(cropRegions(page, page, { a: [NaN, 1, 2, 3] }, {}, ['a'], 80), [])
+})
+
+test('candidate crop includes original context and every trial at one shared region', () => {
+  const page = { width: 1000, height: 800, items: [{ _id: 'a', xyxy_pixel: [80, 100, 200, 200] }, { _id: 'b' }] }
+  const measurements = [
+    { rects: { a: [100, 120, 180, 190], b: [400, 100, 450, 150] } },
+    { rects: { a: [110, 160, 220, 250], b: [390, 110, 430, 160] } },
+    { rects: { a: [70, 130, 210, 240], b: [480, 120, 510, 170] } },
+  ]
+  assert.deepEqual(candidateRegion(page, ['a'], measurements, 20, [60, 80, 240, 220]), [40, 60, 260, 270])
+  assert.deepEqual(candidateRegion(page, ['a', 'b'], measurements, 20), [50, 80, 530, 270])
+  assert.deepEqual(candidateRegion(page, ['a'], measurements, 200), [0, 0, 420, 450])
+  assert.throws(() => candidateRegion(page, ['missing'], measurements, 20), /沒有有效/)
+})
+
+test('all sheet rows fit viewport while each group uses one scale for all its candidates', () => {
+  const groups = [
+    { region: [0, 0, 400, 600], candidates: ['a', 'b', 'c'] },
+    { region: [0, 0, 200, 200], candidates: ['a', 'b'] },
+  ]
+  const width = 992, height = 731
+  const scales = candidateSheetScales(groups, width, height)
+  assert.equal(scales.length, 2)
+  assert(scales[1] > scales[0])
+  let totalHeight = 0
+  groups.forEach((group, index) => {
+    const columns = group.candidates.length + 2
+    assert((group.region[2] - group.region[0]) * scales[index] * columns + (columns - 1) * 12 + columns * 2 <= width + 1e-8)
+    totalHeight += (group.region[3] - group.region[1]) * scales[index] + 70
+  })
+  assert(totalHeight <= height + 1e-8)
 })

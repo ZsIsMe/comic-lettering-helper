@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { Modal } from 'antd'
 import { LayeredImage } from './LayeredImage'
 import { baseLayerOptions } from './layered-preview'
-import { textStyle } from './layout-review'
+import { candidateSheetScales, textStyle, type TextRect } from './layout-review'
 import type { Item, PageData } from './types'
 import './layout-review.css'
 import { DisplayText } from './DisplayText'
@@ -13,14 +13,14 @@ type Props = {
   includeOriginal: boolean; region?: number; clean?: boolean; onClose: () => void
 }
 
-function ReviewPanel({ project, page, region, scale, mode, cleanBackground }: { project: string; page: PageData; region: number[]; scale: number; mode: Exclude<View, 'detail'>; cleanBackground: boolean }) {
+function ReviewPanel({ project, page, region, scale, mode, cleanBackground, title, compact = false }: { project: string; page: PageData; region: number[]; scale: number; mode: Exclude<View, 'detail'>; cleanBackground: boolean; title?: string; compact?: boolean }) {
   const [x1, y1, x2, y2] = region
   const width = x2 - x1, height = y2 - y1
   const clean = mode !== 'original' && cleanBackground && !!page.clean
   const bounded = baseLayerOptions(page, 3072).edge !== undefined
   const options = bounded ? { edge: 3072, region: { x: x1, y: y1, width, height } } : {}
-  const label = mode === 'before' ? '修改前' : mode === 'edited' ? '修改後' : '原圖'
-  return <section className="pl-review-panel" aria-label={label}>
+  const label = title ?? (mode === 'before' ? '修改前' : mode === 'edited' ? '修改後' : '原圖')
+  return <section className="pl-review-panel" aria-label={label} style={compact ? { width: width * scale } : undefined}>
     <h3>{label}</h3>
     <div className="pl-review-crop" style={{ width: width * scale, height: height * scale }}>
       <div className="pl-review-scene pl-shell" style={{ width, height, transform: `scale(${scale})` }}>
@@ -28,8 +28,38 @@ function ReviewPanel({ project, page, region, scale, mode, cleanBackground }: { 
         {mode !== 'original' && page.items.map((item: Item) => <div key={item._id} className="pl-text pl-review-text" style={{ ...textStyle(item, page), left: item.x * page.width - x1, top: item.y * page.height - y1 }}>{<DisplayText text={item.text} orientation={item.orientation} />}</div>)}
       </div>
     </div>
-    <p>{x1}, {y1} → {x2}, {y2} · 原圖像素</p>
+    {!compact && <p>{x1}, {y1} → {x2}, {y2} · 原圖像素</p>}
   </section>
+}
+
+export type CandidateReviewGroup = { label: string; region: TextRect; candidates: { label: string; page: PageData; risks: string[]; new_risks: string[] }[] }
+export type CandidateReviewData = { reviewId: string; pageId: string; version: number; before: PageData; groups: CandidateReviewGroup[] }
+
+export function CandidateReview({ reviewId, project, before, groups, onClose }: CandidateReviewData & { project: string; onClose: () => void }) {
+  const [viewport, setViewport] = useState(() => ({ width: window.innerWidth, height: window.innerHeight }))
+  const [opened, setOpened] = useState(false)
+  useEffect(() => {
+    const resize = () => setViewport({ width: window.innerWidth, height: window.innerHeight })
+    window.addEventListener('resize', resize)
+    return () => window.removeEventListener('resize', resize)
+  }, [])
+  const width = Math.max(1, viewport.width * .96 - 48)
+  const height = Math.max(1, viewport.height - 136)
+  const scales = candidateSheetScales(groups, width, height)
+  return <Modal className={`pl-review-modal pl-candidate-modal pl-review-${reviewId}`} open onCancel={onClose} footer={null}
+    width="96vw" style={{ top: 12 }} title="排版候選接觸表" destroyOnHidden afterOpenChange={setOpened}>
+    <div className="pl-candidate-sheet" data-preview-id={reviewId} data-open={opened}>
+      {groups.map((group, index) => <section className="pl-candidate-group" key={group.label} data-group-label={group.label} data-scale={scales[index]}>
+        <h2>{group.label}</h2>
+        <div className="pl-candidate-panels">
+          <ReviewPanel project={project} page={before} region={group.region} scale={scales[index]} mode="original" cleanBackground={false} compact />
+          <ReviewPanel project={project} page={before} region={group.region} scale={scales[index]} mode="edited" cleanBackground title="現況" compact />
+          {group.candidates.map(candidate => <ReviewPanel key={candidate.label} project={project} page={candidate.page} region={group.region}
+            scale={scales[index]} mode="edited" cleanBackground title={candidate.label} compact />)}
+        </div>
+      </section>)}
+    </div>
+  </Modal>
 }
 
 export function LayoutReview({ reviewId, project, before, after, regions, view, includeOriginal, region = 0, clean = true, onClose }: Props) {

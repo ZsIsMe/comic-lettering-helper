@@ -104,3 +104,29 @@ export function cropRegions(before: PageData, after: PageData, beforeRects: Reco
   }
   return regions.sort((a, b) => a[1] - b[1] || a[0] - b[0])
 }
+
+/** One shared crop includes source context and every trial, so variants can be compared directly. */
+export function candidateRegion(page: PageData, itemIds: string[], measurements: PageMeasurement[], padding: number, context?: TextRect): TextRect {
+  const boxes = measurements.flatMap(measurement => itemIds.map(id => measurement.rects[id]))
+  for (const item of page.items) {
+    if (itemIds.includes(item._id) && item.xyxy_pixel) boxes.push(item.xyxy_pixel as TextRect)
+  }
+  if (context) boxes.push(context)
+  const valid = boxes.filter(box => box?.length === 4 && box.every(Number.isFinite) && box[2] > box[0] && box[3] > box[1])
+  if (!valid.length) throw new Error('預覽文字沒有有效的裁切範圍。')
+  return [
+    Math.max(0, Math.floor(Math.min(...valid.map(box => box[0])) - padding)),
+    Math.max(0, Math.floor(Math.min(...valid.map(box => box[1])) - padding)),
+    Math.min(page.width, Math.ceil(Math.max(...valid.map(box => box[2])) + padding)),
+    Math.min(page.height, Math.ceil(Math.max(...valid.map(box => box[3])) + padding)),
+  ]
+}
+
+/** Fit all groups into one sheet while each row keeps its own consistent, readable scale. */
+export function candidateSheetScales(groups: { region: TextRect; candidates: unknown[] }[], width: number, height: number): number[] {
+  const scales = groups.map(group => Math.min(1.5, Math.max(1, width - (group.candidates.length + 1) * 12 - (group.candidates.length + 2) * 2) /
+    (group.candidates.length + 2) / (group.region[2] - group.region[0])))
+  const contentHeight = groups.reduce((sum, group, index) => sum + (group.region[3] - group.region[1]) * scales[index], 0)
+  const factor = Math.min(1, Math.max(1, height - groups.length * 70) / Math.max(1, contentHeight))
+  return scales.map(scale => scale * factor)
+}

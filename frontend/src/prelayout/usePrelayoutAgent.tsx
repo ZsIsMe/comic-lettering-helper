@@ -1,9 +1,9 @@
 import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from 'react'
 import type { EditorState } from './editor-state'
 import type { PageData, Project } from './types'
-import { applyPagePatches, applyPageSplit, registerPrelayoutTools, type PrelayoutHost } from './webmcp'
-import { cropRegions, measurePage } from './layout-review'
-import { LayoutReview } from './LayoutReview'
+import { applyPagePatches, applyPageSplit, preparePreviewCandidates, registerPrelayoutTools, type PrelayoutHost } from './webmcp'
+import { candidateRegion, cropRegions, measurePage } from './layout-review'
+import { CandidateReview, LayoutReview, type CandidateReviewData } from './LayoutReview'
 import { currentViewMode, resolveViewChange, type ViewState } from './view-modes'
 
 type Options = {
@@ -21,10 +21,13 @@ export function usePrelayoutAgent(options: Options) {
   const latest = useRef(options)
   useLayoutEffect(() => { latest.current = options })
   const [review, setReview] = useState<Review | null>(null)
+  const [preview, setPreview] = useState<CandidateReviewData | null>(null)
+  const previewId = useRef<string | null>(null)
   const controller = options.controller
   const hostRef = useRef<PrelayoutHost | null>(null)
   useEffect(() => {
     let alive = true, locked = false
+    const clearReview = () => { setReview(null); setPreview(null); previewId.current = null }
     const identities = new WeakMap<object, string>()
     const tokenFor = (state: object & { version: number; data: PageData }, id: string) => {
       if (!identities.has(state)) identities.set(state, crypto.randomUUID())
@@ -130,7 +133,7 @@ export function usePrelayoutAgent(options: Options) {
       const { state } = await checked(args.token)
       if (!['edited', 'original', 'before', 'detail'].includes(args.view)) throw new Error('對比方式無效。')
       if (args.padding !== undefined && (!Number.isFinite(args.padding) || args.padding < 16 || args.padding > 300)) throw new Error('留白範圍必須介於 16 與 300。')
-      if (args.view === 'edited') { setReview(null); return }
+      if (args.view === 'edited') { clearReview(); return }
       const after = structuredClone(state.data)
       const before = { ...after, items: structuredClone(state.undo.at(-1) || after.items) }
       if (args.view !== 'original' && !state.undo.length) throw new Error('本頁尚無可比較的修改。')
@@ -141,6 +144,7 @@ export function usePrelayoutAgent(options: Options) {
       const regions = args.view === 'original' ? [[0, 0, after.width, after.height]] : cropRegions(before, after, a.rects, b.rects, changed, args.padding ?? 60)
       if (args.region !== undefined && (!Number.isInteger(args.region) || args.region < 0 || args.region >= regions.length)) throw new Error('局部區域序號無效。')
       const reviewId = crypto.randomUUID()
+      setPreview(null); previewId.current = null
       setReview({ reviewId, before, after, regions, view: args.view, region: args.region, includeOriginal: args.includeOriginal !== false })
       return reviewId
     }
@@ -155,7 +159,7 @@ export function usePrelayoutAgent(options: Options) {
         // Rotated bounding boxes may overlap without glyphs touching; return these for visual review.
         if (newRisks.some(risk => risk.startsWith('outside:') || risk.startsWith('invalid:'))) throw new Error(`修改會超出頁面或無法顯示：${newRisks.join('、')}`)
         controller.edit(id, after.items)
-        setReview(null)
+        clearReview()
         const rendered = await ready(id)
         try { return { applied: true, rendered, new_risks: newRisks, ...await inspect() } }
         catch (error) { return { applied: true, rendered, new_risks: newRisks, warning: String(error), next: '請重新檢查頁面，勿重複套用。' } }
@@ -169,7 +173,7 @@ export function usePrelayoutAgent(options: Options) {
         const newRisks = b.risks.filter(risk => !a.risks.includes(risk))
         if (newRisks.some(risk => risk.startsWith('outside:') || risk.startsWith('invalid:'))) throw new Error(`分割會超出頁面或無法顯示：${newRisks.join('、')}`)
         controller.edit(id, result.page.items)
-        setReview(null)
+        clearReview()
         const rendered = await ready(id)
         const split = {
           original_item_id: result.originalId, new_item_id: result.newId,
@@ -193,7 +197,68 @@ export function usePrelayoutAgent(options: Options) {
         await new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())))
         return { ...await inspect(), comparison_view: args.view, rendered }
       },
-      undo: async args => { const { id } = await checked(args.token, true); controller.undo(id); setReview(null); await ready(id); return inspect() },
+      previewCandidates: async args => {
+        // Discard the previous sheet even when the new request fails validation.
+        clearReview()
+        const { id, state } = await checked(args.token)
+        const before = structuredClone(state.data)
+        const prepared = preparePreviewCandidates(before, args.groups, args.padding)
+        const baseMeasurement = await measurePage(before)
+        const groups = await Promise.all(prepared.map(async group => {
+          const measurements = await Promise.all(group.candidates.map(candidate => measurePage(candidate.page)))
+          return {
+            label: group.label,
+            region: candidateRegion(before, group.itemIds, [baseMeasurement, ...measurements], args.padding ?? 60, group.region),
+            candidates: group.candidates.map((candidate, index) => ({ ...candidate, risks: measurements[index].risks,
+              new_risks: measurements[index].risks.filter(risk => !baseMeasurement.risks.includes(risk)) })),
+          }
+        }))
+        await checked(args.token)
+        const reviewId = crypto.randomUUID()
+        previewId.current = reviewId
+        setPreview({ reviewId, pageId: id, version: state.version, before, groups })
+        try {
+          const until = Date.now() + 8000
+          let rendered = false
+          while (alive && previewId.current === reviewId && Date.now() < until) {
+            await pause()
+            const root = document.querySelector<HTMLElement>(`[data-preview-id="${reviewId}"]`)
+            const imgs = root ? [...root.querySelectorAll<HTMLImageElement>('img')] : []
+            rendered = root?.dataset.open === 'true' && imgs.length > 0 && !root.querySelector('[data-layer-pending]') &&
+              imgs.every(img => img.complete && img.naturalWidth > 0 && img.dataset.previewReady === 'true')
+            if (rendered) {
+              await Promise.all(imgs.map(img => img.decode()))
+              break
+            }
+          }
+          await new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())))
+          const current = await checked(args.token)
+          const root = document.querySelector<HTMLElement>(`[data-preview-id="${reviewId}"]`)
+          const visible = !!root && previewId.current === reviewId
+          const bounds = root?.getBoundingClientRect()
+          const fitsViewport = !!bounds && root!.scrollWidth <= root!.clientWidth + 1 && root!.scrollHeight <= root!.clientHeight + 1 &&
+            bounds.left >= 0 && bounds.top >= 0 && bounds.right <= window.innerWidth && bounds.bottom <= window.innerHeight
+          const scales = root ? [...root.querySelectorAll<HTMLElement>('[data-group-label]')].map(node => Number(node.dataset.scale)) : []
+          const panelCount = root?.querySelectorAll('.pl-review-panel').length ?? 0
+          if (!rendered || !visible) clearReview()
+          return {
+            token: args.token, project_id: latest.current.project.id, page_id: id,
+            page_number: latest.current.project.pages.findIndex(page => page.id === id) + 1,
+            revision: current.state.data.revision, dirty: current.state.dirty, saving: current.state.saving,
+            reviewed: !current.state.dirty && current.state.data.reviewed_revision === current.state.data.revision,
+            rendered: rendered && visible, preview_status: visible ? rendered ? 'ready' : 'timeout' : 'closed', fits_viewport: fitsViewport, panel_count: panelCount,
+            warning: visible && !rendered ? '候選圖片載入逾時，預覽已關閉，請重試。' : visible && !fitsViewport ? '接觸表未完整容納於視窗，請減少同批區域或候選後重試。' : undefined,
+            groups: groups.map((group, index) => ({ label: group.label, item_ids: prepared[index].itemIds, region: group.region, scale: scales[index],
+              min_target_font_px: Math.min(...[before, ...group.candidates.map(candidate => candidate.page)]
+                .flatMap(page => page.items.filter(item => prepared[index].itemIds.includes(item._id)).map(item => item['font-size']))) * scales[index],
+              candidates: group.candidates.map(candidate => ({ label: candidate.label, risks: candidate.risks, new_risks: candidate.new_risks })) })),
+          }
+        } catch (error) {
+          if (previewId.current === reviewId) clearReview()
+          throw error
+        }
+      },
+      undo: async args => { const { id } = await checked(args.token, true); controller.undo(id); clearReview(); await ready(id); return inspect() },
       save: async args => {
         for (const value of [args.reviewed, args.advance, args.wait]) if (value !== undefined && typeof value !== 'boolean') throw new Error('保存選項必須是布林值。')
         if (args.next_page_id !== undefined && (typeof args.next_page_id !== 'string' || !args.next_page_id)) throw new Error('請提供下一頁的穩定 ID。')
@@ -219,7 +284,7 @@ export function usePrelayoutAgent(options: Options) {
           await checked(args.token)
           if (args.reviewed !== undefined || args.advance) await latest.current.refreshProject()
         }
-        setReview(null)
+        clearReview()
         if (args.next_page_id !== undefined) {
           latest.current.go(args.next_page_id)
           await ready(args.next_page_id)
@@ -238,7 +303,7 @@ export function usePrelayoutAgent(options: Options) {
         await checked(args.token, true)
         if (!latest.current.project.pages.some(page => page.id === args.page_id)) throw new Error('找不到指定頁面。')
         if (!await controller.flush()) throw new Error('保存失敗，未切換頁面。')
-        await controller.load(args.page_id); await checked(args.token, true); setReview(null); latest.current.go(args.page_id)
+        await controller.load(args.page_id); await checked(args.token, true); clearReview(); latest.current.go(args.page_id)
         const rendered = await ready(args.page_id)
         return { rendered, ...await inspect() }
       },
@@ -257,7 +322,7 @@ export function usePrelayoutAgent(options: Options) {
         if (args.comparison !== undefined) o.setCompare(args.comparison)
         if (args.fullscreen !== undefined) o.setFocus(args.fullscreen)
         if (args.zoom !== undefined) o.setZoom(args.zoom)
-        setReview(null)
+        clearReview()
         const rendered = await readyView(id, state.data, next, args.comparison ?? o.compare, args.zoom ?? o.zoom, args.fullscreen ?? o.focus)
         return { rendered, ...await inspect() }
       },
@@ -270,7 +335,7 @@ export function usePrelayoutAgent(options: Options) {
     }])) as PrelayoutHost
     hostRef.current = wrapped
     const unregister = registerPrelayoutTools(wrapped)
-    return () => { alive = false; hostRef.current = null; unregister() }
+    return () => { alive = false; previewId.current = null; hostRef.current = null; unregister() }
   }, [controller])
   return {
     hasReview: !!controller.pages.get(options.current)?.undo.length,
@@ -280,6 +345,8 @@ export function usePrelayoutAgent(options: Options) {
       const state = await host.inspect() as { token: string }
       await host.compare({ token: state.token, view: 'detail', includeOriginal: true })
     },
-    review: review && <LayoutReview project={options.project.id} clean={options.clean} {...review} onClose={() => setReview(null)} />,
+    review: preview && preview.pageId === options.current && preview.version === controller.pages.get(options.current)?.version
+      ? <CandidateReview project={options.project.id} {...preview} onClose={() => { setPreview(null); previewId.current = null }} />
+      : review && <LayoutReview project={options.project.id} clean={options.clean} {...review} onClose={() => setReview(null)} />,
   }
 }

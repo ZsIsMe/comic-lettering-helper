@@ -6,6 +6,7 @@
 
 - `prelayout_inspect_page`：保留完整結果，確認項目、頁面、範圍、修訂、保存狀態及穩定 `_id`。寫入與導航使用最新 token，不用陣列位置代替 ID。
 - `prelayout_patch_page`：同頁原子批次修改。`center` 是原圖像素，不能與 x/y 混用；text 只允許換行。套用共用人工撤銷與自動保存，不自動開對比。
+- `prelayout_preview_candidates`：一次提交當頁最新 `token` 和 `groups`，最多四組，每組最多四個候選。每組有 `label` 和 `candidates`，每個候選有 `label` 與現有 patch 形狀的 `patches`。同一方案可含多框，獨立區域各成一組。各方案從同一草稿獨立渲染，接觸表同時顯示原圖、現況與全部候選，不建立編輯或保存。原氣泡或附近線條超出文字框時，傳該組的 `region: [x1,y1,x2,y2]`（原圖像素）納入上下文。同組各格使用相同裁切及倍率。
 - `prelayout_split_item`：選取範圍以當前文字的 UTF-16 偏移表示，起點含、終點不含。保留拆前文字，以回傳的 `split.reading_order` 還原各段並核對字元（僅忽略換行）；以 `split.original_item_id`、`split.new_item_id` 和最新 token 定位。中段選取可使原框同時保留前後兩段，不能把文字框陣列順序當作原閱讀順序。若 `applied` 為真但缺 token 或有 warning，先 inspect，不重複拆框。
 - `prelayout_compare_page`：detail 可看最近一次修改前／後及原圖；多個 region 都須核驗，edited 返回畫布。裁切不足就擴大 padding；微小縮圖則回主畫布放大。刷新會失去修改前快照與當前撤銷。
 - `prelayout_save_page`：省略 reviewed 只保存，true 標完成、false 取消完成。依實際 schema，中間頁用 `{token, reviewed:true, wait:false, next_page_id:下一頁ID}` 啟動背景保存並前往指定頁，不等待前頁寫入，也不靠固定延時判成功；接續使用回傳的下一頁資料及 token。背景狀態 pending／failed 須如實保留，失敗依工具提供的重試方式處理。最後一頁、暫停或交付前用 `{token, reviewed:true}`（預設等待）統一確認所有背景保存及完成標記。`advance` 會標完成並跳下一未完成頁，與 `next_page_id` 不同時使用；重校指定範圍用明確頁 ID，避免跳過舊已完成頁。舊前端 schema 未提供背景選項時沿用正式保存，不以未等待的 detached 呼叫繞過工具。
@@ -18,12 +19,33 @@
 
 ## 精簡回傳與截圖
 
+- 批次試排前先從已看圖的區域組好方案，保留候選和 patch 對照。等 `rendered:true` 和 `fits_viewport:true` 後，在同一次瀏覽器呼叫擷取接觸表，集中判斷各列。`min_target_font_px` 可協助判斷小字的顯示尺寸。很高的裁切可能把同批其他組一起縮小，小字、完整邊界或重疊處辨識不清時，可把高裁切單獨預覽，或重取較適合的裁切。依預覽回傳的 token 把所選 patch 按穩定 ID 合併，再呼叫一次 `prelayout_patch_page`。選「現況」的框略過，避免為同一框送重複 patch。候選預覽期間有內容變動時，重新 inspect 並依當頁最新內容建立方案。
 - 持續執行環境保留完整結果與頁碼表，僅輸出下一步需要的欄位。首次輸出項目、範圍與當頁狀態；每頁輸出穩定 ID、文字、字級、方向、角度、中心、顏色、描邊及來源行數。OCR、來源框與警報按判斷需要讀取。
 - 修改後輸出 applied、rendered、頁面身分、新風險及變更值；背景保存後僅輸出當頁身分、待保存／失敗摘要及下一頁所需欄位；最終等待保存後輸出 revision、dirty、saving、reviewed 及背景任務是否全部完成。token 留在變數內，不反覆打印 pages 或整頁資料。
 - 導航已帶目標頁資料就直接使用；有效的新 token 接續操作。僅缺欄位、頁面可能改變、UI 編輯、token 過期或結果不確定時重讀。WebMCP 足夠時不再輸出整份 DOM。
 - 先檢查成功狀態與有效 JSON，再提取欄位；錯誤、新風險及部分成功不能省略，不以截斷字串隱藏尾部錯誤。失敗先確認是否已套用。
 - 放大並捲動畫布，逐個氣泡及逐個文字框讀清、核對與驗收，檢查空氣泡是否有譯文誤合併在其他框；不可用縮小全頁圖或快速掃視代替逐項核對。全部逐項看完後，可以用縮小全頁圖驗收整頁關係。工具的批次能力只合併已有明確判斷的欄位，不代替逐項判讀。同一張可讀截圖可以涵蓋相鄰氣泡，但每個都須確認原文、譯文與完整框線；分離區域分開看。修改後在可讀的放大畫面確認所有受影響區域及鄰近框線；無修改的頁面也必須完成逐項核對。
 - 保存修訂與已核驗版本一致時，用保存狀態確認即可，不重截同畫面；內容重新變動才重看。未修改頁無須製造修改後截圖。節省重複資訊，不降低視覺驗收。
+
+例如同頁右上氣泡要比較字級，左下兩框要一起微調間距，可在一次預覽送入下列兩組。ID、座標及文字依當頁的 inspect 和原圖判斷代入。
+
+```js
+{
+  token,
+  groups: [
+    { label: '右上氣泡', region: [790, 125, 1040, 375], candidates: [
+      { label: '28 px', patches: [{ item_id: bubble, set: { 'font-size': 28 } }] },
+      { label: '30 px', patches: [{ item_id: bubble, set: { 'font-size': 30 } }] },
+    ] },
+    { label: '左下兩框', candidates: [
+      { label: '拉開間距', patches: [
+        { item_id: upper, center: [255, 1050] },
+        { item_id: lower, center: [255, 1210] },
+      ] },
+    ] },
+  ],
+}
+```
 
 ## 正式 UI 的內容例外
 

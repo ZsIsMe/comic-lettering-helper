@@ -62,6 +62,47 @@ test('text edits change line breaks only', () => {
   }
 })
 
+test('candidate groups branch from one draft and preserve its contents and revision', () => {
+  const { preparePreviewCandidates } = moduleUnderTest()
+  const page = fixture(), before = structuredClone(page)
+  const groups = preparePreviewCandidates(page, [
+    { label: '字級', region: [100, 200, 1000, 800], candidates: [
+      { label: 'A', patches: [{ item_id: 'stable-a', set: { 'font-size': 32 } }] },
+      { label: 'B', patches: [{ item_id: 'stable-a', set: { rotation: 12 } }] },
+    ] },
+    { label: '整組移動', candidates: [{ label: 'C', patches: [
+      { item_id: 'stable-a', center: [600, 550] }, { item_id: 'stable-b', set: { x: .7 } },
+    ] }] },
+  ])
+  assert.equal(groups[0].candidates[0].page.items[0]['font-size'], 32)
+  assert.equal(groups[0].candidates[1].page.items[0]['font-size'], 36)
+  assert.equal(groups[0].candidates[1].page.items[0].rotation, 12)
+  assert.equal(groups[1].candidates[0].page.items[0].x, .3)
+  assert.equal(groups[1].candidates[0].page.items[1].x, .7)
+  assert.equal(groups[1].candidates[0].page.revision, 7)
+  assert.deepEqual(groups[1].itemIds, ['stable-a', 'stable-b'])
+  assert.deepEqual(page, before)
+})
+
+test('invalid candidate batches reject labels, geometry, limits, identities, and text edits without mutation', () => {
+  const { preparePreviewCandidates } = moduleUnderTest()
+  const page = fixture(), before = structuredClone(page)
+  const group = { label: 'group', candidates: [{ label: 'A', patches: [{ item_id: 'stable-a', set: { 'font-size': 32 } }] }] }
+  for (const groups of [
+    [], Array(5).fill(group), [group, group], [{ ...group, label: ' ' }],
+    [{ ...group, candidates: [] }], [{ ...group, candidates: Array(5).fill(group.candidates[0]) }],
+    [{ ...group, candidates: [group.candidates[0], group.candidates[0]] }],
+    [{ ...group, region: [-1, 0, 100, 100] }], [{ ...group, region: [1, 0, 2001, 100] }],
+    [{ ...group, region: [100, 100, 0, 0] }], [{ ...group, region: [0, 0, Infinity, 100] }],
+    [{ ...group, candidates: [{ label: 'A', patches: [{ item_id: 'missing', set: { rotation: 3 } }] }] }],
+    [{ ...group, candidates: [{ label: 'A', patches: [{ item_id: 'stable-a', set: { text: '任意改字' } }] }] }],
+    [{ ...group, candidates: [{ label: 'A', patches: Array(21).fill(group.candidates[0].patches[0]) }] }],
+  ]) assert.throws(() => preparePreviewCandidates(page, groups))
+  assert.throws(() => preparePreviewCandidates(page, [group], 15))
+  assert.throws(() => preparePreviewCandidates(page, [group], NaN))
+  assert.deepEqual(page, before)
+})
+
 test('stale or duplicate item identity and invalid second patch reject the entire batch', () => {
   const { applyPagePatches } = moduleUnderTest()
   const page = fixture(), before = structuredClone(page)
@@ -134,14 +175,14 @@ test('split expands a UTF-16 selection to complete surrogate pairs', () => {
 
 test('tool schemas are strict, unsupported context is harmless, and writes proxy only to host', async () => {
   const calls = []
-  const host = Object.fromEntries(['inspect', 'patch', 'split', 'compare', 'undo', 'save', 'navigate', 'setView'].map(method => [method, async args => { calls.push([method, args]); return { method } }]))
+  const host = Object.fromEntries(['inspect', 'patch', 'split', 'compare', 'previewCandidates', 'undo', 'save', 'navigate', 'setView'].map(method => [method, async args => { calls.push([method, args]); return { method } }]))
   const absent = moduleUnderTest()
   assert.doesNotThrow(() => absent.registerPrelayoutTools(host)())
   const registered = new Map(), removed = []
   const modelContext = { registerTool(tool) { registered.set(tool.name, tool) }, unregisterTool(name) { removed.push(name) } }
   const { registerPrelayoutTools } = moduleUnderTest({ document: { modelContext } })
   const dispose = registerPrelayoutTools(host)
-  assert.equal(registered.size, 8)
+  assert.equal(registered.size, 9)
   for (const tool of registered.values()) {
     assert.equal(tool.inputSchema.additionalProperties, false)
     assert.equal(tool.inputSchema.type, 'object')
@@ -154,6 +195,15 @@ test('tool schemas are strict, unsupported context is harmless, and writes proxy
   const request = { token: 'current-token', patches: [{ item_id: 'stable-a', set: { text: '甲乙丙丁' } }] }
   assert.deepEqual(await patch.execute(request), { content: [{ type: 'text', text: '{"method":"patch"}' }] })
   assert.deepEqual(calls, [['patch', request]])
+  const preview = registered.get('prelayout_preview_candidates')
+  assert.equal(preview.annotations.readOnlyHint, true)
+  assert.deepEqual(preview.inputSchema.required, ['token', 'groups'])
+  assert.equal(preview.inputSchema.properties.groups.maxItems, 4)
+  assert.equal(preview.inputSchema.properties.groups.items.additionalProperties, false)
+  assert.equal(preview.inputSchema.properties.groups.items.properties.candidates.items.properties.patches.maxItems, 20)
+  const previewRequest = { token: 'current-token', groups: [{ label: 'group', candidates: [{ label: 'A', patches: request.patches }] }] }
+  await preview.execute(previewRequest)
+  assert.deepEqual(calls.at(-1), ['previewCandidates', previewRequest])
   const split = registered.get('prelayout_split_item')
   assert.deepEqual(split.inputSchema.required, ['token', 'item_id', 'selection_start', 'selection_end'])
   assert.equal(split.inputSchema.properties.selection_start.type, 'integer')
@@ -180,5 +230,5 @@ test('tool schemas are strict, unsupported context is harmless, and writes proxy
   assert.deepEqual(calls.at(-1), ['setView', viewRequest])
   await Promise.resolve()
   dispose()
-  assert.equal(new Set(removed).size, 8)
+  assert.equal(new Set(removed).size, 9)
 })

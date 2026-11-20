@@ -602,6 +602,10 @@ WebMCP 在預排版頁註冊檢查、修改、局部對比、撤銷、保存與�
 
 獨立控制使用 `clean`、`show_text`、`difference_highlight`，高亮樣式使用 `difference_color`（`#RRGGBB`）與 `difference_opacity`（0–1）。先驗證整份請求，再套用顯示狀態；與模式矛盾的圖層旗標拒絕。隱藏譯文不改 items、修訂、完成標記或撤銷歷史；顏色及透明度沿用瀏覽器偏好，不寫伺服器資料。
 
+### WebMCP 排版候選預覽
+
+`prelayout_preview_candidates` 以目前 token 對應的草稿為基準，重用正式 patch 驗證和文字渲染，從相同基準生成各組候選。每組使用涵蓋現況、所有候選及指定上下文的共同原圖裁切。接觸表同時呈現各組的原圖、現況和候選，供一次截圖比較。預覽只更新瀏覽器檢視，選中後將修改合入既有 `prelayout_patch_page`，沿用同頁 token 檢查、原子修改和撤銷。
+
 ## 疑問記錄（0.2.22）
 
 疑問記錄存於原 project.json 的 template.questionRecords（version、records），沿用項目鎖與原子寫入；不建立獨立記錄檔。GET /api/prelayout/projects/{pid}/question-records 讀取記錄；PUT 接受 expected_version 與 records，使用獨立版本避免多視窗丟失更新，相同內容重送可安全確認。保存增加項目 revision，不修改頁面文字、修訂或完成標記。記錄包含疑問與跨頁文本快照，既有 Meo.json 與 ZIP 匯出／匯入保留。前端失敗保留草稿，結果未確認時重送相同內容，版本衝突要求重新載入；管理視窗內每筆記錄預設收起為一行摘要。
