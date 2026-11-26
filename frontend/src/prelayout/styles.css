@@ -129,3 +129,6 @@
   .pl-project-row .pl-project-updated{grid-column:1;grid-row:2;font-size:11px}
   .pl-project-row .pl-project-actions{grid-column:2 / 4;grid-row:2;justify-self:end}
 }
+.pl-line-break-controls{margin:10px 0;padding:8px 0;border-bottom:1px solid #ded6cc}.pl-line-break-controls p{margin:6px 0}.pl-line-break-options{display:grid;gap:6px}.pl-line-break-options button{width:100%;text-align:left;border:1px solid #d8cfc3;border-radius:5px;background:#fff;padding:7px 8px;cursor:pointer;color:inherit}.pl-line-break-options button[aria-pressed=true]{border-color:#a34e28;background:#f5e9df;box-shadow:inset 0 0 0 1px #a34e28}.pl-line-break-options button:disabled{opacity:.5;cursor:default}.pl-line-break-options button span{font-weight:600}.pl-line-break-options pre{white-space:pre;overflow:auto;max-height:160px;font:inherit;line-height:1.5;margin:5px 0 0}.pl-line-break-controls [role=alert]{color:#a13224}
+.pl-line-break-current{display:inline-block;margin-left:6px;padding:0 4px;border:1px solid #b7aa9c;border-radius:3px;font-size:10px;color:#7d5d42}
+.pl-inspector .pl-line-break-controls .pl-line-break-trigger.ant-btn{height:32px;font-weight:600;font-size:13px}.pl-line-break-trigger[aria-expanded=true]::after{content:"▴";margin-left:5px}.pl-line-break-trigger[aria-expanded=false]::after{content:"▾";margin-left:5px}

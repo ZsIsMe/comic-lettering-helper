@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
 import { Alert, Button, Checkbox, Empty, Input, InputNumber, Modal, Popover, Select, Space, Spin, Tag, Tooltip, message } from 'antd'
 import { base, body, files, projectPath, request } from './api'
 import { type Availability, type Detection, type Item, type Project, activeDetection, uid } from './types'
@@ -28,6 +28,8 @@ import { downloadDiscussion, downloadMeo as downloadMeoFile } from './download-d
 import { ProjectExportGuard } from './export-guard'
 import type { GroupImportResult } from './group-import'
 import { AlignmentControls } from './AlignmentControls'
+import { LineBreakControls } from './LineBreakControls'
+import { lineBreakPreviewMatches, type LineBreakPreview } from './line-breaks'
 import { loadViewPreferences, saveViewPreferences } from './view-preferences'
 import { ProjectLibrary } from './ProjectLibrary'
 import { loadProjectView, saveProjectView } from './project-view'
@@ -95,6 +97,7 @@ function Workspace({ project: initial, promptDetection, onExit, onReadyToLeave }
   const controller = useMemo(() => new EditorState(initial.id), [initial.id])
   useSyncExternalStore(callback => controller.subscribe('*', callback), () => controller.tick('*'))
   const [selection, setSelection] = useState<Selection>({ page: initial.pages[0].id, ids: [] })
+  const [lineBreakPreview, setLineBreakPreview] = useState<LineBreakPreview | null>(null)
   const [range, setRange] = useState<PageRange>(() => {
     try {
       const saved: unknown = JSON.parse(localStorage.getItem(`pl-review-range-${initial.id}`) || 'null')
@@ -147,7 +150,7 @@ function Workspace({ project: initial, promptDetection, onExit, onReadyToLeave }
     return () => { window.removeEventListener('scroll', invalidate, true); window.removeEventListener('resize', invalidate) }
   }, [zoom, compare])
   const interacting = useRef(false)
-  const interactionChanged = useCallback((value: boolean) => { interacting.current = value }, [])
+  const interactionChanged = useCallback((value: boolean) => { interacting.current = value; if (value) setLineBreakPreview(null) }, [])
   useEffect(() => {
     onReadyToLeave?.(async () => !busy && !interacting.current && await controller.flush())
     return () => onReadyToLeave?.(async () => true)
@@ -161,6 +164,10 @@ function Workspace({ project: initial, promptDetection, onExit, onReadyToLeave }
   const crossPage = selectedPageCount > 1
   const mixed = (key: keyof Item) => allSelected.some(item => item[key] !== allSelected[0]?.[key])
   const first = selected[0]
+  const lineBreakLocked = busy || !showText || activeDetection(task)
+  const activeLineBreakPreview = lineBreakPreview && !lineBreakLocked && lineBreakPreviewMatches(controller, selection, lineBreakPreview) ? lineBreakPreview : null
+  const lineBreakSelectionKey = JSON.stringify(selectedPages)
+  useLayoutEffect(() => { setLineBreakPreview(null) }, [current, lineBreakSelectionKey, lineBreakLocked])
   const groupNames = (project.template?.groupList || []).map(group => group.name).filter(name => typeof name === 'string')
   const selectedGroupIds = new Set(allSelected.map(item => typeof item.groupId === 'number' ? item.groupId : -1))
   const selectedGroupId = selectedGroupIds.size === 1 ? [...selectedGroupIds][0] : undefined
@@ -304,7 +311,7 @@ function Workspace({ project: initial, promptDetection, onExit, onReadyToLeave }
     setSelection({ page: page.id, ids: [item._id] })
     setJump({ id: page.id, x: item.x, y: item.y, version: performance.now() })
   }
-  const select = useCallback((value: Selection) => setSelection(value), [])
+  const select = useCallback((value: Selection) => { setLineBreakPreview(null); setSelection(value) }, [])
   const currentPage = useCallback((id: string) => { setCurrent(id); setSelection(value => value.ids.length ? value : { page: id, ids: [] }) }, [])
   function go(id: string) { setJump({ id, version: Date.now() }); setCurrent(id); setSelection(value => value.ids.length ? value : { page: id, ids: [] }) }
   const isReviewed = (page: Project['pages'][number]) => {
@@ -577,9 +584,11 @@ function Workspace({ project: initial, promptDetection, onExit, onReadyToLeave }
     <PageNavigation pages={project.pages} current={current} range={range} onRange={setRange} onGo={go} reviewed={isReviewed}
       onReview={reviewed => void execute(() => setReviewed(reviewed))} onFinishAndNext={() => void execute(finishAndNext)} busy={busy || saving} focus={focus} onFocus={setFocus} />
     <div className="pl-layout">
-      <ContinuousPages project={project} controller={controller} selection={selection} onSelect={select} onAdjust={adjust} zoom={zoom} onZoom={setZoom} compare={compare} clean={clean} difference={difference} differenceColor={differenceColor} differenceOpacity={differenceOpacity} showText={showText} showMeasure={showMeasure} jump={jump} onCurrent={currentPage} onMeasure={onMeasure} onPointer={pointerChanged} onFontWheel={fontWheel} onInteractionChange={interactionChanged} />
+      <ContinuousPages project={project} controller={controller} selection={selection} textPreview={activeLineBreakPreview} onSelect={select} onAdjust={adjust} zoom={zoom} onZoom={setZoom} compare={compare} clean={clean} difference={difference} differenceColor={differenceColor} differenceOpacity={differenceOpacity} showText={showText} showMeasure={showMeasure} jump={jump} onCurrent={currentPage} onMeasure={onMeasure} onPointer={pointerChanged} onFontWheel={fontWheel} onInteractionChange={interactionChanged} />
       <aside className="pl-inspector" aria-label="文字編輯">
         <div className="pl-inspector-title"><h2>文字編輯</h2><Tooltip title="雙擊頁面文字可原位編輯；Mac 也可用 ⌘＋單擊，並支援直排。Enter 換行；⌘／Ctrl＋Enter 完成；Esc 保存並結束編輯。"><button type="button" className="pl-help" aria-label="文字編輯說明">?</button></Tooltip></div>{state?.conflict && <Space wrap><Button onClick={() => void execute(() => controller.resolve(selection.page, true))}>保留我的草稿</Button><Button onClick={() => void execute(() => controller.resolve(selection.page, false))}>載入伺服器版</Button></Space>}
+        <LineBreakControls key={lineBreakSelectionKey} controller={controller} selection={selection} preview={activeLineBreakPreview} onPreview={setLineBreakPreview} disabled={lineBreakLocked}
+          disabledReason={busy ? '正在執行其他操作，暫停候選預覽與採用。' : !showText ? '請先開啟「顯示譯文」，再預覽或採用版本。' : activeDetection(task) ? '偵測或量測正在進行，完成後再查看候選。' : undefined} onApplied={() => exportGuard.invalidate()} />
         {allSelected.length > 0 && <div className="pl-selection-summary"><span>已選 {selectedPageCount} 頁 · {allSelected.length} 框</span><Button size="small" onClick={() => setSelection({ page: current, ids: [] })}>清除</Button>{crossPage && <small>樣式與分組套用全部；文字、位置、拖曳、複製及刪除僅作用於第 {project.pages.findIndex(page => page.id === selection.page) + 1} 頁所選框。</small>}</div>}
         <details open className="pl-groups-top"><summary>分組</summary><Space wrap>{groupNames.map((name, index) => <Tooltip key={`${index}-${name}`} title={selected.length ? `切換選取文字至「${name}」` : '請先選取文字'}><Button size="small" type={selectedGroupIds.size === 1 && selectedGroupId === index ? 'primary' : 'default'} disabled={!selected.length} onClick={() => patch({ groupId: index })}><GroupName name={name} index={index} /></Button></Tooltip>)}{!groupNames.length && <span className="pl-muted">尚無分組</span>}<Button size="small" onClick={() => void execute(openGroupOrganizer)}>整理分組</Button></Space></details>
         {first ? <><label>文字 {selected.length > 1 && `· 本頁已選 ${selected.length} 條`}<Input.TextArea autoSize={{ minRows: 3, maxRows: 7 }} value={first.text} onChange={e => patch({ text: e.target.value })} /></label>

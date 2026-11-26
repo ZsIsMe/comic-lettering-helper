@@ -1,3 +1,4 @@
+import { sourceLineCount } from './source-line-count'
 import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from 'react'
 import type { EditorState } from './editor-state'
 import type { PageData, Project } from './types'
@@ -122,10 +123,9 @@ export function usePrelayoutAgent(options: Options) {
           difference_highlight: o.difference, difference_visible: o.difference && !!page.clean, show_text: o.showText,
           difference_color: o.differenceColor, difference_opacity: o.differenceOpacity, zoom: o.zoom, fullscreen: o.focus },
         risks: measurement.risks, risk_note: '邊界框相交是提示，需看圖確認。',
-        rule: '保持譯文字元；字級以原文為準；位置允許時，換行次數不要超過對應原文。來源行數未知時須看原圖確認。',
+        rule: '保持譯文字元；字級以原文為準；位置允許時，換行次數不要超過對應原文。原文行數為 0 或 null 時未知；character_boxes_estimate 為估計值，須看原圖確認。',
         items: page.items.map(item => {
-          const lines = page.character_boxes?.filter(box => typeof item.match_source_block_index === 'number' && box.source_block_index === item.match_source_block_index).map(box => box.line_index)
-          return { ...item, center: [item.x * page.width, item.y * page.height], rect: measurement.rects[item._id], line_count: item.text.split('\n').length, source_line_count: lines?.length ? new Set(lines).size : null }
+          return { ...item, center: [item.x * page.width, item.y * page.height], rect: measurement.rects[item._id], line_count: item.text.split('\n').length, ...sourceLineCount(item, page) }
         }),
       }
     }

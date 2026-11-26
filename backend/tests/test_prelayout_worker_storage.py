@@ -15,6 +15,7 @@ from PIL import Image, ImageDraw
 
 from prelayout_core.worker import finalize_output, load, run_ctd
 from prelayout_core.preview import load_overlay
+from prelayout_core.data import validate_measure
 
 
 class FixtureDetector:
@@ -109,6 +110,8 @@ def test_headless_storage_keeps_measurements_and_rgba_without_diagnostics(tmp_pa
     # Enable the diagnostic outputs and compare the actual numerical result.
     paths = core._ensure_dirs(str(output))
     block = load(output / 'progressing' / core.BLOCK_MAP_JSON)
+    assert block['blockMap']['001.png'][0]['source_line_count'] == 1
+    assert block['blockMap']['002.png'] == []
     lines = load(output / 'progressing' / core.LINE_TRANS_MAP_JSON)
     aligned, _ = align(str(images), paths, block, need_neck=True)
     expected, _ = core._build_measure_maps(
@@ -119,6 +122,7 @@ def test_headless_storage_keeps_measurements_and_rgba_without_diagnostics(tmp_pa
     _, errors = enrich_measure_map(images, expected)
     assert not errors
     assert load(output / 'measure.json') == expected
+    assert expected['pages']['001.png'][0]['source_line_count'] == 1
     assert len(list((output / 'progressing' / 'align' / 'masks').glob('*.npz'))) == len(names)
     assert not list((output / 'inpainted').glob('*.png'))
     # The end of a task keeps complete page results and discards only raw analysis.
@@ -131,8 +135,63 @@ def test_headless_storage_keeps_measurements_and_rgba_without_diagnostics(tmp_pa
     assert not (output / 'measure.debug.json').exists()
     assert not (output / 'measure_ocr.json').exists()
     assert load(output / 'measure.json') == expected
+    assert load(output / 'page-measures' / 'page-1.json') == expected['pages']['001.png']
     assert set(p.name for p in (output / 'page-characters').glob('*.json')) == {'page-1.json', 'page-2.json'}
     assert not any('\n' in p.read_text() for p in (output / 'page-measures').glob('*.json'))
+
+
+def test_source_line_counts_follow_detector_blocks_before_line_shrinking(tmp_path, monkeypatch, core):
+    images = tmp_path / 'input'
+    images.mkdir()
+    Image.new('RGB', (100, 100), 'white').save(images / 'page.png')
+    line = np.array([[20, 20], [30, 20], [30, 60], [20, 60]], dtype=np.int32)
+    # Identical boxes make spatial reassignment ambiguous. One raw line is
+    # repeated and another block has none; neither fact may be reconstructed.
+    blocks = [SimpleNamespace(xyxy=[10, 10, 80, 80], lines=lines)
+              for lines in ([line, line], [line], [])]
+
+    class Detector:
+        def __init__(self, **_):
+            pass
+
+        def __call__(self, image, **_):
+            mask = np.zeros(image.shape[:2], dtype=np.uint8)
+            return mask, mask, blocks
+
+    monkeypatch.setattr(core, 'TextDetector', Detector)
+    monkeypatch.setattr(core, '_find_component_boxes', lambda *_: [])
+    monkeypatch.setattr(core, '_shrink_line_polygons', lambda *_, **__: [])
+    paths = core._ensure_dirs(str(images / 'ctd'))
+    block_map, line_map = core._detect_pages(str(images), 'unused-model', 'cpu', paths)
+    assert [item['source_line_count'] for item in block_map['blockMap']['page.png']] == [2, 1, 0]
+    assert line_map['transMap']['page.png'] == []
+    # Alignment may reorder blocks. Missing legacy counts remain unknown.
+    block_map['blockMap']['page.png'].append(core._block_item_from_xyxy([0, 0, 10, 10], 100, 100, 3))
+    aligned = {'transMap': {'page.png': [block_map['blockMap']['page.png'][index] for index in (2, 0, 1, 3)]}}
+    measure, debug = core._build_measure_maps(str(images), paths, block_map, line_map, aligned,
+                                             font_size_calculation_method='fixed')
+    items = measure['pages']['page.png']
+    assert [item.get('source_line_count') for item in items] == [0, 2, 1, None]
+    assert debug['pages']['page.png'] == items
+    assert 'source_line_count' not in items[-1]
+
+
+@pytest.mark.parametrize('count', [0, 1, 12])
+def test_measure_accepts_optional_source_line_count(count):
+    pages = [{'name': 'page.png', 'width': 100, 'height': 100}]
+    item = {'xyxy_pixel': [0, 0, 50, 50], 'source_line_count': count}
+    measure = {'pages': {'page.png': [item]}}
+    assert validate_measure(measure, pages) is measure
+    del item['source_line_count']
+    assert validate_measure(measure, pages) is measure
+
+
+@pytest.mark.parametrize('count', [-1, 1.0, .5, True, False, None, '2', [], {}, float('inf'), float('nan')])
+def test_measure_rejects_invalid_source_line_count(count):
+    pages = [{'name': 'page.png', 'width': 100, 'height': 100}]
+    measure = {'pages': {'page.png': [{'xyxy_pixel': [0, 0, 50, 50], 'source_line_count': count}]}}
+    with pytest.raises(ValueError, match='來源行數'):
+        validate_measure(measure, pages)
 
 
 def test_neck_preview_switch_preserves_split_result_and_summary(tmp_path, monkeypatch, core):

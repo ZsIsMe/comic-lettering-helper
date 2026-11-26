@@ -10,6 +10,10 @@ PYTHONPATH=backend /path/to/inference/python -m prelayout_core.check --model-roo
 
 CUDA 環境以 `--device cuda --ocr-device cuda --require-cuda` 驗證，並執行真實推理驗收。更新服務前依既有規則確認無活動任務，再重啟 6008 讀入引擎設定。mit48 推理入口已停用，設為該引擎或執行舊 mit48 任務時會明確回報。已完成的舊量測繼續可讀，已有項目需重新建立 CharSpot 偵測及明確套用才能取得新字級。
 
+## 單框斷句功能的部署
+
+在 6008 的 Web Python 環境按 `backend/requirements.txt` 安裝 `jieba==0.42.1`，同步後端與新建置的前端，並在服務空閒時重啟 6008。同步更新 CTD worker，讓新量測保存原文行數。詞典隨 Web 套件安裝，在首次產生候選時載入。舊鏡像的線上更新器會核對 requirements 雜湊，發行更新包時需搭配含此依賴的相容執行環境。
+
 # 預排版字色修正（未部署）
 
 更新後端後，新啟動的預排版偵測任務會使用修正的判色規則。已有項目若要套用新測量，須重新偵測，再將測量樣式套用到目標文字框。

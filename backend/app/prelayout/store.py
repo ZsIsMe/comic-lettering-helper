@@ -11,6 +11,7 @@ import tempfile
 import threading
 import time
 import zipfile
+from collections import OrderedDict
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
@@ -23,6 +24,8 @@ from prelayout_core.preview import compose_inpainted, load_overlay
 from .text_replacements import replacement, validate_request
 from .question_records import chronological_records, rebind_imported_records, validate_question_records, validate_records
 from .import_metadata import labelplus_indices, merge_template, preserve_item_information
+from .import_line_breaks import (LINE_BREAK_SUGGESTIONS_VERSION, imported_sources, suggestions_for_page,
+                                upgrade_saved_suggestions, validate_archived_suggestions)
 from .discussion_export import render_discussion
 
 
@@ -92,6 +95,8 @@ class PrelayoutStore:
         self._guard = threading.Lock()
         self.preview_slots = threading.BoundedSemaphore(2)
         self._readers = {}
+        self._line_break_cache = OrderedDict()
+        self._line_break_cache_bytes = 0
 
     @contextmanager
     def lock(self, pid):
@@ -296,11 +301,16 @@ class PrelayoutStore:
             raise
 
     def page(self, pid, page_id):
+        with self.lock(pid):
+            return self._page(pid, page_id)
+
+    def _page(self, pid, page_id):
         project = self.read(pid)
         page = next((p for p in project['pages'] if p['id'] == page_id), None)
         if page is None:
             raise KeyError('頁面不存在')
         state = read_json((self.directory(pid) / page['state']).read_bytes())
+        state = self._line_break_state(pid, page, state)
         measure, characters = [], []
         did = project.get('detection_id')
         if did:
@@ -315,7 +325,35 @@ class PrelayoutStore:
             if not character_path.is_file():
                 raise ValueError('缺少正式單字框資料，請重新偵測')
             characters = validate_character_boxes(read_json(character_path.read_bytes()), page)
+        state.pop('line_break_sources', None)
         return {**page, **state, 'measure': measure, 'character_boxes': characters}
+
+    def _line_break_state(self, pid, page, state):
+        if (state.get('line_break_suggestions_version') == LINE_BREAK_SUGGESTIONS_VERSION
+                or not {'line_break_sources', 'line_break_suggestions'} & state.keys()):
+            return state
+        # Immutable state references key a bounded, read-only lazy-upgrade cache.
+        path = self.directory(pid) / page['state']
+        stat = path.stat()
+        key = (str(path), stat.st_mtime_ns, stat.st_size)
+        with self._guard:
+            cached = self._line_break_cache.get(key)
+            if cached is not None:
+                self._line_break_cache.move_to_end(key)
+                return {**state, **copy.deepcopy(cached[0])}
+        upgraded = upgrade_saved_suggestions(state)
+        metadata = {key: upgraded[key] for key in ('line_break_suggestions', 'line_break_suggestions_version')}
+        size = 4 * sum(len(option['text']) + len(value['original_text'])
+                       for value in metadata['line_break_suggestions'].values() for option in value['candidates'])
+        # A single pathological page may exceed the cache budget; never retain it unboundedly.
+        if size <= 64 * 1024 * 1024:
+            with self._guard:
+                self._line_break_cache[key] = (copy.deepcopy(metadata), size)
+                self._line_break_cache_bytes += size
+                while len(self._line_break_cache) > 32 or self._line_break_cache_bytes > 64 * 1024 * 1024:
+                    _, (_, removed_size) = self._line_break_cache.popitem(last=False)
+                    self._line_break_cache_bytes -= removed_size
+        return {**state, **metadata}
 
     def save_page(self, pid, page_id, revision, items, operation_id):
         with self.lock(pid):
@@ -324,6 +362,7 @@ class PrelayoutStore:
             if page is None:
                 raise KeyError('頁面不存在')
             state = read_json((self.directory(pid) / page['state']).read_bytes())
+            state = self._line_break_state(pid, page, state)
             if operation_id in state.get('operations', []):
                 return self.page(pid, page_id)
             if revision != page['revision']:
@@ -332,7 +371,7 @@ class PrelayoutStore:
             updated = page['revision'] + 1
             relative = f'pages/{page_id}/{updated}-{identifier()}.json'
             operations = (state.get('operations', []) + [operation_id])[-128:]
-            atomic_json(self.directory(pid) / relative, {'revision': updated, 'items': items, 'operations': operations})
+            atomic_json(self.directory(pid) / relative, {**state, 'revision': updated, 'items': items, 'operations': operations})
             page.update(revision=updated, state=relative)
             page.pop('reviewed_revision', None)
             project['revision'] += 1
@@ -404,8 +443,7 @@ class PrelayoutStore:
             items = validate_items(items, page['width'], page['height'])
             revision = page['revision'] + 1
             relative = f'pages/{page["id"]}/{revision}-{identifier()}.json'
-            atomic_json(root / relative, {'revision': revision, 'items': items,
-                                          'operations': state.get('operations', [])})
+            atomic_json(root / relative, {**state, 'revision': revision, 'items': items})
             page.update(revision=revision, state=relative)
             page.pop('reviewed_revision', None)
         atomic_json(root / entry['record'], record)
@@ -581,6 +619,10 @@ class PrelayoutStore:
                        'groups': data.get('groupList', []), 'project_revision': project['revision']}
             if not apply:
                 return summary
+            measures = {}
+            if kind == 'bt' and project.get('detection_id'):
+                output = self.directory(pid) / 'detections' / project['detection_id'] / 'output'
+                measures = read_json((output / 'measure.json').read_bytes()).get('pages', {})
             if kind == 'labelplus':
                 for items in mapping.values():
                     for item in items:
@@ -606,7 +648,13 @@ class PrelayoutStore:
                 items = mapping[page['id']]
                 revision = page['revision'] + 1
                 relative = f'pages/{page["id"]}/{revision}-{identifier()}.json'
-                atomic_json(self.directory(pid) / relative, {'revision': revision, 'items': items, 'operations': []})
+                page_state = {'revision': revision, 'items': items, 'operations': []}
+                if kind == 'bt':
+                    sources = imported_sources(items)
+                    page_state['line_break_sources'] = sources
+                    page_state['line_break_suggestions_version'] = LINE_BREAK_SUGGESTIONS_VERSION
+                    page_state['line_break_suggestions'] = suggestions_for_page(sources, items, page, measures.get(page['name'], []))
+                atomic_json(self.directory(pid) / relative, page_state)
                 page.update(revision=revision, state=relative)
                 page.pop('reviewed_revision', None)
             project['template'] = {k: v for k, v in data.items() if k != 'transMap'}
@@ -756,14 +804,32 @@ class PrelayoutStore:
                 Path(name).unlink(missing_ok=True)
                 raise
 
+    def refresh_imported_line_breaks(self, pid, project, measure):
+        # The caller publishes all new immutable page references with the detection in one manifest.
+        root = self.directory(pid)
+        for page in project['pages']:
+            state = read_json((root / page['state']).read_bytes())
+            if not state.get('line_break_sources'):
+                continue
+            options = suggestions_for_page(state['line_break_sources'], state['items'], page, measure['pages'][page['name']])
+            if state.get('line_break_suggestions') != options:
+                relative = f'pages/{page["id"]}/{page["revision"]}-{identifier()}.json'
+                atomic_json(root / relative, {**state, 'line_break_suggestions': options,
+                                              'line_break_suggestions_version': LINE_BREAK_SUGGESTIONS_VERSION})
+                page['state'] = relative
+
+    def _match_inputs(self, pid, project):
+        if not project.get('detection_id'):
+            raise ValueError('請先完成 CTD 偵測')
+        root = self.directory(pid)
+        measure = read_json((root / 'detections' / project['detection_id'] / 'output/measure.json').read_bytes())
+        original = self.translation(pid)
+        return original, measure, match_translation(original, measure, root / 'originals')
+
     def matches(self, pid):
         with self.lock(pid):
             project = self.read(pid)
-            if not project.get('detection_id'):
-                raise ValueError('請先完成 CTD 偵測')
-            path = self.directory(pid) / 'detections' / project['detection_id'] / 'output' / 'measure.json'
-            original = self.translation(pid)
-            data = match_translation(original, read_json(path.read_bytes()), self.directory(pid) / 'originals')
+            original, _, data = self._match_inputs(pid, project)
             manual = sum(item.get('match_status') == 'manual' for items in original['transMap'].values() for item in items)
             total = sum(len(items) for items in data['transMap'].values())
             return {'project_revision': project['revision'], 'data': data, 'summary': {'manual': manual, 'automatic': total - manual}}
@@ -776,10 +842,11 @@ class PrelayoutStore:
                 raise Conflict('匹配預覽已過期，請重新預覽後再套用')
             if not isinstance(manual, dict) or any(not isinstance(ids, list) or any(not isinstance(i, str) for i in ids) for ids in manual.values()):
                 raise ValueError('手動文字選取格式無效')
-            candidate = self.matches(pid)['data']['transMap']
+            _, measure, candidate = self._match_inputs(pid, project)
             for page in project['pages']:
-                source = read_json((self.directory(pid) / page['state']).read_bytes())['items']
-                matched = candidate.get(page['name'], [])
+                state = read_json((self.directory(pid) / page['state']).read_bytes())
+                source = state['items']
+                matched = candidate['transMap'].get(page['name'], [])
                 if len(source) != len(matched):
                     raise ValueError('匹配輸出與原文字數量不同，未套用')
                 selected = set(manual.get(page['id'], []))
@@ -787,14 +854,21 @@ class PrelayoutStore:
                     raise Conflict('選取文字已不存在，請重新預覽')
                 items = [old if old.get('match_status') == 'manual' and old['_id'] not in selected else {**new, '_id': old['_id']}
                          for old, new in zip(source, matched)]
-                if items == source:
+                options = suggestions_for_page(state.get('line_break_sources', {}), items, page,
+                                               measure.get('pages', {}).get(page['name'], []), use_matches=True)
+                text_changed = items != source
+                if not text_changed and options == state.get('line_break_suggestions', {}):
                     continue
-                items = validate_items(items, page['width'], page['height'])
-                revision = page['revision'] + 1
-                relative = f'pages/{page["id"]}/{revision}-{identifier()}.json'
-                atomic_json(self.directory(pid) / relative, {'revision': revision, 'items': items, 'operations': []})
-                page.update(revision=revision, state=relative)
-                page.pop('reviewed_revision', None)
+                if state.get('line_break_sources'):
+                    state['line_break_suggestions'] = options
+                    state['line_break_suggestions_version'] = LINE_BREAK_SUGGESTIONS_VERSION
+                if text_changed:
+                    page['revision'] += 1
+                    page.pop('reviewed_revision', None)
+                    state.update(revision=page['revision'], items=validate_items(items, page['width'], page['height']), operations=[])
+                relative = f'pages/{page["id"]}/{page["revision"]}-{identifier()}.json'
+                atomic_json(self.directory(pid) / relative, state)
+                page['state'] = relative
             project['revision'] += 1
             self.write(project)
             return project
@@ -861,6 +935,7 @@ class PrelayoutStore:
                 if Path(page['state']).parts[:2] != ('pages', page['id']) or state['revision'] != page['revision']:
                     raise ValueError('封存修訂不一致')
                 state['items'] = validate_items(state['items'], page['width'], page['height'])
+                validate_archived_suggestions(state, page)
                 state['operations'] = []
                 atomic_json(content / page['state'], state)
                 if page.get('clean'):

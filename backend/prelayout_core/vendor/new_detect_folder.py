@@ -931,6 +931,11 @@ def _build_measure_maps(
             else None
         )
         block_items = block_pages.get(page_name, [])
+        source_line_counts = {
+            int(block.get('source_block_index', index)): block['source_line_count']
+            for index, block in enumerate(block_items)
+            if 'source_line_count' in block
+        }
         line_items = line_pages.get(page_name, [])
         line_groups = _line_groups_by_block(block_items, line_items)
 
@@ -1008,6 +1013,7 @@ def _build_measure_maps(
 
             page_items.append({
                 'source_block_index': source_index,
+                **({'source_line_count': source_line_counts[source_index]} if source_index in source_line_counts else {}),
                 'xyxy_pixel': xyxy,
                 'center_normalized': center,
                 'orientation': orientation,
@@ -1774,15 +1780,16 @@ def _detect_pages(
         )
 
         polys = []
-        block_boxes = []
-        for blk in blk_list:
+        block_items = []
+        for index, blk in enumerate(blk_list):
             polys += blk.lines
-            block_boxes.append([int(x) for x in blk.xyxy])
+            block_items.append({
+                **_block_item_from_xyxy(blk.xyxy, im_w, im_h, index),
+                # Keep the detector's ownership before shrinking/reassigning lines.
+                'source_line_count': len(blk.lines),
+            })
 
-        block_map[page_key] = [
-            _block_item_from_xyxy(box, im_w, im_h, index)
-            for index, box in enumerate(block_boxes)
-        ]
+        block_map[page_key] = block_items
 
         component_boxes = _find_component_boxes(mask_refined, polys)
         percentile_items = _shrink_line_polygons(

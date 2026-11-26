@@ -527,6 +527,7 @@ class PrelayoutDetection:
                 page.get('clean') == relative and page.get('clean_kind') == 'inpainted'
                 for page, relative in pending)
             if not published:
+                self.store.refresh_imported_line_breaks(pid, project, measure)
                 for page, relative in pending:
                     page.update(clean=relative, clean_kind='inpainted')
                 for page in project['pages']:

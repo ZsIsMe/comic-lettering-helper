@@ -237,12 +237,12 @@ def _apply_style(entry: dict[str, Any], style: dict[str, Any]) -> None:
     entry[OUTPUT_STROKE_WEIGHT_KEY] = style[OUTPUT_STROKE_WEIGHT_KEY]
 
 
-def _build_page_match_results(
+def match_page_blocks(
     items: list[dict[str, Any]],
     ocr_items: list[dict[str, Any]],
     page_width: int,
     page_height: int,
-    tolerance_px: int,
+    tolerance_px: int = TOLERANCE_PX,
 ) -> list[dict[str, Any]]:
     page_results: list[dict[str, Any]] = []
 
@@ -300,7 +300,7 @@ def collect_unmatched_translate_texts(
             _read_image_size(image_path),
         )
 
-        page_results = _build_page_match_results(
+        page_results = match_page_blocks(
             items,
             ocr_items,
             page_width,
@@ -374,7 +374,7 @@ def build_updated_translate(
         )
         neighbor_dist_limit = _page_diagonal(page_width, page_height) / 4.0
 
-        page_results = _build_page_match_results(
+        page_results = match_page_blocks(
             items,
             ocr_items,
             page_width,

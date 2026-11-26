@@ -45,6 +45,8 @@ def validate_measure(data, pages):
                 raise ValueError('量測框大小無效')
             if 'font_size' in item:
                 number(item['font_size'], '量測字級', .01, 100000)
+            if 'source_line_count' in item and (type(item['source_line_count']) is not int or item['source_line_count'] < 0):
+                raise ValueError('來源行數必須是非負整數')
     return data
 
 
