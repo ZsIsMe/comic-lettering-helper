@@ -282,6 +282,8 @@ class PrelayoutDetection:
             raise ValueError(availability.get('ocr_error') if method == 'ocr_aligned' and availability.get('ocr_error')
                              else '尚未安裝對應模型／字表／字型或推理 Python，請依 README 準備')
         task_options = {'method': method, 'font_size': base, 'step': step}
+        if options.get('bubble_centroid') is True:
+            task_options['bubble_centroid'] = True
         if method == 'ocr_aligned':
             task_options.update(ocr_engine=self.ocr_engine,
                                 ocr_device=availability.get('ocr_device') or configured_ocr_device(self.ocr_engine, self.device))

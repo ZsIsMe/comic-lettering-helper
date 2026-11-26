@@ -205,6 +205,14 @@ def main():
     for phase in phases:
         subprocess.run([sys.executable, '-m', 'prelayout_core.worker', '--task', str(args.task), '--task-id', args.task_id,
                         '--images', str(images), '--phase', phase], check=True)
+    if record['options'].get('bubble_centroid'):
+        progress(folder, 'aligning', 0, len(record['pages']))
+        python = os.environ.get('COMIC_MANGALENS_PYTHON') or os.environ.get('COMIC_DETECTION_PYTHON') or sys.executable
+        # The prelayout wrapper adds its own site-packages to PYTHONPATH. The
+        # isolated detector must use its own torch and ultralytics installation.
+        env = dict(os.environ, PYTHONPATH=str(Path(__file__).resolve().parents[1]))
+        subprocess.run([python, '-m', 'prelayout_core.mangalens', '--images', str(images),
+                        '--device', record.get('device', 'cuda')], env=env, check=True)
     progress(folder, 'publishing', len(record['pages']), len(record['pages']))
     finalize_output(images / 'ctd', record)
     (images / 'ctd').rename(folder / 'output')

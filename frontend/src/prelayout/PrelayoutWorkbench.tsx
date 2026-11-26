@@ -131,6 +131,7 @@ function Workspace({ project: initial, promptDetection, onExit, onReadyToLeave }
   const [groupFontLoading, setGroupFontLoading] = useState<Record<string, boolean>>({})
   const [groupFonts, setGroupFonts] = useState<Record<string, string | null>>({})
   const [groupRevision, setGroupRevision] = useState<number | null>(null), [groupError, setGroupError] = useState('')
+  const [bubbleCentroid, setBubbleCentroid] = useState(false)
   const [method, setMethod] = useState('ocr_aligned'), [fontBase, setFontBase] = useState(24), [fontStep, setFontStep] = useState(2)
   const [clipboard, setClipboard] = useState<Item[]>([]), [memory, setMemory] = useState<Item | null>(null)
   const [fontReady, setFontReady] = useState(false)
@@ -497,9 +498,10 @@ function Workspace({ project: initial, promptDetection, onExit, onReadyToLeave }
       footer={<Button disabled={busy} onClick={() => setDetectionToolsOpen(false)}>關閉</Button>}>
       <div className="pl-detection-tools"><p className="pl-muted">{availability?.methods[method] ? `本地模型已就緒；提交時檢查 ${availability.device === 'mps' ? 'Apple GPU（MPS）' : 'CUDA GPU'}` : '尚未準備模型；可繼續人工編輯。'}</p>
           <Select aria-label="字級計算方式" value={method} onChange={setMethod} options={detectionMethodOptions} />
+          <Checkbox checked={bubbleCentroid} onChange={e => setBubbleCentroid(e.target.checked)}>用 MangaLens 泡身質心定位</Checkbox>
           <div className="pl-two-fields"><label>{method === 'fixed' ? '固定字級' : '預設字級'}<InputNumber aria-label={method === 'fixed' ? '固定字級' : '預設字級'} value={fontBase} min={1} max={999} onChange={v => v !== null && setFontBase(v)} /></label><label>字級步長<InputNumber aria-label="字級步長" disabled={method === 'fixed'} value={fontStep} min={.1} max={100} onChange={v => v !== null && setFontStep(v)} /></label></div>
           {method === 'fixed' && <p className="pl-muted">保留文字框對齊與去字預覽；跳過 OCR、逐字框分析及字級校準。</p>}
-          <Button disabled={!availability?.methods[method] || !!availability?.gpu_owner || activeDetection(task)} onClick={() => void execute(async () => { setTask(await request<Detection>(`${projectPath(project.id)}/detections`, body({ method, font_size: fontBase, step: fontStep }))) })}>{method === 'fixed' ? '生成 CTD／固定字級' : '生成 CTD／字級'}</Button>
+          <Button disabled={!availability?.methods[method] || !!availability?.gpu_owner || activeDetection(task)} onClick={() => void execute(async () => { setTask(await request<Detection>(`${projectPath(project.id)}/detections`, body({ method, font_size: fontBase, step: fontStep, bubble_centroid: bubbleCentroid }))) })}>{method === 'fixed' ? '生成 CTD／固定字級' : '生成 CTD／字級'}</Button>
           {task && <p>{task.state === 'measuring' && task.options?.method === 'fixed' ? '整理文字框' : ({ queued: '等候開始', validating: '檢查環境', detecting: '偵測文字', aligning: '對齊文字框', measuring: '量測字框', previewing: '生成去字預覽', calibrating: '計算字級', publishing: '保存偵測結果', completed: '偵測完成', failed: '偵測失敗', cancelling: '正在停止', cancelled: '已取消', recovery_required: '恢復任務中' } as Record<string, string>)[task.state] || task.state}{task.progress ? ` · ${task.progress.completed}／${task.progress.total} 頁` : ''} · {task.message}</p>}{activeDetection(task) && <Button danger onClick={() => void execute(async () => { setTask(await request<Detection>(`${projectPath(project.id)}/detections/cancel`, body({}))) })}>取消偵測</Button>}
           {task && <Button onClick={() => void execute(async () => {
             const response = await fetch(`${projectPath(project.id)}/detections/${task.id}/log`)
@@ -527,11 +529,12 @@ function Workspace({ project: initial, promptDetection, onExit, onReadyToLeave }
       okButtonProps={{ disabled: !availability?.methods[method] || !!availability?.gpu_owner || activeDetection(task) }}
       onCancel={() => { if (!busy) setDetectOpen(false) }} onOk={() => void execute(async () => {
         if (!await controller.flush()) return
-        setTask(await request<Detection>(`${projectPath(project.id)}/detections`, body({ method, font_size: fontBase, step: fontStep })))
+        setTask(await request<Detection>(`${projectPath(project.id)}/detections`, body({ method, font_size: fontBase, step: fontStep, bubble_centroid: bubbleCentroid })))
         setDetectOpen(false)
       })}>
       <p>{method === 'fixed' ? '識別整個項目的文字框，直接套用固定字級；不執行 OCR、逐字框分析或字級校準。' : '識別整個項目的文字框與字級。完成後匯入 LP.txt，會自動匹配譯文。'}</p>
       <Select aria-label="CTD 識別方式" value={method} onChange={setMethod} options={detectionMethodOptions} />
+          <Checkbox checked={bubbleCentroid} onChange={e => setBubbleCentroid(e.target.checked)}>用 MangaLens 泡身質心定位</Checkbox>
       {method === 'fixed' && <label className="pl-detection-fixed-size">固定字級<InputNumber aria-label="固定字級" value={fontBase} min={1} max={999} onChange={value => value !== null && setFontBase(value)} /></label>}
       <p>{!availability ? '正在檢查識別環境…' : !availability.methods[method] ? '尚未準備模型，可稍後再識別。' : availability.gpu_owner ? 'GPU 正忙，請稍後開始。' : '識別環境已就緒。'}</p>
       {error && <Alert type="error" message={error} />}
