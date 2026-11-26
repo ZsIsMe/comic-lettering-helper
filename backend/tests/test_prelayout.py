@@ -1,6 +1,7 @@
 import asyncio
 import io
 import json
+import os
 import zipfile
 from pathlib import Path
 
@@ -548,6 +549,7 @@ def test_archive_validates_formal_characters_without_raw_debug(store, project):
     assert store.page(imported['id'], imported['pages'][0]['id'])['character_boxes'] == chars
 
 
+@pytest.mark.skipif(os.name == 'nt', reason='POSIX signals; Windows Job Object equivalent below')
 def test_live_recovery_process_group_keeps_gpu_until_children_exit(store, project):
     """An actual child ignoring TERM must not leave the gate free while still running."""
     import os
@@ -611,11 +613,13 @@ def test_preview_decode_does_not_hold_edit_lock(store, project, monkeypatch):
 
 
 @pytest.mark.parametrize('device', ['cuda', 'mps'])
-def test_real_worker_missing_models_fails_without_publishing(store, project, tmp_path, monkeypatch, device):
+@pytest.mark.parametrize('comfy_mode', ['managed', 'standalone'])
+def test_real_worker_missing_models_fails_without_publishing(store, project, tmp_path, monkeypatch, device, comfy_mode):
     import sys
     monkeypatch.setenv('COMIC_PRELAYOUT_MODEL_ROOT', str(tmp_path / 'missing-models'))
     monkeypatch.setenv('COMIC_PRELAYOUT_PYTHON', sys.executable)
     monkeypatch.setenv('COMIC_PRELAYOUT_DEVICE', device)
+    monkeypatch.setenv('COMIC_PRELAYOUT_COMFY_MODE', comfy_mode)
     detector = PrelayoutDetection(Settings(app_root=Path(__file__).resolve().parents[2]), store, ResourceGate())
     # Simulate assets disappearing between the lightweight availability check and worker startup.
     monkeypatch.setattr(detector, 'availability', lambda: {'methods': {'single_char': True}})
@@ -624,6 +628,7 @@ def test_real_worker_missing_models_fails_without_publishing(store, project, tmp
     async def scenario():
         record = await detector.submit(project['id'], {'method': 'single_char', 'device': 'cpu'})
         assert record['device'] == device  # Requests cannot override the server GPU configuration.
+        assert record['comfy_mode'] == comfy_mode
         await asyncio.wait_for(detector.tasks[project['id']], 15)
         state = detector.status(project['id'])
         assert state['state'] == 'failed'
@@ -631,9 +636,10 @@ def test_real_worker_missing_models_fails_without_publishing(store, project, tmp
         assert not detector.process_alive(state)
         assert detector.gate.owner is None
         assert store.read(project['id'])['detection_id'] is None
-        assert '缺少資產' in (detector.task_path(project['id'], record['id']).parent / 'worker.log').read_text()
-        assert bool(comfy_calls) == (device == 'cuda')
+        assert '缺少資產' in (detector.task_path(project['id'], record['id']).parent / 'worker.log').read_text(encoding='utf-8')
+        assert bool(comfy_calls) == (device == 'cuda' and comfy_mode == 'managed')
     asyncio.run(scenario())
+
 
 
 def test_device_defaults_to_cuda_and_rejects_cpu(store, project, monkeypatch):
@@ -702,3 +708,172 @@ def test_selected_font_preserved_through_save_reload_and_json_export(store, proj
         assert exported['transMap'][page['name']][0]['font'] == name
     store.import_translation(pid, json.dumps(exported).encode(), 'bt', store.read(pid)['revision'], True)
     assert store.translation(pid)['transMap'] == exported['transMap']
+
+
+def test_comfy_mode_defaults_managed_and_rejects_invalid(store, monkeypatch):
+    monkeypatch.delenv('COMIC_PRELAYOUT_COMFY_MODE', raising=False)
+    assert PrelayoutDetection(Settings(), store, ResourceGate()).comfy_mode == 'managed'
+    for value in ('', 'automatic', 'false', 'standalon'):
+        monkeypatch.setenv('COMIC_PRELAYOUT_COMFY_MODE', value)
+        with pytest.raises(ValueError, match='managed 或 standalone'):
+            PrelayoutDetection(Settings(), store, ResourceGate())
+
+
+
+@pytest.mark.skipif(os.name != 'nt', reason='Windows kernel Job Object integration')
+@pytest.mark.parametrize('parent_exits', [False, True])
+@pytest.mark.parametrize('persisted_pid', [False, True])
+def test_windows_job_recovery_and_cancel_waits_for_whole_tree(store, project, parent_exits, persisted_pid):
+    """A generic child stays in the UUID job after its worker and Web handles exit."""
+    import subprocess
+    import sys
+    import psutil
+    from prelayout_core.windows_job import WindowsJob
+    did = identifier('d')
+    job = WindowsJob.create(did)
+    code = '''import subprocess,sys,time
+from prelayout_core.windows_job import WindowsJob, start_guard
+with WindowsJob.open(sys.argv[1]) as job:
+    job.assign_current()
+    start_guard(sys.argv[1])
+    child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)'], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    print(child.pid, flush=True)
+    if sys.argv[2] == 'False': time.sleep(60)
+'''
+    env = os.environ.copy()
+    env['PYTHONPATH'] = str(Path(__file__).resolve().parents[1])
+    # The exact module and task arguments simulate only the pre-model bootstrap.
+    # Windows venv redirectors add their own kill-on-close job. Use the real
+    # interpreter here so parent exit actually leaves live orphans to recover.
+    process = subprocess.Popen([sys._base_executable, '-c', code, did, str(parent_exits), 'prelayout_core.worker', '--task-id', did],
+                               env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    child_pid = None
+    detector = PrelayoutDetection(Settings(), store, ResourceGate())
+    try:
+        line = process.stdout.readline().strip()
+        assert line, process.stderr.read() if process.poll() is not None else 'worker did not start'
+        child_pid = int(line)
+        created = psutil.Process(process.pid).create_time() if not parent_exits else None
+        if parent_exits:
+            assert process.wait(timeout=5) == 0
+        folder = store.directory(project['id']) / 'detections' / did
+        record = {'id': did, 'project_id': project['id'], 'created_at': '2026-10-15', 'state': 'detecting'}
+        if persisted_pid:
+            record.update(pid=process.pid, process_created_at=created)
+        atomic_json(folder / 'task.json', record)
+        job.close()  # Simulate Web crashing: named job survives through its members.
+        assert detector.process_alive(record, verify=True)
+        async def scenario():
+            await detector.start()
+            assert detector.gate.owner == did
+            assert not detector.gate.claim('repair')
+            assert detector.status(project['id'])['state'] == 'recovery_required'
+            await detector.cancel(project['id'])
+            await asyncio.wait_for(detector.tasks[project['id']], 5)
+            assert not detector.process_alive(record)
+            assert detector.gate.owner is None
+            assert detector.status(project['id'])['state'] == 'cancelled'
+        asyncio.run(scenario())
+        assert not psutil.pid_exists(child_pid)
+    finally:
+        remaining = WindowsJob.open(did)
+        if remaining:
+            with remaining:
+                remaining.terminate()
+        job.close()
+        process.wait(timeout=5)
+        process.stdout.close()
+        process.stderr.close()
+
+
+
+@pytest.mark.skipif(os.name != 'nt', reason='Windows process identity and conservative recovery')
+def test_windows_inspection_failure_keeps_gpu_and_never_kills_pid(store, project, monkeypatch):
+    from prelayout_core.windows_job import WindowsJob
+    detector = PrelayoutDetection(Settings(), store, ResourceGate())
+    did = identifier('d')
+    record = {'id': did, 'project_id': project['id'], 'pid': os.getpid(), 'created_at': '2026-10-15', 'state': 'detecting'}
+    atomic_json(detector.task_path(project['id'], did), record)
+    def denied(*args): raise PermissionError('synthetic job access denial')
+    with monkeypatch.context() as patch:
+        patch.setattr(WindowsJob, 'open', denied)
+        assert detector.process_alive(record)
+        assert not detector.process_alive(record, verify=True)
+        async def scenario():
+            await detector.start()
+            assert detector.gate.owner == did
+            with pytest.raises(Conflict, match='保留 GPU'):
+                await detector.cancel(project['id'])
+            assert detector.gate.owner == did
+            detector.tasks[project['id']].cancel()
+            await asyncio.gather(detector.tasks[project['id']], return_exceptions=True)
+            assert detector.gate.owner == did
+        asyncio.run(scenario())
+    # A stale PID belonging to this unrelated pytest process is never terminated.
+    assert not detector.process_alive(record)
+    asyncio.run(detector.cancel(project['id']))
+
+
+
+@pytest.mark.skipif(os.name != 'nt', reason='Windows venv redirector and guard exit integration')
+@pytest.mark.parametrize('root_environment', ['venv', 'base'])
+def test_windows_venv_worker_guard_exits_after_last_real_member(root_environment):
+    import subprocess
+    import sys
+    import time
+    from prelayout_core.windows_job import WindowsJob
+    did = identifier('d')
+    job = WindowsJob.create(did)
+    env = os.environ.copy()
+    env['PYTHONPATH'] = str(Path(__file__).resolve().parents[1])
+    code = '''import sys,time
+from prelayout_core.windows_job import WindowsJob,start_guard
+sys.executable = sys.argv[2]
+with WindowsJob.open(sys.argv[1]) as job:
+    job.assign_current()
+    guard = start_guard(sys.argv[1])
+    print(guard.pid, flush=True)
+    time.sleep(.3)
+'''
+    # Also isolate a surviving venv guard from the outer venv redirector's own
+    # kill-on-close behavior: with the base root, the old launcher pair hangs.
+    executable = sys.executable if root_environment == 'venv' else sys._base_executable
+    process = subprocess.Popen([executable, '-c', code, did, sys.executable], env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+    try:
+        assert process.stdout.readline().strip().isdigit()
+        job.close()  # Web handle gone; worker and guard must finish independently.
+        assert process.wait(timeout=5) == 0, process.stderr.read()
+        deadline = time.monotonic() + 5
+        while time.monotonic() < deadline:
+            remaining = WindowsJob.open(did)
+            if remaining is None:
+                break
+            remaining.close()
+            time.sleep(.05)
+        else:
+            pytest.fail('Guard kept the named job alive after the worker exited')
+    finally:
+        remaining = WindowsJob.open(did)
+        if remaining:
+            with remaining:
+                remaining.terminate()
+        job.close()
+        process.wait(timeout=5)
+        process.stdout.close()
+        process.stderr.close()
+
+
+
+@pytest.mark.skipif(os.name != 'nt', reason='Windows PID reuse check')
+def test_windows_handoff_rejects_reused_pid(store, monkeypatch):
+    import psutil
+    detector = PrelayoutDetection(Settings(), store, ResourceGate())
+    did = identifier('d')
+    class Reused:
+        pid = 12345
+        info = {'name': 'python.exe'}
+        def cmdline(self): return ['python.exe', '-m', 'prelayout_core.worker', '--task-id', did]
+        def create_time(self): return 200.0
+    monkeypatch.setattr(psutil, 'process_iter', lambda *args: [Reused()])
+    assert detector.windows_workers({'id': did, 'pid': 12345, 'process_created_at': 100.0}) == []
+    assert len(detector.windows_workers({'id': did, 'pid': 12345, 'process_created_at': 200.0})) == 1

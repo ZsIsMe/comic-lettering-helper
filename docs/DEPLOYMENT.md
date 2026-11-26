@@ -10,6 +10,8 @@
 
 # Python 預排版匯入工具
 
+Windows 本機可使用 `.venv\Scripts\python.exe` 啟動匯入工具。獨立 CUDA 預排版可設定 `COMIC_PRELAYOUT_COMFY_MODE=standalone`，沿用本機模型和隔離推理 Python。其他程序的 GPU 使用須由各自的應用協調。Windows Web 環境按 `backend/requirements.txt` 安裝 `psutil`。
+
 `scripts/import_prelayout.py` 與 `.agents/skills/prelayout-import/` 隨工程保存，使用專案 `.venv/bin/python` 和既有 Pillow／預排版解析器，無需新增模型或 MCP 服務。先啟動既有 6008；本機入口為 `./scripts/start-local.sh --no-open`。預設連線 `http://127.0.0.1:6008`，`--base-url` 可指定已有服務，不自行開關 AutoDL 或重啟服務。
 
 圖片路徑與可選譯稿路徑屬於執行腳本的機器，檔案經既有 multipart API 上傳。`--check-only` 先檢查輸入及 OCR／GPU 可用性；無卡或 GPU 忙碌時停止，不降低計算方式。續作紀錄在本機忽略目錄 `var/prelayout-imports/`，應與該次輸入一起保留；未知寫入結果不得靠刪紀錄重跑。工具不需要部署前後端資產、不變更 ComfyUI，也不代表 AutoDL CUDA 推理已驗證。

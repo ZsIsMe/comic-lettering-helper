@@ -14,10 +14,31 @@ from pathlib import Path
 from prelayout_core.data import identifier, read_json, validate_measure
 from prelayout_core.characters import validate_character_boxes
 from prelayout_core.preview import load_overlay
+from prelayout_core.windows_job import WindowsJob
 from .store import Conflict, atomic_json, now
 
 ACTIVE = {'queued', 'validating', 'detecting', 'aligning', 'measuring', 'previewing', 'calibrating', 'publishing', 'cancelling', 'recovery_required'}
 logger = logging.getLogger(__name__)
+
+
+def _windows_progress_read_conflict(path):
+    """Distinguish CRT EACCES from a persistent Windows access denial."""
+    if os.name != 'nt':
+        return False
+    import ctypes
+    from ctypes import wintypes
+    api = ctypes.WinDLL('kernel32', use_last_error=True)
+    api.CreateFileW.argtypes = [wintypes.LPCWSTR, wintypes.DWORD, wintypes.DWORD, ctypes.c_void_p,
+                               wintypes.DWORD, wintypes.DWORD, wintypes.HANDLE]
+    api.CreateFileW.restype = wintypes.HANDLE
+    api.CloseHandle.argtypes = [wintypes.HANDLE]
+    # Native diagnostics retain ERROR_SHARING_VIOLATION; Python's CRT open
+    # otherwise reports the same errno 13 for sharing and access denial.
+    handle = api.CreateFileW(str(path), 0x80000000, 7, None, 3, 0x80, None)
+    if handle == ctypes.c_void_p(-1).value:
+        return ctypes.get_last_error() in (32, 33)
+    api.CloseHandle(handle)
+    return True  # A successful reopen proves that the original denial was transient.
 
 
 class PrelayoutDetection:
@@ -29,9 +50,13 @@ class PrelayoutDetection:
         self.display_font = Path(display_font).expanduser() if display_font else self.models / 'NotoSansCJKjp-Medium.otf'
         self.python = os.getenv('COMIC_PRELAYOUT_PYTHON', '')
         self.device = os.getenv('COMIC_PRELAYOUT_DEVICE', 'cuda').strip().lower()
+        self.comfy_mode = os.getenv('COMIC_PRELAYOUT_COMFY_MODE', 'managed').strip().lower()
+        if self.comfy_mode not in ('managed', 'standalone'):
+            raise ValueError('COMIC_PRELAYOUT_COMFY_MODE 只接受 managed 或 standalone')
         self.tasks, self.processes = {}, {}
         self.cleanup_task = None
         self._cleanup_stopping = False
+        self.windows_jobs = {}
 
     def availability(self):
         files = {'ctd': 'comictextdetector.pt', 'ocr': 'mit48pxctc_ocr.ckpt', 'alphabet': 'alphabet-all-v5.txt',
@@ -50,7 +75,7 @@ class PrelayoutDetection:
             display_font_available = False
             font_version = ''
         supported = self.device in ('cuda', 'mps')
-        return {'assets': present, 'runtime': runtime, 'device': self.device,
+        return {'assets': present, 'runtime': runtime, 'device': self.device, 'comfy_mode': self.comfy_mode,
                 'methods': {'fixed': supported and runtime and present['ctd'],
                             'single_char': supported and runtime and present['ctd'],
                             'ocr_aligned': supported and runtime and all(present.values())}, 'gpu_owner': self.gate.owner,
@@ -67,10 +92,24 @@ class PrelayoutDetection:
         for path in (directory / 'detections').glob('d_*/task.json'):
             record = read_json(path.read_bytes())
             if recover and record['state'] in ACTIVE and not record.get('pid'):
-                record['pid'] = self.discover_process(record)
+                try:
+                    record['pid'] = self.discover_process(record)
+                except Conflict:
+                    if os.name != 'nt':
+                        raise
+                    # process_alive repeats inspection and conservatively retains
+                    # the gate; a failed scan is not an absent worker.
+                    record['pid'] = None
             progress_path = path.parent / 'progress.json'
             if record['state'] in ACTIVE - {'cancelling', 'recovery_required'} and progress_path.exists():
-                record.update(read_json(progress_path.read_bytes()))
+                try:
+                    progress = progress_path.read_bytes()
+                except PermissionError:
+                    if not _windows_progress_read_conflict(progress_path):
+                        raise
+                    # Progress is advisory; task.json retains the authoritative state.
+                else:
+                    record.update(read_json(progress))
             records.append(record)
         return max(records, key=lambda r: r['created_at']) if records else None
 
@@ -92,6 +131,12 @@ class PrelayoutDetection:
     def discover_process(self, record):
         # A crash can occur after spawn but before task.json receives the PID.
         # Locate only our worker with this random task ID, never an unrelated Python job.
+        if os.name == 'nt':
+            workers = self.windows_workers(record)
+            if workers:
+                record['process_created_at'] = workers[0].create_time()
+                return workers[0].pid
+            return None
         try:
             output = subprocess.check_output(['ps', '-axo', 'pgid=,stat=,command='], text=True, stderr=subprocess.DEVNULL)
         except (OSError, subprocess.SubprocessError) as exc:
@@ -102,7 +147,76 @@ class PrelayoutDetection:
                 return int(fields[0])
         return None
 
+    def windows_workers(self, record):
+        """Find only exact worker UUID arguments during the spawn/job handoff.
+
+        PID alone is never an identity. Job membership handles all descendants;
+        this scan covers a Web crash before the worker joins its named job.
+        """
+        import psutil
+        found = []
+        try:
+            for process in psutil.process_iter(['name']):
+                if not (process.info['name'] or '').lower().startswith(('python', 'pypy')):
+                    continue
+                try:
+                    args = process.cmdline()
+                    if 'prelayout_core.worker' not in args or '--task-id' not in args:
+                        continue
+                    index = args.index('--task-id')
+                    if index + 1 < len(args) and args[index + 1] == record['id']:
+                        # If a recorded PID has been reused, it cannot establish
+                        # the old root's identity, even with a copied command.
+                        created = record.get('process_created_at')
+                        if process.pid == record.get('pid') and created is not None and process.create_time() != created:
+                            continue
+                        found.append(process)
+                except psutil.NoSuchProcess:
+                    continue
+        except (psutil.Error, OSError) as exc:
+            raise Conflict('無法確認 Windows 偵測程序身分；保留 GPU 占用') from exc
+        return found
+
+    def windows_alive(self, record):
+        job = WindowsJob.open(record['id'])
+        if job:
+            with job:
+                if job.active_count():
+                    return True
+        return bool(self.windows_workers(record))
+
+    async def terminate_windows_job(self, record, process=None):
+        try:
+            job = await asyncio.to_thread(WindowsJob.open, record['id'])
+            if job:
+                with job:
+                    # UUID-scoped kernel membership cannot select a reused PID.
+                    await asyncio.to_thread(job.terminate)
+                    deadline = asyncio.get_running_loop().time() + 10
+                    while await asyncio.to_thread(job.active_count):
+                        if asyncio.get_running_loop().time() >= deadline:
+                            raise Conflict('Windows 偵測子程序尚未全部退出；保留 GPU 占用')
+                        await asyncio.sleep(.1)
+            if await asyncio.to_thread(self.windows_workers, record):
+                # An unassigned worker cannot run models: worker startup requires
+                # opening/joining this job first. Do not kill an unverified PID.
+                deadline = asyncio.get_running_loop().time() + 3
+                while await asyncio.to_thread(self.windows_workers, record):
+                    if asyncio.get_running_loop().time() >= deadline:
+                        raise Conflict('等待 Windows worker 完成程序群組交接；保留 GPU 占用')
+                    await asyncio.sleep(.1)
+            if process:
+                await asyncio.wait_for(process.wait(), 3)
+        except (OSError, asyncio.TimeoutError) as exc:
+            raise Conflict('無法確認 Windows 偵測程序已全部退出；保留 GPU 占用') from exc
+
     def process_alive(self, record, verify=False):
+        if os.name == 'nt':
+            try:
+                return self.windows_alive(record)
+            except (OSError, Conflict):
+                # An inspection error must never free a possibly occupied GPU.
+                return not verify
         group = record.get('pid')
         if not isinstance(group, int) or group <= 1:
             return False
@@ -129,6 +243,9 @@ class PrelayoutDetection:
                 return True
 
     async def terminate_group(self, record, process=None):
+        if os.name == 'nt':
+            await self.terminate_windows_job(record, process)
+            return
         group = record.get('pid')
         if not group:
             return
@@ -173,7 +290,11 @@ class PrelayoutDetection:
                     continue
                 if await asyncio.to_thread(self.process_alive, record):
                     self.gate.retain(record['id'])
-                    self.update(pid, record['id'], pid=record['pid'], state='recovery_required', message='保留執行中的偵測程序，等待結束後恢復結果')
+                    self.update(
+                        pid, record['id'], pid=record.get('pid'),
+                        process_created_at=record.get('process_created_at'),
+                        state='recovery_required', message='保留執行中的偵測程序，等待結束後恢復結果',
+                    )
                     self.tasks[pid] = asyncio.create_task(self._watch_recovered(pid, record))
                 else:
                     try:
@@ -277,7 +398,7 @@ class PrelayoutDetection:
             try:
                 folder = self.store.directory(pid) / 'detections' / did
                 folder.mkdir(parents=True)
-                record = {'id': did, 'project_id': pid, 'state': 'queued', 'created_at': now(), 'device': self.device,
+                record = {'id': did, 'project_id': pid, 'state': 'queued', 'created_at': now(), 'device': self.device, 'comfy_mode': self.comfy_mode,
                           'cleanup_input_after_publish': True,
                           'options': {'method': method, 'font_size': base, 'step': step},
                           'pages': [{key: page[key] for key in ('id', 'name', 'width', 'height', 'sha256')} for page in project['pages']]}
@@ -298,7 +419,7 @@ class PrelayoutDetection:
             self.update(pid, did, state='validating', message=f'檢查 {device.upper()} 與模型環境')
             # Explicit local Apple GPU runs do not depend on a separate CUDA/ComfyUI service.
             # The process-wide reservation still serializes all application model jobs.
-            if device == 'cuda':
+            if device == 'cuda' and self.status(pid).get('comfy_mode', 'managed') == 'managed':
                 await asyncio.to_thread(self.free_comfy)
             if self.status(pid)['state'] == 'cancelling':
                 self.update(pid, did, state='cancelled', message='已取消')
@@ -309,12 +430,25 @@ class PrelayoutDetection:
             if device == 'mps':
                 env['PYTORCH_ENABLE_MPS_FALLBACK'] = '0'
             env['PYTHONPATH'] = str(Path(__file__).resolve().parents[2])
+            env['PYTHONUTF8'] = '1'
+            spawn_options = {'start_new_session': True} if os.name != 'nt' else {'creationflags': subprocess.CREATE_NO_WINDOW}
+            windows_args = []
+            if os.name == 'nt':
+                self.windows_jobs[did] = WindowsJob.create(did)
+                windows_args = ['--windows-job']
             with (folder / 'worker.log').open('wb') as output:
                 process = await asyncio.create_subprocess_exec(self.python, '-m', 'prelayout_core.worker', '--task', str(folder / 'task.json'), '--task-id', did,
-                                                              '--images', str(self.store.directory(pid) / 'originals'), cwd=self.settings.app_root,
-                                                              env=env, stdout=output, stderr=output, start_new_session=True)
+                                                              '--images', str(self.store.directory(pid) / 'originals'), *windows_args, cwd=self.settings.app_root,
+                                                              env=env, stdout=output, stderr=output, **spawn_options)
                 self.processes[pid] = process
-                self.update(pid, did, pid=process.pid)
+                identity = {}
+                if os.name == 'nt':
+                    import psutil
+                    try:
+                        identity['process_created_at'] = psutil.Process(process.pid).create_time()
+                    except psutil.NoSuchProcess:
+                        pass  # A fast failure is checked by the job and exit code.
+                self.update(pid, did, pid=process.pid, **identity)
                 if self.status(pid)['state'] == 'cancelling':
                     await self.terminate_group(self.status(pid), process)
                 code = await process.wait()
@@ -341,6 +475,10 @@ class PrelayoutDetection:
                 self.tasks[pid] = asyncio.create_task(self._watch_recovered(pid, record))
             else:
                 self.gate.release(did)
+            finally:
+                job = self.windows_jobs.pop(did, None)
+                if job:
+                    job.close()
 
     def publish(self, pid, did, *, cleanup=True):
         with self.store.lock(pid):

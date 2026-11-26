@@ -9,6 +9,7 @@ import re
 import shutil
 import tempfile
 import threading
+import time
 import zipfile
 from contextlib import contextmanager
 from datetime import datetime, timezone
@@ -33,6 +34,27 @@ def now():
     return datetime.now(timezone.utc).isoformat()
 
 
+_IS_WINDOWS = os.name == 'nt'
+# A short-lived reader without FILE_SHARE_DELETE can temporarily block replace.
+# Keep the old file intact; retry only Windows access/sharing/lock violations.
+_REPLACE_RETRY_DELAYS = (.01, .02, .04, .08, .1, .15, .2, .3)
+
+
+def _replace_json(temporary, path):
+    delays = iter(_REPLACE_RETRY_DELAYS)
+    while True:
+        try:
+            os.replace(temporary, path)
+            return
+        except OSError as exc:
+            if not _IS_WINDOWS or getattr(exc, 'winerror', None) not in (5, 32, 33):
+                raise
+            delay = next(delays, None)
+            if delay is None:
+                raise
+            time.sleep(delay)
+
+
 def atomic_json(path, value):
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -43,7 +65,7 @@ def atomic_json(path, value):
             stream.write(payload)
             stream.flush()
             os.fsync(stream.fileno())
-        os.replace(temporary, path)
+        _replace_json(temporary, path)
     finally:
         Path(temporary).unlink(missing_ok=True)
 

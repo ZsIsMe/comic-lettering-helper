@@ -10,6 +10,8 @@
 
 ## Python 預排版匯入客戶端
 
+續作紀錄鎖在 Windows 使用檔案區段鎖，在 Unix 使用 `flock`。Windows 的 OCR 工作程序及模型子程序在同一個 Windows Job Object 內追蹤。明確設定 `COMIC_PRELAYOUT_COMFY_MODE=standalone` 可使用獨立 CUDA，仍須取得應用的 GPU gate。
+
 `scripts/import_prelayout.py` 是既有 `/api/prelayout` 的客戶端，專案 Skill 位於 `.agents/skills/prelayout-import/`。它先驗證來源圖片與可選譯稿，再串行呼叫建立項目、OCR 偵測、譯稿預覽／套用及匹配預覽／套用，沿用後端 GPU gate、不可變頁面修訂與 expected_revision 檢查。沒有譯稿時只準備原圖與 OCR 量測，不生成文字框。最終透過 API 讀回驗證文字與匹配統計，不直接修改伺服器資料。
 
 原圖／譯稿指紋、項目與任務 ID 及步驟保存在本機 `var/prelayout-imports/`。每次寫入請求前先原子記錄 pending；既有 API 不具備匯入用操作冪等鍵，結果無法確認時停止而非自動重送。正常輪詢中斷可沿用已知 OCR 任務續作，完成後重跑只核驗；不自動取消 OCR、不覆蓋後續人工編輯、不標記校對完成。服務 API、模型、工作流及前端不變。

@@ -64,6 +64,8 @@ RF、MangaLens、CTD、OCR 的用途、下載地址、配套字表／字型、�
 
 ## Python 預排版匯入與 OCR 準備
 
+Windows 可用 `.venv\Scripts\python.exe` 執行匯入工具。本機只使用獨立 CUDA 預排版時，可將 `COMIC_PRELAYOUT_COMFY_MODE` 設為 `standalone`，並配置既有的 OCR 模型與推理 Python。
+
 在本機服務已啟動後，可用專案內的 `prelayout-import` Skill 或 Python 腳本建立獨立項目，依序完成原圖匯入、OCR 對齊逐字計算、可選的 JSON／LabelPlus TXT 譯稿匯入及自動匹配：
 
 ```bash

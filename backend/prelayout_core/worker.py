@@ -9,6 +9,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+from contextlib import nullcontext
 from pathlib import Path
 
 from PIL import Image
@@ -174,7 +175,22 @@ def main():
     parser.add_argument('--task-id', required=True)
     parser.add_argument('--images', type=Path, required=True)
     parser.add_argument('--phase', choices=['ctd', 'ocr'])
+    parser.add_argument('--windows-job', action='store_true')
     args = parser.parse_args()
+    # Join before importing/loading any model or creating any child. If Web died
+    # before opening the job, fail safely instead of running an untracked GPU job.
+    from .windows_job import WindowsJob, start_guard
+    job = WindowsJob.open(args.task_id) if args.windows_job else None
+    if args.windows_job and job is None:
+        raise RuntimeError('Windows prelayout job no longer exists')
+    with job if job else nullcontext():
+        if job:
+            job.assign_current()
+            start_guard(args.task_id)
+        run(args)
+
+
+def run(args):
     record = load(args.task)
     if record['id'] != args.task_id: raise ValueError('任務 ID 不符')
     folder = args.task.parent
