@@ -44,6 +44,7 @@ TEXT_BRIGHT_MIN = 200
 TEXT_TONE_MARGIN = 0.06
 OUTLINE_OUTER_MARGIN_MIN = 0.18
 OUTLINE_INNER_MARGIN_MIN = 0.06
+TEXT_BACKGROUND_TONE_MIN = 0.90
 MIN_TONE_PIXELS = 20
 
 
@@ -313,6 +314,29 @@ def _text_style(image_bgr: np.ndarray, text_mask: np.ndarray) -> dict[str, Any] 
         )
 
     text_color = inner_stats.color if text_has_stroke and inner_stats is not None else raw_stats.color
+    if text_has_stroke:
+        background = gray[text_mask == 0]
+        bright_background_pixels = np.count_nonzero(background >= WHITE_DOMINANT_MIN)
+        dark_background_pixels = np.count_nonzero(background <= 255 - WHITE_DOMINANT_MIN)
+        uniform_background = (
+            background.size >= MIN_TONE_PIXELS
+            and max(bright_background_pixels, dark_background_pixels) >= background.size * TEXT_BACKGROUND_TONE_MIN
+        )
+        if uniform_background:
+            # On clean white/black paper, gaps between strokes inside a broad
+            # CTD mask can imitate an outlined fill. Verify the deepest pixels
+            # before allowing the middle band to override the ink color. Gray
+            # and screened backgrounds keep the existing outline analysis.
+            core_mask = np.where((dist >= inner_limit) & (text_mask > 0), 255, 0).astype(np.uint8)
+            core_stats = _tone_stats(gray, core_mask)
+            text_has_stroke = (
+                core_stats is not None
+                and core_stats.color == inner_stats.color
+                and core_stats.margin >= OUTLINE_OUTER_MARGIN_MIN
+                and core_stats.pixels >= min_inner_pixels
+            )
+            if not text_has_stroke:
+                text_color = 'black' if bright_background_pixels > dark_background_pixels else 'white'
     return {
         'fg_color_rgb': list(_rgb_from_text_color(text_color)),
         'text_color': text_color,
