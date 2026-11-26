@@ -1,3 +1,15 @@
+# CharSpot 預排版 OCR（本機整合，CUDA 待驗收）
+
+先把官方 CharSpot-small revision `72ca29202673880ca9c67b1c02c107535be4472b` 的完整資產與授權檔放入 `<COMIC_PRELAYOUT_MODEL_ROOT>/manga-ocr-charspot-small/`，再在隔離推理環境安裝更新的 `backend/requirements-prelayout.txt`。資產與 SHA-256 清單見 [MODEL_GUIDE.md](MODEL_GUIDE.md)。權重為 CC BY-NC-SA 4.0，程式為 Apache-2.0。
+
+本機設定 `COMIC_PRELAYOUT_DEVICE=mps`、`COMIC_PRELAYOUT_OCR_ENGINE=charspot`、`COMIC_PRELAYOUT_CHARSPOT_DEVICE=cpu`。本機啟動器只連結 CTD 與校準共用資產，mit48 權重與 v5 字表保留在原位置，其載入連結程式已註釋。CharSpot 預檢會驗證自己的字表與執行檔。
+
+```bash
+PYTHONPATH=backend /path/to/inference/python -m prelayout_core.check --model-root /path/to/models --device mps --ocr-engine charspot --ocr-device cpu
+```
+
+CUDA 環境以 `--device cuda --ocr-device cuda --require-cuda` 驗證，並執行真實推理驗收。更新服務前依既有規則確認無活動任務，再重啟 6008 讀入引擎設定。mit48 推理入口已停用，設為該引擎或執行舊 mit48 任務時會明確回報。已完成的舊量測繼續可讀，已有項目需重新建立 CharSpot 偵測及明確套用才能取得新字級。
+
 # 預排版字色修正（未部署）
 
 更新後端後，新啟動的預排版偵測任務會使用修正的判色規則。已有項目若要套用新測量，須重新偵測，再將測量樣式套用到目標文字框。

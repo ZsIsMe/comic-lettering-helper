@@ -1,5 +1,11 @@
 # 系統架構
 
+## CharSpot OCR 字級量測
+
+新 `ocr_aligned` 任務預設使用 CharSpot-small。CTD 階段仍產生文字框、Mask、幾何對齊與單字框字級。OCR 階段按原 CTD 文字框裁切，將 CharSpot 的逐字框映射回原圖並量測框內墨跡，再交由共用 Noto 墨跡指標校準。最終字級仍取可靠單字框值與 OCR 校準值中的較大者。CharSpot 的偵測分數保存為 `detection_score`，沿用模型的字元偵測結果。
+
+固定模型 revision 為 `72ca29202673880ca9c67b1c02c107535be4472b`。新任務在 options 保存 `ocr_engine` 與 `ocr_device`，正式 measure 保存實際引擎與裝置。macOS 使用 MPS CTD 和明確指定的 ONNX CPU OCR，CUDA 可用官方 CUDA backend。mit48 正式推理調用已註釋，設定或執行 mit48 任務會回報停用原因。無引擎欄位的舊任務維持 mit48 身份，已完成的舊測量繼續可讀。偵測結果發布後由既有匹配流程明確套用。完整資產、裝置和授權見 [MODEL_GUIDE.md](MODEL_GUIDE.md)。
+
 ## 預排版字色
 
 CTD 產生文字遮罩後，後端在原圖上分析字色與描邊。若外圈與內圈呈反色，且框內遮罩外至少 90% 的像素接近純白或純黑，會再取樣筆畫深處。深處樣本支持內圈顏色才採用描邊，否則使用與背景相反的純色文字。

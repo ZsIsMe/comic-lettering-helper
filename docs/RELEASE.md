@@ -1,5 +1,11 @@
 # 版本与发布策略
 
+## 未發布（2026-11-26）CharSpot 字級量測
+
+新 OCR 對齊字級任務預設使用 CharSpot-small 固定 revision `72ca29202673880ca9c67b1c02c107535be4472b`，以逐字框量測原圖墨跡，沿用 Noto 校準和取較大字級的規則。新增按引擎檢查資產與固定雜湊，任務及正式 measure 保存引擎和 OCR 裝置。macOS 使用 MPS CTD 加明確指定的 ONNX CPU OCR，CUDA backend 待目標設備驗收。
+
+mit48 原推理調用已註釋停用，原碼、權重和已保存的舊量測保留。選用或執行 mit48 任務會回報停用原因，舊任務維持原引擎身份。已有項目需建立 CharSpot 偵測及明確套用新測量。CharSpot 模型另行下載，程式為 Apache-2.0、權重為 CC BY-NC-SA 4.0，資產與授權見 [MODEL_GUIDE.md](MODEL_GUIDE.md)。
+
 ## 未發布（2026-11-26）預排版字色
 
 修正部分白底黑字在自動匹配後變成白字黑邊的問題。

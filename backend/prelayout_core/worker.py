@@ -17,6 +17,7 @@ from app.prelayout.store import atomic_json
 from .data import read_json, validate_measure
 from .characters import character_pages, validate_character_boxes
 from .preview import load_overlay
+from .ocr_engine import task_engine
 
 
 def load(path):
@@ -38,10 +39,10 @@ def verify_sources(record, images):
                 raise ValueError('原圖尺寸不一致')
 
 
-def preflight(method, device='cuda'):
+def preflight(method, device='cuda', ocr_engine=None, ocr_device=None):
     from .check import check
     root = Path(os.environ['COMIC_PRELAYOUT_MODEL_ROOT'])
-    report = check(root, method, device=device)
+    report = check(root, method, device=device, ocr_engine=ocr_engine, ocr_device=ocr_device)
     if not report['ok']:
         raise RuntimeError('；'.join(report['errors']))
     return root
@@ -92,19 +93,30 @@ def run_ctd(folder, record, images, models):
 
 
 def run_ocr(folder, record, images, models):
+    from .ocr_engine import require_active_engine
+    engine = task_engine(record)
+    require_active_engine(engine)
     from .vendor import measure_ocr
     from .vendor.font_size_calibration import calibrate_ocr_output
     progress(folder, 'calibrating', 0, len(record['pages']))
     measure_path = images / 'ctd' / 'measure.json'
-    output = measure_ocr.run(str(measure_path), str(images), None,
-        model_path=str(models / 'mit48pxctc_ocr.ckpt'), alphabet_path=str(models / 'alphabet-all-v5.txt'),
-        implementation_path=str(Path(__file__).parent / 'vendor' / 'mit48px_ctc.py'), device=record.get('device', 'cuda'), pads=[4, 8], minimum_probability=.3,
-        page=None, measure_debug_path=None, source_block_index=None, limit_pages=None, limit_items=None,
-        batch_size=32, save_crops=None, dry_run=False, on_page=lambda done, total: progress(folder, 'calibrating', done, total))
-    calibrated = load(output)
-    calibrate_ocr_output(calibrated, default_font_size=record['options']['font_size'], font_size_step=record['options']['step'])
     measure = load(measure_path)
+    on_page = lambda done, total: progress(folder, 'calibrating', done, total)
+    from .charspot import run_charspot
+    output = images / 'ctd' / 'measure_ocr.json'
+    calibrated = run_charspot(images, measure, models, record['options']['ocr_device'], on_page=on_page)
+    # mit48 inference is disabled at the user's request. Keep its original
+    # call here alongside the vendored implementation for future comparison.
+    # output = measure_ocr.run(str(measure_path), str(images), None,
+    #     model_path=str(models / 'mit48pxctc_ocr.ckpt'), alphabet_path=str(models / 'alphabet-all-v5.txt'),
+    #     implementation_path=str(Path(__file__).parent / 'vendor' / 'mit48px_ctc.py'), device=record.get('device', 'cuda'), pads=[4, 8], minimum_probability=.3,
+    #     page=None, measure_debug_path=None, source_block_index=None, limit_pages=None, limit_items=None,
+    #     batch_size=32, save_crops=None, dry_run=False, on_page=on_page)
+    # calibrated = load(output)
+    calibrate_ocr_output(calibrated, default_font_size=record['options']['font_size'], font_size_step=record['options']['step'])
     measure_ocr.apply_calibrated_font_sizes(measure, calibrated)
+    measure['ocr_engine'] = calibrated['ocr_engine']
+    measure['ocr_device'] = calibrated['device']
     # Provenance names describe external assets; archives must not depend on this host's paths.
     def portable(value):
         if isinstance(value, dict):
@@ -180,7 +192,7 @@ def main():
     folder = args.task.parent
     if args.phase:
         device = record.get('device', 'cuda')
-        models = preflight(record['options']['method'], device)
+        models = preflight(record['options']['method'], device, task_engine(record), record['options'].get('ocr_device', device))
         print(f'預排版 {args.phase} 真實模型推理 · 設備：{device}', flush=True)
         if args.phase == 'ctd': run_ctd(folder, record, args.images, models)
         else: run_ocr(folder, record, args.images, models)

@@ -11,18 +11,24 @@ from app.prelayout.api import router
 from app.prelayout.detection import PrelayoutDetection
 from app.prelayout.store import PrelayoutStore
 from app.resources import ResourceGate
+from prelayout_core.ocr_engine import charspot_assets
 
 
 @pytest.fixture
 def font_environment(tmp_path, monkeypatch):
     models = tmp_path / 'models'
     models.mkdir()
-    for name in ('comictextdetector.pt', 'mit48pxctc_ocr.ckpt', 'alphabet-all-v5.txt',
-                 'NotoSansCJKjp-Medium.otf', 'NotoSansCJKjp-Medium.ink-metrics.json'):
-        (models / name).write_bytes(name.encode())
+    names = ['comictextdetector.pt', 'NotoSansCJKjp-Medium.otf', 'NotoSansCJKjp-Medium.ink-metrics.json',
+             *charspot_assets('cpu')]
+    for name in names:
+        path = models / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(name.encode())
     monkeypatch.setenv('COMIC_PRELAYOUT_MODEL_ROOT', str(models))
     monkeypatch.setenv('COMIC_PRELAYOUT_PYTHON', sys.executable)
     monkeypatch.setenv('COMIC_PRELAYOUT_DEVICE', 'mps')
+    monkeypatch.setenv('COMIC_PRELAYOUT_OCR_ENGINE', 'charspot')
+    monkeypatch.setenv('COMIC_PRELAYOUT_CHARSPOT_DEVICE', 'cpu')
     monkeypatch.delenv('COMIC_PRELAYOUT_DISPLAY_FONT', raising=False)
     store = PrelayoutStore(tmp_path / 'prelayout')
 

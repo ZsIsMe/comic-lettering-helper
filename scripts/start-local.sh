@@ -99,6 +99,8 @@ PRELAYOUT_SOURCE=${COMIC_PRELAYOUT_SOURCE:-}
 MODEL_ROOT=${COMIC_PRELAYOUT_MODEL_ROOT:-$APP_ROOT/var/local/prelayout-models}
 PRELAYOUT_PYTHON=${COMIC_PRELAYOUT_PYTHON:-}
 PRELAYOUT_DEVICE=${COMIC_PRELAYOUT_DEVICE:-mps}
+OCR_ENGINE=${COMIC_PRELAYOUT_OCR_ENGINE:-charspot}
+CHARSPOT_DEVICE=${COMIC_PRELAYOUT_CHARSPOT_DEVICE:-cpu}
 DISPLAY_FONT=${COMIC_PRELAYOUT_DISPLAY_FONT:-}
 DETECTION_PYTHON=${COMIC_DETECTION_PYTHON:-}
 DETECTION_CONFIG=${COMIC_DETECTION_CONFIG:-}
@@ -206,8 +208,11 @@ prepare_models() {
   fi
   mkdir -p "$MODEL_ROOT"
   link_asset "$PRELAYOUT_SOURCE/data/comictextdetector.pt" comictextdetector.pt
-  link_asset "$PRELAYOUT_SOURCE/data/models/mit48pxctc_ocr.ckpt" mit48pxctc_ocr.ckpt
-  link_asset "$PRELAYOUT_SOURCE/data/alphabet-all-v5.txt" alphabet-all-v5.txt
+  # mit48 inference is disabled. Keep its asset setup here for reference.
+  # if [ "$OCR_ENGINE" = mit48 ]; then
+  #   link_asset "$PRELAYOUT_SOURCE/data/models/mit48pxctc_ocr.ckpt" mit48pxctc_ocr.ckpt
+  #   link_asset "$PRELAYOUT_SOURCE/data/alphabet-all-v5.txt" alphabet-all-v5.txt
+  # fi
   link_asset "$PRELAYOUT_SOURCE/assets/fonts/NotoSansCJKjp-Medium.otf" NotoSansCJKjp-Medium.otf
   link_asset "$PRELAYOUT_SOURCE/assets/fonts/NotoSansCJKjp-Medium.ink-metrics.json" NotoSansCJKjp-Medium.ink-metrics.json
 }
@@ -298,6 +303,8 @@ start_server() {
     COMFY_URL="${COMFY_URL:-http://127.0.0.1:6199}"
     COMIC_PRELAYOUT_MODEL_ROOT="$MODEL_ROOT"
     COMIC_PRELAYOUT_DEVICE="$PRELAYOUT_DEVICE"
+    COMIC_PRELAYOUT_OCR_ENGINE="$OCR_ENGINE"
+    COMIC_PRELAYOUT_CHARSPOT_DEVICE="$CHARSPOT_DEVICE"
     COMIC_PRELAYOUT_DISPLAY_FONT="$DISPLAY_FONT"
   )
   if [ -n "$PRELAYOUT_PYTHON" ] && [ -x "$PRELAYOUT_PYTHON" ]; then

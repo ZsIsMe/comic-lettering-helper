@@ -418,6 +418,7 @@ def apply_calibrated_font_sizes(
     output: dict,
 ) -> int:
     changed = 0
+    engine = 'charspot_small' if output.get('ocr_engine') == 'charspot_small' else 'mit48'
     measure_pages = measure.get('pages') or {}
     for page_name, output_items in (output.get('pages') or {}).items():
         measure_items = measure_pages.get(page_name)
@@ -452,9 +453,9 @@ def apply_calibrated_font_sizes(
             measure_item.setdefault('font_size_detected', old_size)
             measure_item['font_size_ocr'] = font_size
             measure_item['font_size_method'] = (
-                'mit48_cached_font_ink_overlap_inherited'
+                f'{engine}_cached_font_ink_overlap_inherited'
                 if fit_status == 'ready_overlap_inherited'
-                else 'mit48_cached_font_ink_candidate_grid'
+                else f'{engine}_cached_font_ink_candidate_grid'
             )
             measure_item['font_size_ocr_method'] = measure_item['font_size_method']
             char_box_size = measure_item.get('font_size_char_box')

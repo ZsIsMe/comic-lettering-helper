@@ -264,6 +264,9 @@ def fit_ocr_item(
             'bbox': character_item.get('bbox'),
             'accepted': False,
         }
+        if 'detection_score' in character_item:
+            result.pop('ocr_probability')
+            result['detection_score'] = character_item['detection_score']
         if character_item.get('status') != 'accepted':
             result['reason'] = str(character_item.get('status') or 'ocr_rejected')
         elif len(characters) != 1:
@@ -514,7 +517,8 @@ def calibrate_ocr_output(
         and (item.get('font_fit') or {}).get('status') in {'ready', 'ready_overlap_inherited'}
     )
     output['font_calibration'] = {
-        'method': 'mit48_cached_font_ink_candidate_grid',
+        'method': ('charspot_small_cached_font_ink_candidate_grid'
+                   if output.get('ocr_engine') == 'charspot_small' else 'mit48_cached_font_ink_candidate_grid'),
         'font_path': str(Path(font_path)),
         'metrics_path': str(Path(metrics_path)),
         'font_sha256': (metrics.get('font') or {}).get('sha256'),

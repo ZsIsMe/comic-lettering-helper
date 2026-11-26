@@ -14,6 +14,7 @@ from pathlib import Path
 from prelayout_core.data import identifier, read_json, validate_measure
 from prelayout_core.characters import validate_character_boxes
 from prelayout_core.preview import load_overlay
+from prelayout_core.ocr_engine import charspot_assets, configured_ocr_device
 from .store import Conflict, atomic_json, now
 
 ACTIVE = {'queued', 'validating', 'detecting', 'aligning', 'measuring', 'previewing', 'calibrating', 'publishing', 'cancelling', 'recovery_required'}
@@ -29,14 +30,24 @@ class PrelayoutDetection:
         self.display_font = Path(display_font).expanduser() if display_font else self.models / 'NotoSansCJKjp-Medium.otf'
         self.python = os.getenv('COMIC_PRELAYOUT_PYTHON', '')
         self.device = os.getenv('COMIC_PRELAYOUT_DEVICE', 'cuda').strip().lower()
+        self.ocr_engine = os.getenv('COMIC_PRELAYOUT_OCR_ENGINE', 'charspot').strip().lower()
         self.tasks, self.processes = {}, {}
         self.cleanup_task = None
         self._cleanup_stopping = False
 
     def availability(self):
-        files = {'ctd': 'comictextdetector.pt', 'ocr': 'mit48pxctc_ocr.ckpt', 'alphabet': 'alphabet-all-v5.txt',
-                 'font': 'NotoSansCJKjp-Medium.otf', 'metrics': 'NotoSansCJKjp-Medium.ink-metrics.json'}
+        files = {'ctd': 'comictextdetector.pt', 'font': 'NotoSansCJKjp-Medium.otf',
+                 'metrics': 'NotoSansCJKjp-Medium.ink-metrics.json'}
         present = {key: (self.models / value).is_file() for key, value in files.items()}
+        ocr_device, ocr_error = None, ''
+        try:
+            if self.ocr_engine not in ('charspot', 'mit48'):
+                raise ValueError('COMIC_PRELAYOUT_OCR_ENGINE 只接受 charspot 或 mit48')
+            ocr_device = configured_ocr_device(self.ocr_engine, self.device)
+            present['ocr'] = all((self.models / name).is_file() for name in charspot_assets(ocr_device))
+        except ValueError as exc:
+            ocr_error = str(exc)
+            present['ocr'] = False
         runtime = bool(self.python and Path(self.python).is_file() and os.access(self.python, os.X_OK))
         display_font_available = self.display_font.is_file()
         try:
@@ -51,6 +62,7 @@ class PrelayoutDetection:
             font_version = ''
         supported = self.device in ('cuda', 'mps')
         return {'assets': present, 'runtime': runtime, 'device': self.device,
+                'ocr_engine': self.ocr_engine, 'ocr_device': ocr_device, 'ocr_error': ocr_error,
                 'methods': {'fixed': supported and runtime and present['ctd'],
                             'single_char': supported and runtime and present['ctd'],
                             'ocr_aligned': supported and runtime and all(present.values())}, 'gpu_owner': self.gate.owner,
@@ -265,8 +277,14 @@ class PrelayoutDetection:
         base, step = options.get('font_size', 24), options.get('step', 2)
         if not isinstance(base, (float, int)) or not isinstance(step, (float, int)) or not 1 <= base <= 999 or not .1 <= step <= 100:
             raise ValueError('字級候選參數無效')
-        if not self.availability()['methods'][method]:
-            raise ValueError('尚未安裝對應模型／字表／字型或推理 Python，請依 README 準備')
+        availability = self.availability()
+        if not availability['methods'][method]:
+            raise ValueError(availability.get('ocr_error') if method == 'ocr_aligned' and availability.get('ocr_error')
+                             else '尚未安裝對應模型／字表／字型或推理 Python，請依 README 準備')
+        task_options = {'method': method, 'font_size': base, 'step': step}
+        if method == 'ocr_aligned':
+            task_options.update(ocr_engine=self.ocr_engine,
+                                ocr_device=availability.get('ocr_device') or configured_ocr_device(self.ocr_engine, self.device))
         with self.store.lock(pid):
             project = self.store.read(pid)
             if self.busy(pid):
@@ -279,7 +297,7 @@ class PrelayoutDetection:
                 folder.mkdir(parents=True)
                 record = {'id': did, 'project_id': pid, 'state': 'queued', 'created_at': now(), 'device': self.device,
                           'cleanup_input_after_publish': True,
-                          'options': {'method': method, 'font_size': base, 'step': step},
+                          'options': task_options,
                           'pages': [{key: page[key] for key in ('id', 'name', 'width', 'height', 'sha256')} for page in project['pages']]}
                 atomic_json(folder / 'task.json', record)
             except BaseException:

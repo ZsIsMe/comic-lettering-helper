@@ -11,3 +11,5 @@ einops==0.8.2
 packaging==26.2
 PyYAML==6.0.3
 requests==2.34.2
+onnxruntime==1.32.0
+safetensors==0.8.0

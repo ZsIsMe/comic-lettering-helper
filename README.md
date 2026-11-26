@@ -85,7 +85,7 @@ RF、MangaLens、CTD、OCR 的用途、下載地址、配套字表／字型、�
 
 預覽同時預設啟用 OpenType `onum` 舊樣式；橫排啟用 `palt` 比例間距、關閉 `vpal`，直排啟用 `vpal` 比例間距、關閉 `palt`。畫布、原位編輯、局部對比和離屏量測共用設定；實際字形及壓縮幅度依字型實作，不修改 JSON 或自動調整既有中心、字級。
 
-「OCR 對齊逐字計算」先保留原有單字框算法的字級，再與 OCR 字級取較大值；兩者沿用設定的基準字級及步長。OCR 同一位置、同一字且跨行高度重疊的樣本只計一次，再套用原有離群值篩選。「單字框計算」模式維持原算法。既有偵測結果不自動覆寫，新偵測才使用此規則。
+「OCR 對齊逐字計算」的新任務預設使用 CharSpot-small，按模型回傳的逐字框量測原圖墨跡，再以固定 Noto 字型指標校準字級。先保留原有單字框算法的字級，再與 OCR 字級取較大值；兩者沿用設定的基準字級及步長。OCR 同一位置、同一字且跨行高度重疊的樣本只計一次，再套用原有離群值篩選。mit48 CTC 原碼與既有測量保留，其推理入口已停用。無引擎欄位的舊任務仍標示為 mit48，執行時會回報停用原因。重新建立 CharSpot 偵測才產生新量測，再明確套用到譯文框。
 
 頁碼導覽位於頂部工具列下方，預設只佔一行，可切上一頁／下一頁、查看範圍完成數，並「保存並下一未完成」。展開後可設定起迄頁、搜尋檔名或頁碼、直接跳頁；範圍按項目保存在本機瀏覽器。專注模式擴大畫布，按 Esc 或「退出專注」恢復工具列。連續捲動與原圖對照仍可照常使用。
 
@@ -150,7 +150,9 @@ Option／Alt＋滾輪也可增減字級 2；普通滾輪上下捲動，⌘／Ctr
 
 ### 預排版模型與配套資產
 
-權重、模型快取、OCR 校準字型與推理環境不加入工程或 Git；網頁顯示用工具箱字型隨前端內建。字表與字型墨跡指標另隨倉庫保存在 [`assets/prelayout/`](assets/prelayout/)，可從此處取得固定版本。製作鏡像時，把下列五項資產直接放到工程外的 `/root/models/comic-prelayout/`，或透過 `COMIC_PRELAYOUT_MODEL_ROOT` 指定另一外部目錄。此表中的來源相對路徑均相對於使用者提供的 `/Users/zhongsheng/Projects/comic-text-detector`；維護者可從該工程已有資產準備鏡像，應用不自動下載。
+權重、模型快取、OCR 校準字型與推理環境放在工程外的 `/root/models/comic-prelayout/`，或以 `COMIC_PRELAYOUT_MODEL_ROOT` 指定目錄。新 OCR 任務需要 CTD、下表的 Noto 字型與墨跡指標，以及 `manga-ocr-charspot-small/` 內的官方模型、`config.json`、`vocab.json` 和 Python package。CharSpot 固定使用 revision `72ca29202673880ca9c67b1c02c107535be4472b`，完整資產與授權見[模型說明](docs/MODEL_GUIDE.md)。本機 CTD 使用 MPS，CharSpot 以明確的 `COMIC_PRELAYOUT_CHARSPOT_DEVICE=cpu` 使用 ONNX。CUDA 部署可設定 `cuda`，仍需實機驗收。
+
+以下保留 mit48 配套及共用資產的固定校驗值。字表與墨跡指標可從 [`assets/prelayout/`](assets/prelayout/) 取得，來源相對路徑相對於原 `comic-text-detector` 工程。
 
 | 鏡像內檔名 | 已有來源相對路徑 | SHA-256（已讀取本機檔案核對） |
 | --- | --- | --- |
@@ -160,7 +162,7 @@ Option／Alt＋滾輪也可增減字級 2；普通滾輪上下捲動，⌘／Ctr
 | `NotoSansCJKjp-Medium.otf` | `assets/fonts/NotoSansCJKjp-Medium.otf` | `dd523e580e3413c480b2d701bf64e534c20f8419e3cfb6a44c2bdcd8d2a6c052` |
 | `NotoSansCJKjp-Medium.ink-metrics.json` | `assets/fonts/NotoSansCJKjp-Medium.ink-metrics.json` | `29a0af82d3501eab9bf8bb0f8de8294b972927eb7d6e863b7cfd2d165ce28a56` |
 
-CTD 單字框方法需要 CTD 權重；OCR 對齊字級方法需要全部五項。網頁預覽預設載入隨前端交付的工具箱字型，不依賴這五項資產；僅明確配置外部顯示字型時使用 `/api/prelayout/font`。內建字型原附說明限定個人學習、非商業用途，完整保留於 `frontend/public/fonts/toolbox/usage-guide.png` 與來源 `NOTICE.md`。字型載入失敗時提示暫用系統字型，人工編輯仍可用；不同替代字型的外觀不保證一致。缺少模型時僅停用對應偵測方法，不自動切換演算法或 CPU 推理。
+CTD 單字框方法需要 CTD 權重；表內 mit48 權重與字表保留為歷史資產。CharSpot 使用自己的 `vocab.json`，量測校準直接讀取墨跡指標內的字形資料。網頁預覽預設載入隨前端交付的工具箱字型，不依賴這五項資產；僅明確配置外部顯示字型時使用 `/api/prelayout/font`。內建字型原附說明限定個人學習、非商業用途，完整保留於 `frontend/public/fonts/toolbox/usage-guide.png` 與來源 `NOTICE.md`。字型載入失敗時提示暫用系統字型，人工編輯仍可用；不同替代字型的外觀不保證一致。缺少模型時僅停用對應偵測方法，不自動切換演算法或 CPU 推理。
 
 `backend/requirements-prelayout.txt` 記錄已驗證可載入核心的本機依賴版本。參考環境為 Python 3.14.6、PyTorch 2.13.0、torchvision 0.28.0、macOS arm64；這不是 Linux CUDA 鎖定環境。鏡像須另建外部 Python 環境，選定相容的 PyTorch／torchvision CUDA wheels，完成下列預檢及真實 GPU 測試後，保存最終依賴清單。不要把新依賴裝進 ComfyUI 的 Python。
 
