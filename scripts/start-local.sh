@@ -231,12 +231,29 @@ PY
 }
 
 wait_health() {
-  local _ 
-  for _ in $(seq 1 30); do
-    curl -fsS --max-time 2 "$BASE_URL/api/health" >/dev/null 2>&1 && return 0
+  local pid=$1 timeout=60
+  local deadline=$((SECONDS + timeout))
+  local remaining probe_timeout last_error=
+  printf '正在等候本機服務就緒（最多 %s 秒）…\n' "$timeout"
+  while [ "$SECONDS" -lt "$deadline" ]; do
+    if ! kill -0 "$pid" 2>/dev/null; then
+      printf '本機服務在就緒前已退出（PID %s）。日誌：%s\n' "$pid" "$LOG_FILE" >&2
+      return 1
+    fi
+    remaining=$((deadline - SECONDS))
+    [ "$remaining" -gt 0 ] || break
+    # /api/health 還會依序查詢 GPU（3 秒）和 ComfyUI（2 秒）。
+    probe_timeout=$((remaining < 6 ? remaining : 6))
+    if last_error=$(curl -q --noproxy '*' -fsS --connect-timeout 1 --max-time "$probe_timeout" \
+      "$BASE_URL/api/health" 2>&1 >/dev/null); then
+      return 0
+    fi
     sleep 0.5
   done
-  printf '服務未在時限內回應 %s/api/health。日誌：%s\n' "$BASE_URL" "$LOG_FILE" >&2
+  printf '本機服務在 %s 秒內未回應 %s/api/health。日誌：%s\n' "$timeout" "$BASE_URL" "$LOG_FILE" >&2
+  if [ -n "$last_error" ]; then
+    printf '最後一次檢查：%s\n' "$last_error" >&2
+  fi
   return 1
 }
 
@@ -358,12 +375,12 @@ if log > 2:
     os.close(log)
 os.execve(uvicorn, args, os.environ)
 PY
-  if ! wait_health; then
+  if ! pid=$(cat "$PID_FILE") || ! wait_health "$pid"; then
     stop_server >/dev/null 2>&1 || true
     tail -n 40 "$LOG_FILE" >&2 || true
     exit 1
   fi
-  printf '本機服務已啟動（PID %s）。\n' "$(cat "$PID_FILE")"
+  printf '本機服務已啟動（PID %s）。\n' "$pid"
   print_urls
   printf '日誌：%s\n' "$LOG_FILE"
   summarize_availability || true

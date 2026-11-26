@@ -213,7 +213,7 @@ React＋TypeScript＋Vite＋Ant Design 提供頁面，Canvas 提供原尺寸像�
 make start-local
 ```
 
-macOS 亦可直接雙擊專案根目錄的 `啟動預排版.command`，沿用 `var/local/start.env` 啟動背景服務並打開預排版頁；已執行時重用服務並開啟頁面。啟動失敗會保留終端訊息。請保留此檔案於專案根目錄，可製作 Finder 替身放在桌面。
+macOS 亦可直接雙擊專案根目錄的 `啟動預排版.command`，沿用 `var/local/start.env` 啟動背景服務並打開預排版頁；已執行時重用服務並開啟頁面。背景服務最多等候 60 秒就緒，程序提早退出時會立即報錯。項目列表在進入預排版頁面後載入。啟動失敗會保留終端訊息。請保留此檔案於專案根目錄，可製作 Finder 替身放在桌面。
 
 瀏覽器打開 `http://127.0.0.1:6008/#/prelayout`。只改前端時可另開 `npm --prefix frontend run dev`（代理到同一 6008）。首次安裝仍執行：
 

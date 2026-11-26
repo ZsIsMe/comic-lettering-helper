@@ -2,6 +2,7 @@
 import asyncio
 import io
 import shutil
+import threading
 
 import pytest
 from PIL import Image
@@ -10,9 +11,15 @@ from app.config import Settings
 from app.prelayout.detection import PrelayoutDetection
 from app.prelayout.store import PrelayoutStore, atomic_json
 from app.resources import ResourceGate
-from prelayout_core.data import identifier
+from prelayout_core.data import identifier, read_json
 from prelayout_core.preview import save_overlay
 import numpy as np
+
+
+async def start_and_cleanup(detector):
+    await detector.start()
+    if detector.cleanup_task is not None:
+        await detector.cleanup_task
 
 
 @pytest.fixture
@@ -78,6 +85,105 @@ def test_live_worker_input_is_retained(task, monkeypatch):
     assert (folder / 'input' / '1.png').exists()
 
 
+@pytest.mark.parametrize('manifest_state', ['missing', 'invalid'])
+def test_unavailable_project_manifest_retains_completed_task_and_input(task, manifest_state):
+    detector, project, did, folder = task
+    record = detector.update(project['id'], did, state='completed')
+    manifest = detector.store.directory(project['id']) / 'project.json'
+    if manifest_state == 'missing':
+        manifest.unlink()
+    else:
+        manifest.write_bytes(b'invalid project manifest')
+
+    detector.cleanup_input(project['id'], did)
+
+    assert (folder / 'input' / '1.png').exists()
+    assert read_json((folder / 'task.json').read_bytes()) == record
+
+
+def test_start_skips_process_check_for_already_reclaimed_input(task, monkeypatch):
+    detector, project, did, folder = task
+    detector.publish(project['id'], did)
+    record = detector.update(project['id'], did, pid=123456)
+    published = detector.store.read(project['id'])
+    assert not (folder / 'input').exists()
+
+    def unexpected_process_check(_):
+        pytest.fail('An already reclaimed input does not need a worker process check')
+
+    monkeypatch.setattr(detector, 'process_alive', unexpected_process_check)
+    with monkeypatch.context() as patch:
+        patch.setattr(detector.store, 'read', lambda _: pytest.fail('Completed projects load when requested'))
+        patch.setattr(detector.store, 'list', lambda: pytest.fail('Startup must not load the project list'))
+        asyncio.run(start_and_cleanup(detector))
+    assert detector.status(project['id']) == record
+    assert detector.store.read(project['id']) == published
+
+
+def test_start_returns_while_completed_input_cleanup_runs(task, monkeypatch):
+    detector, project, did, folder = task
+    detector.update(project['id'], did, state='completed')
+    entered, finish = threading.Event(), threading.Event()
+    cleanup = detector.cleanup_input
+
+    def delayed_cleanup(pid, task_id):
+        entered.set()
+        assert finish.wait(5)
+        cleanup(pid, task_id)
+
+    monkeypatch.setattr(detector, 'cleanup_input', delayed_cleanup)
+
+    async def scenario():
+        try:
+            await asyncio.wait_for(detector.start(), 1)
+            assert await asyncio.to_thread(entered.wait, 2)
+            assert (folder / 'input' / '1.png').exists()
+            assert not detector.cleanup_task.done()
+        finally:
+            finish.set()
+            await detector.stop()
+        assert not (folder / 'input').exists()
+
+    asyncio.run(scenario())
+
+
+def test_stop_waits_for_current_cleanup_and_skips_remaining_projects(task, monkeypatch):
+    detector, project, did, folder = task
+    detector.update(project['id'], did, state='completed')
+    other = detector.store.create('other', [('1.png', (folder / 'input' / '1.png').read_bytes())])
+    other_did = identifier('d')
+    other_task = detector.store.directory(other['id']) / 'detections' / other_did / 'task.json'
+    atomic_json(other_task, {'id': other_did, 'project_id': other['id'], 'state': 'completed',
+                            'created_at': '2026-11-13T00:00:00Z', 'cleanup_input_after_publish': True})
+    entered, finish = threading.Event(), threading.Event()
+    calls = []
+
+    def delayed_cleanup(pid, task_id):
+        calls.append((pid, task_id))
+        entered.set()
+        assert finish.wait(5)
+
+    monkeypatch.setattr(detector, 'cleanup_input', delayed_cleanup)
+
+    async def scenario():
+        stopping = None
+        try:
+            await detector.start()
+            assert await asyncio.to_thread(entered.wait, 2)
+            stopping = asyncio.create_task(detector.stop())
+            await asyncio.sleep(0)
+            assert not stopping.done()
+        finally:
+            finish.set()
+            if stopping is not None:
+                await stopping
+            else:
+                await detector.stop()
+        assert len(calls) == 1
+
+    asyncio.run(scenario())
+
+
 def test_preexisting_task_without_cleanup_policy_is_not_reclaimed_on_start(task):
     detector, project, did, folder = task
     detector.publish(project['id'], did)
@@ -86,7 +192,7 @@ def test_preexisting_task_without_cleanup_policy_is_not_reclaimed_on_start(task)
     record = detector.status(project['id'])
     record.pop('cleanup_input_after_publish')
     atomic_json(folder / 'task.json', record)
-    asyncio.run(detector.start())
+    asyncio.run(start_and_cleanup(detector))
     assert (inputs / 'old-source.png').read_bytes() == b'preexisting task snapshot'
 
 
@@ -127,7 +233,7 @@ def test_cleanup_failure_keeps_result_completed_and_retries_on_start(task, monke
     assert detector.status(project['id'])['input_cleanup_error'] == 'input busy'
     assert (folder / 'input').exists()
     monkeypatch.setattr('app.prelayout.detection.shutil.rmtree', remove)
-    asyncio.run(detector.start())
+    asyncio.run(start_and_cleanup(detector))
     assert not (folder / 'input').exists()
     assert detector.status(project['id'])['input_cleanup_error'] is None
     assert detector.store.read(project['id']) == published
@@ -135,9 +241,15 @@ def test_cleanup_failure_keeps_result_completed_and_retries_on_start(task, monke
 
 def test_start_recovers_publication_before_reclaiming_input(task):
     detector, project, _, folder = task
-    asyncio.run(detector.start())
-    assert detector.status(project['id'])['state'] == 'completed'
-    assert not (folder / 'input').exists()
+
+    async def scenario():
+        await detector.start()
+        assert detector.status(project['id'])['state'] == 'completed'
+        assert (folder / 'input').exists()
+        await detector.cleanup_task
+        assert not (folder / 'input').exists()
+
+    asyncio.run(scenario())
 
 
 def test_input_symlink_is_not_followed(task, tmp_path):

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import logging
 import os
 import signal
 import shutil
@@ -16,6 +17,7 @@ from prelayout_core.preview import load_overlay
 from .store import Conflict, atomic_json, now
 
 ACTIVE = {'queued', 'validating', 'detecting', 'aligning', 'measuring', 'previewing', 'calibrating', 'publishing', 'cancelling', 'recovery_required'}
+logger = logging.getLogger(__name__)
 
 
 class PrelayoutDetection:
@@ -28,6 +30,8 @@ class PrelayoutDetection:
         self.python = os.getenv('COMIC_PRELAYOUT_PYTHON', '')
         self.device = os.getenv('COMIC_PRELAYOUT_DEVICE', 'cuda').strip().lower()
         self.tasks, self.processes = {}, {}
+        self.cleanup_task = None
+        self._cleanup_stopping = False
 
     def availability(self):
         files = {'ctd': 'comictextdetector.pt', 'ocr': 'mit48pxctc_ocr.ckpt', 'alphabet': 'alphabet-all-v5.txt',
@@ -56,8 +60,11 @@ class PrelayoutDetection:
 
     def status(self, pid, recover=False):
         self.store.read(pid)
+        return self._status(self.store.directory(pid), recover)
+
+    def _status(self, directory, recover=False):
         records = []
-        for path in (self.store.directory(pid) / 'detections').glob('d_*/task.json'):
+        for path in (directory / 'detections').glob('d_*/task.json'):
             record = read_json(path.read_bytes())
             if recover and record['state'] in ACTIVE and not record.get('pid'):
                 record['pid'] = self.discover_process(record)
@@ -150,26 +157,53 @@ class PrelayoutDetection:
             await process.wait()
 
     async def start(self):
-        for project in self.store.list():
-            record = await asyncio.to_thread(self.status, project['id'], True)
+        completed = []
+        for path in self.store.projects.glob('pl_*/project.json'):
+            pid = path.parent.name
+            try:
+                directory = self.store.directory(pid)
+            except KeyError:
+                continue
+            record = await asyncio.to_thread(self._status, directory, True)
             if record and record['state'] in ACTIVE:
+                # Only interrupted work needs the project contents before accepting new work.
+                try:
+                    self.store.read(pid)
+                except (KeyError, FileNotFoundError, ValueError):
+                    continue
                 if await asyncio.to_thread(self.process_alive, record):
                     self.gate.retain(record['id'])
-                    self.update(project['id'], record['id'], pid=record['pid'], state='recovery_required', message='保留執行中的偵測程序，等待結束後恢復結果')
-                    self.tasks[project['id']] = asyncio.create_task(self._watch_recovered(project['id'], record))
+                    self.update(pid, record['id'], pid=record['pid'], state='recovery_required', message='保留執行中的偵測程序，等待結束後恢復結果')
+                    self.tasks[pid] = asyncio.create_task(self._watch_recovered(pid, record))
                 else:
                     try:
                         if record['state'] == 'cancelling':
-                            self.update(project['id'], record['id'], state='cancelled', message='已取消')
-                        elif (self.task_path(project['id'], record['id']).parent / 'output' / 'complete.json').exists():
-                            self.publish(project['id'], record['id'])
+                            self.update(pid, record['id'], state='cancelled', message='已取消')
+                        elif (self.task_path(pid, record['id']).parent / 'output' / 'complete.json').exists():
+                            self.publish(pid, record['id'], cleanup=False)
+                            completed.append((pid, record['id']))
                         else:
-                            self.update(project['id'], record['id'], state='failed', message='服務中斷，原有排版已保留；可重新提交偵測')
+                            self.update(pid, record['id'], state='failed', message='服務中斷，原有排版已保留；可重新提交偵測')
                     except Exception as exc:
-                        self.update(project['id'], record['id'], state='failed', message=str(exc))
+                        self.update(pid, record['id'], state='failed', message=str(exc))
             elif record and record['state'] == 'completed':
-                # Retry reclamation if the service stopped after publishing the result.
-                await asyncio.to_thread(self.cleanup_input, project['id'], record['id'])
+                completed.append((pid, record['id']))
+        if completed:
+            self._cleanup_stopping = False
+            self.cleanup_task = asyncio.create_task(self._cleanup_completed(completed), name='prelayout-input-cleanup')
+
+    async def _cleanup_completed(self, completed):
+        # Retry unfinished reclamation without holding up service readiness.
+        for pid, did in completed:
+            if self._cleanup_stopping:
+                break
+            try:
+                await asyncio.to_thread(self.cleanup_input, pid, did)
+            except (KeyError, FileNotFoundError):
+                # The project or task may have been deleted since startup.
+                continue
+            except Exception:
+                logger.exception('無法清理預排版任務輸入：%s/%s', pid, did)
 
     async def _watch_recovered(self, pid, record):
         try:
@@ -191,6 +225,10 @@ class PrelayoutDetection:
                 self.gate.release(record['id'])
 
     async def stop(self):
+        self._cleanup_stopping = True
+        if self.cleanup_task is not None:
+            await self.cleanup_task
+            self.cleanup_task = None
         for pid in list(self.tasks):
             try:
                 await self.cancel(pid)
@@ -304,7 +342,7 @@ class PrelayoutDetection:
             else:
                 self.gate.release(did)
 
-    def publish(self, pid, did):
+    def publish(self, pid, did, *, cleanup=True):
         with self.store.lock(pid):
             folder = self.task_path(pid, did).parent / 'output'
             complete = read_json((folder / 'complete.json').read_bytes())
@@ -339,17 +377,26 @@ class PrelayoutDetection:
                 project['revision'] += 1
                 self.store.write(project)
             self.update(pid, did, state='completed', message='偵測完成，可預覽匹配並選擇套用；原有文字未更動')
-            self.cleanup_input(pid, did)
+            if cleanup:
+                self.cleanup_input(pid, did)
 
     def cleanup_input(self, pid, did):
         """Reclaim only a completed task's private input, never published assets."""
         with self.store.lock(pid):
             task_path = self.task_path(pid, did)
             record = read_json(task_path.read_bytes())
-            if not record.get('cleanup_input_after_publish') or record['state'] != 'completed' or self.process_alive(record):
+            if not record.get('cleanup_input_after_publish') or record['state'] != 'completed':
                 return
             inputs = task_path.parent / 'input'
             try:
+                if not record.get('input_cleanup_error') and not inputs.is_symlink() and not inputs.exists():
+                    return
+                try:
+                    self.store.read(pid)
+                except (KeyError, FileNotFoundError, ValueError):
+                    return
+                if self.process_alive(record):
+                    return
                 if inputs.is_symlink():
                     raise OSError('任務 input 不可為符號連結')
                 if inputs.exists():
