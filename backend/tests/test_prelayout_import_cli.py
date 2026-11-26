@@ -377,8 +377,7 @@ def test_default_checkpoint_rejects_changed_files_instead_of_creating_again(setu
 
 def test_same_command_lock_prevents_concurrent_creation(setup):
     _, args, api = setup
-    with Path(args.state_file + '.lock').open('a') as lock:
-        cli.fcntl.flock(lock, cli.fcntl.LOCK_EX | cli.fcntl.LOCK_NB)
+    with cli.import_lock(Path(args.state_file)):
         with pytest.raises(ValueError, match='同一匯入正在執行'):
             cli.run(args, api)
     assert not api.calls

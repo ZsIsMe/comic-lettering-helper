@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import argparse
 import copy
-import fcntl
 import hashlib
 import io
 import json
@@ -25,6 +24,12 @@ import urllib.error
 import urllib.request
 import uuid
 from collections import Counter
+from contextlib import contextmanager
+
+if os.name == 'nt':
+    import msvcrt
+else:
+    import fcntl
 
 from PIL import Image
 
@@ -38,6 +43,28 @@ from app.prelayout.detection import ACTIVE  # noqa: E402
 
 class ImportErrorSafe(ValueError):
     """A safe stop requiring inspection rather than an automatic retry."""
+
+
+@contextmanager
+def import_lock(path):
+    with path.with_suffix(path.suffix + '.lock').open('a+b') as lock:
+        try:
+            if os.name == 'nt':
+                if lock.tell() == 0:
+                    lock.write(b'\0')
+                    lock.flush()
+                lock.seek(0)
+                msvcrt.locking(lock.fileno(), msvcrt.LK_NBLCK, 1)
+            else:
+                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError as exc:
+            raise ImportErrorSafe(f'同一匯入正在執行或無法鎖定：{path}') from exc
+        try:
+            yield
+        finally:
+            if os.name == 'nt':
+                lock.seek(0)
+                msvcrt.locking(lock.fileno(), msvcrt.LK_UNLCK, 1)
 
 
 class API:
@@ -273,11 +300,7 @@ def run(args, api=None):
         require_available(api)
         return {**report, 'stage': 'check_only'}
     path.parent.mkdir(parents=True, exist_ok=True)
-    with path.with_suffix(path.suffix + '.lock').open('a') as lock:
-        try:
-            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BlockingIOError as exc:
-            raise ImportErrorSafe(f'同一匯入正在執行：{path}') from exc
+    with import_lock(path):
         if not path.exists() and not args.state_file:
             for other in path.parent.glob('*.json'):
                 previous = json.loads(other.read_text())
