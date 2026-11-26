@@ -32,7 +32,7 @@ import { LineBreakControls } from './LineBreakControls'
 import { lineBreakPreviewMatches, type LineBreakPreview } from './line-breaks'
 import { loadViewPreferences, saveViewPreferences } from './view-preferences'
 import { ProjectLibrary } from './ProjectLibrary'
-import { loadProjectView, saveProjectView } from './project-view'
+import { loadRecentProjectIds, recentProjectsKey, rememberProjectOpen } from './recent-projects'
 import './styles.css'
 
 const showCleanUpload = false
@@ -45,7 +45,9 @@ const detectionMethodOptions = [
 export default function PrelayoutWorkbench({ onExit, onReadyToLeave }: { onExit: () => void; onReadyToLeave?: (handler: () => Promise<boolean>) => void }) {
   const [modal, modalContext] = Modal.useModal()
   const [projects, setProjects] = useState<Project[]>([]), [current, setCurrent] = useState<Project | null>(null)
-  const [projectView, setProjectView] = useState(loadProjectView)
+  const [recentProjectIds, setRecentProjectIds] = useState(() => loadRecentProjectIds())
+  const recentIds = useRef(recentProjectIds)
+  const currentId = current?.id
   const [projectQuery, setProjectQuery] = useState('')
   const [error, setError] = useState(''), [busy, setBusy] = useState(false), [createOpen, setCreateOpen] = useState(false)
   const [newProjectId, setNewProjectId] = useState<string | null>(null)
@@ -53,16 +55,41 @@ export default function PrelayoutWorkbench({ onExit, onReadyToLeave }: { onExit:
   const reload = useCallback(async () => setProjects(await request<Project[]>(`${base}/projects`)), [])
   useEffect(() => {
     void reload().catch(e => setError(e.message))
-    const id = localStorage.getItem('pl-last-project')
-    if (id) void request<Project>(projectPath(id)).then(setCurrent).catch(() => localStorage.removeItem('pl-last-project'))
+    let active = true
+    try {
+      const id = localStorage.getItem('pl-last-project')
+      if (id) void request<Project>(projectPath(id)).then(project => {
+        if (active) setCurrent(existing => existing ?? project)
+      }).catch(() => {
+        try { if (active && localStorage.getItem('pl-last-project') === id) localStorage.removeItem('pl-last-project') } catch { /* Optional storage. */ }
+      })
+    } catch { /* The library can still open projects without browser storage. */ }
+    return () => { active = false }
   }, [reload])
-  useEffect(() => { if (current) localStorage.setItem('pl-last-project', current.id) }, [current])
+  useEffect(() => {
+    if (!currentId) return
+    recentIds.current = rememberProjectOpen(currentId, recentIds.current)
+    setRecentProjectIds(recentIds.current)
+    try { localStorage.setItem('pl-last-project', currentId) } catch { /* Optional resume preference. */ }
+  }, [currentId])
+  useEffect(() => {
+    const sync = (event: StorageEvent) => {
+      if (event.key !== recentProjectsKey && event.key !== null) return
+      recentIds.current = loadRecentProjectIds()
+      setRecentProjectIds(recentIds.current)
+    }
+    window.addEventListener('storage', sync)
+    return () => window.removeEventListener('storage', sync)
+  }, [])
   async function action(fn: () => Promise<void>) {
     setBusy(true); setError('')
     try { await fn() } catch (e) { setError((e as Error).message) } finally { setBusy(false) }
   }
-  if (current) return <Workspace key={current.id} project={current} promptDetection={newProjectId === current.id} onReadyToLeave={onReadyToLeave} onExit={async () => { localStorage.removeItem('pl-last-project'); setNewProjectId(null); setCurrent(null); await reload() }} />
-  return <main className={`pl-shell pl-home${projectView === 'list' ? ' pl-home--list' : ''}`}>{modalContext}
+  if (current) return <Workspace key={current.id} project={current} promptDetection={newProjectId === current.id} onReadyToLeave={onReadyToLeave} onExit={async () => {
+    try { localStorage.removeItem('pl-last-project') } catch { /* Optional resume preference. */ }
+    setNewProjectId(null); setCurrent(null); await reload()
+  }} />
+  return <main className="pl-shell pl-home pl-home--list">{modalContext}
     <header className="pl-home-header"><div><span className="pl-kicker">LETTERING STUDIO</span><h1>漫畫預排版</h1><p>匯入譯文，在連續漫畫頁上調整文字與樣式。</p></div><Space wrap>
       <Button onClick={onExit}>返回圖片修復</Button>
       <Button href="/downloads/LabelPlus_Ps_Script_ZS-1.8.0.zip" download="LabelPlus_Ps_Script_ZS-1.8.0.zip">配套PS腳本</Button>
@@ -73,7 +100,7 @@ export default function PrelayoutWorkbench({ onExit, onReadyToLeave }: { onExit:
       <Button type="primary" onClick={() => setCreateOpen(true)}>新建預排版</Button>
     </Space></header>
     {error && <Alert type="error" showIcon message={error} />}
-    {busy ? <Spin /> : projects.length ? <ProjectLibrary projects={projects} view={projectView} query={projectQuery} onQueryChange={setProjectQuery} onViewChange={view => { setProjectView(view); saveProjectView(view) }} onOpen={setCurrent} onRename={project => {
+    {busy ? <Spin /> : projects.length ? <ProjectLibrary projects={projects} recentProjectIds={recentProjectIds} query={projectQuery} onQueryChange={setProjectQuery} onOpen={setCurrent} onRename={project => {
         let next = project.name
         modal.confirm({ title: '重新命名', content: <Input defaultValue={next} onChange={e => { next = e.target.value }} />, onOk: () => action(async () => { await request(projectPath(project.id), body({ name: next }, 'PATCH')); await reload() }) })
       }} onDelete={project => modal.confirm({ title: `刪除「${project.name}」？`, content: '將刪除此預排版項目的圖片、文字及進度。', okButtonProps: { danger: true }, onOk: () => action(async () => { await request(projectPath(project.id), { method: 'DELETE' }); await reload() }) })} /> : <Empty description="建立預排版項目，先上傳漫畫原圖" />}
