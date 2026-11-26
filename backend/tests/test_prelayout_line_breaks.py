@@ -31,11 +31,13 @@ import sys
 from app.prelayout.api import router
 from app.prelayout.line_breaks import line_break_candidates, _tokenizer
 assert 'jieba' not in sys.modules
+assert 'opencc' not in sys.modules
 assert line_break_candidates('', 5) == []
 assert line_break_candidates('  \\n \\n', 5) == []
 assert 'jieba' not in sys.modules
 line_break_candidates('今天下雨', 3)
 assert 'jieba' in sys.modules
+assert 'opencc' in sys.modules
 assert _tokenizer().initialized
 assert _tokenizer() is _tokenizer()
 """
@@ -155,13 +157,14 @@ def test_newline_budget_skips_only_unsavable_counts():
 
 def test_long_string_disables_only_quadratic_hmm(monkeypatch):
     from app.prelayout import line_breaks as module
-    real = module._tokenizer()
+    real = module._pos_tokenizer()
+    module._token_analysis.cache_clear()
     calls = []
     class Spy:
         def cut(self, text, **kwargs):
             calls.append((len(text), kwargs['HMM']))
             return real.cut(text, **kwargs)
-    monkeypatch.setattr(module, '_tokenizer', lambda: Spy())
+    monkeypatch.setattr(module, '_pos_tokenizer', lambda: Spy())
     line_break_candidates('龘' * 3000 + '，今天下雨。', 2)
     assert (3000, False) in calls
     assert (4, True) in calls
@@ -178,3 +181,107 @@ def test_one_source_line_offers_two_and_one_but_never_zero():
     results = line_break_candidates('今天下雨，明天出發。', 1)
     assert [result['line_count'] for result in results] == [2, 1]
     assert_contract('今天下雨，明天出發。', 1, results)
+
+
+@pytest.fixture
+def uncached_analysis():
+    from app.prelayout import line_breaks as module
+    module._token_analysis.cache_clear()
+    yield module
+    module._token_analysis.cache_clear()
+
+
+def test_traditional_analysis_maps_simplified_words_back_to_untouched_original_snapshot():
+    from app.prelayout.line_breaks import _token_analysis
+    text = '我聽說張三豐今天會到圖書館。'
+    assert _token_analysis(text) == (
+        ('我', 'r'), ('聽說', 'v'), ('張三豐', 'nr'), ('今天', 't'),
+        ('會', 'v'), ('到', 'v'), ('圖書館', 'n'), ('。', 'x'))
+    assert ''.join(word for word, _ in _token_analysis(text)) == text
+    assert line_break_candidates(text, 3) == [
+        {'line_count': 4, 'text': '我聽說\n張三豐\n今天會到\n圖書館。'},
+        {'line_count': 3, 'text': '我聽說張三豐\n今天會到\n圖書館。'},
+        {'line_count': 2, 'text': '我聽說張三豐\n今天會到圖書館。'},
+    ]
+
+
+def test_pos_phrase_preferences_and_soft_fallback_do_not_split_complete_words():
+    text = '我已經看過了嗎？'
+    results = line_break_candidates(text, 3)
+    assert_contract(text, 3, results)
+    by_count = {candidate['line_count']: candidate['text'] for candidate in results}
+    assert '看過了嗎' in by_count[2]
+    assert '看過了嗎' in by_count[3]
+    # Four lines require relaxing a phrase; keep the dictionary word and final particle unit.
+    assert by_count[4] == '我\n已經\n看過\n了嗎？'
+    assert all('看過' in candidate['text'] for candidate in results)
+
+
+def test_numeric_classifier_and_noun_are_preferred_as_one_short_phrase():
+    from app.prelayout.line_breaks import _phrase_break_penalties
+    assert _phrase_break_penalties('七八公斤蘋果') == {2: 10, 4: 8}
+    results = line_break_candidates('七八公斤蘋果', 2)
+    assert results == [
+        {'line_count': 3, 'text': '七八\n公斤\n蘋果'},
+        {'line_count': 2, 'text': '七八公斤\n蘋果'},
+        {'line_count': 1, 'text': '七八公斤蘋果'},
+    ]
+
+
+@pytest.mark.parametrize('converted', ['繁體分析會變長', '', None])
+def test_length_changing_or_unmappable_conversion_falls_back_to_original(uncached_analysis, monkeypatch, converted):
+    module = uncached_analysis
+    class Converter:
+        def convert(self, text):
+            return converted
+    monkeypatch.setattr(module, '_converter', lambda: Converter())
+    assert module._analysis_text('繁體') == '繁體'
+    assert ''.join(module._tokens('繁體')) == '繁體'
+
+
+def test_unmappable_tagger_stream_uses_original_tokenizer(uncached_analysis, monkeypatch):
+    from types import SimpleNamespace
+    module = uncached_analysis
+    class BadTagger:
+        def cut(self, text, **kwargs):
+            return iter([SimpleNamespace(word='缺少字元', flag='n')])
+    monkeypatch.setattr(module, '_pos_tokenizer', lambda: BadTagger())
+    text = '繁體圖書館'
+    assert ''.join(module._tokens(text)) == text
+
+
+def test_english_numbers_spaces_and_punctuation_remain_verbatim_with_pos_analysis():
+    from app.prelayout.line_breaks import _tokens, _phrase_break_penalties
+    text = '「買了 A12 3.14，七八公斤蘋果吧！？ 」 👩🏽\u200d💻 cafe\u0301ine'
+    assert ''.join(_tokens(text)) == text
+    penalties = _phrase_break_penalties('買 了。')
+    assert not penalties  # A space is never swallowed into a grammar phrase.
+    assert_contract(text, 3, line_break_candidates(text, 3))
+
+
+@pytest.mark.parametrize('text,expected', [('就是說啊', '就是\n說啊'), ('好久不見了', '好久\n不見了'),
+                                          ('好久不見了。', '好久\n不見了。')])
+def test_only_particle_boundary_uses_explainable_original_jieba_alternative(text, expected):
+    results = line_break_candidates(text, 2)
+    assert_contract(text, 2, results)
+    assert results == [{'line_count': 2, 'text': expected}, {'line_count': 1, 'text': text}]
+
+
+def test_existing_good_particle_unit_wins_and_ordinal_units_remain_together():
+    results = line_break_candidates('喂喂！真的可以嗎！？', 2)
+    assert results[0] == {'line_count': 3, 'text': '喂喂！\n真的\n可以嗎！？'}
+    text = '第2輪比賽開始了。'
+    results = line_break_candidates(text, 2)
+    assert results[0] == {'line_count': 3, 'text': '第2輪\n比賽\n開始了。'}
+    assert_contract(text, 2, results)
+    assert all('第2輪' in result['text'] for result in results)
+
+
+@pytest.mark.parametrize('text', ['啊！', '喂！', '哦。', '好啊！', '啊啊！', '不了。'])
+def test_independent_exclamations_and_no_alternative_keep_feasible_counts_and_original(text):
+    results = line_break_candidates(text, 2)
+    assert results
+    assert_contract(text, 2, results)
+    assert any(result['line_count'] == 1 and result['text'] == text for result in results)
+    if text == '好啊！':
+        assert any(result['line_count'] == 2 for result in results)

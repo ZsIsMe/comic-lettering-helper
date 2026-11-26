@@ -25,7 +25,7 @@ from .text_replacements import replacement, validate_request
 from .question_records import chronological_records, rebind_imported_records, validate_question_records, validate_records
 from .import_metadata import labelplus_indices, merge_template, preserve_item_information
 from .import_line_breaks import (LINE_BREAK_SUGGESTIONS_VERSION, imported_sources, suggestions_for_page,
-                                upgrade_saved_suggestions, validate_archived_suggestions)
+                                refresh_changed_layouts, upgrade_saved_suggestions, validate_archived_suggestions)
 from .discussion_export import render_discussion
 
 
@@ -368,6 +368,7 @@ class PrelayoutStore:
             if revision != page['revision']:
                 raise Conflict('此頁已有較新版本，請保留草稿並重新載入')
             items = validate_items(items, page['width'], page['height'])
+            refresh_changed_layouts(state, items)
             updated = page['revision'] + 1
             relative = f'pages/{page_id}/{updated}-{identifier()}.json'
             operations = (state.get('operations', []) + [operation_id])[-128:]

@@ -150,6 +150,34 @@ def test_normal_save_reload_and_same_item_undo_keep_original_suggestion(chapter)
     assert store.translation(project['id'])['transMap']['1.png'][0]['text'] == TEXT
 
 
+def test_direction_edits_regenerate_candidates_from_imported_text(chapter, monkeypatch):
+    from app.prelayout import import_line_breaks as module
+    store, project, detector, client = chapter
+    prepare_detection(store, project, published=True)
+    value = draft()
+    value['transMap']['1.png'][0]['text'] = 'Wi Wi Wi 小米 打球 一起 練習'
+    original = value['transMap']['1.png'][0]['text']
+    calls = []
+    real = module.line_break_candidates
+
+    def spy(text, count, orientation, *, line_capacity):
+        calls.append((text, orientation, line_capacity))
+        return real(text, count, orientation, line_capacity=line_capacity)
+
+    monkeypatch.setattr(module, 'line_break_candidates', spy)
+    import_json(store, project, client, value)
+    state = page_state(store, project, client)
+    for direction, size in [('vertical', 23), ('horizontal', 23), ('horizontal', 30)]:
+        item = {**state['items'][0], 'orientation': direction, 'font-size': size, 'text': '我手動改過'}
+        state = store.save_page(project['id'], project['pages'][0]['id'], state['revision'],
+                                [item], f'change-{direction}-{size}')
+        assert state['items'][0]['text'] == '我手動改過'
+        assert state['line_break_suggestions'][item['_id']]['candidates'] == real(
+            original, 3, direction, line_capacity=60 / size if direction == 'horizontal' else 200 // size)
+    assert calls == [(original, 'horizontal', 60 / 23), (original, 'vertical', 8),
+                     (original, 'horizontal', 60 / 23), (original, 'horizontal', 2)]
+
+
 def test_explicit_rematch_uses_current_match_and_preserves_original_import(chapter):
     store, project, detector, client = chapter
     prepare_detection(store, project, source_counts=(4, 2), published=True)
@@ -229,7 +257,8 @@ def downgrade_to_two_candidates(store, project):
     return state
 
 
-def test_old_saved_candidates_upgrade_on_page_read_once_without_disk_writes(chapter, monkeypatch):
+@pytest.mark.parametrize('old_version', [1, 2])
+def test_old_saved_candidates_upgrade_on_page_read_once_without_disk_writes(chapter, monkeypatch, old_version):
     from app.prelayout import import_line_breaks as module
     store, project, detector, client = chapter
     prepare_detection(store, project, published=True)
@@ -237,14 +266,15 @@ def test_old_saved_candidates_upgrade_on_page_read_once_without_disk_writes(chap
     page = store.read(project['id'])['pages'][0]
     store.review_page(project['id'], page['id'], page['revision'], True)
     old = downgrade_to_two_candidates(store, project)
+    old['line_break_suggestions_version'] = old_version
     old['items'][0].update(text='人工修訂\n已保存內容', x=.7)
     atomic_json(store.directory(project['id']) / page['state'], old)
     before = disk_snapshot(store, project['id'])
     calls = []
     real = module.line_break_candidates
-    def spy(text, count):
-        calls.append((text, count))
-        return real(text, count)
+    def spy(text, count, orientation, *, line_capacity):
+        calls.append((text, count, orientation))
+        return real(text, count, orientation, line_capacity=line_capacity)
     monkeypatch.setattr(module, 'line_break_candidates', spy)
     for _ in range(3):
         current = page_state(store, project, client)
@@ -253,17 +283,17 @@ def test_old_saved_candidates_upgrade_on_page_read_once_without_disk_writes(chap
         options = current['line_break_suggestions'][old['items'][0]['_id']]
         assert [option['line_count'] for option in options['candidates']] == [4, 3, 2]
         assert options['original_text'] == TEXT
-    assert calls == [(TEXT, 3)]
+    assert calls == [(TEXT, 3, 'horizontal')]
     assert disk_snapshot(store, project['id']) == before
     # A normal text save persists the already cached metadata under the new revision.
     store.save_page(project['id'], project['pages'][0]['id'], current['revision'], current['items'], 'normal-save')
     saved_page = store.read(project['id'])['pages'][0]
     saved = json.loads((store.directory(project['id']) / saved_page['state']).read_text())
-    assert saved['line_break_suggestions_version'] == 2
+    assert saved['line_break_suggestions_version'] == 3
     assert saved['items'] == old['items']
-    assert calls == [(TEXT, 3)]
+    assert calls == [(TEXT, 3, 'horizontal')]
     assert PrelayoutStore(store.root).page(project['id'], saved_page['id'])['line_break_suggestions'] == current['line_break_suggestions']
-    assert calls == [(TEXT, 3)]
+    assert calls == [(TEXT, 3, 'horizontal')]
 
 
 def test_legacy_page_without_retained_original_information_is_not_guessed(chapter, monkeypatch):
@@ -283,7 +313,8 @@ def test_legacy_page_without_retained_original_information_is_not_guessed(chapte
     assert disk_snapshot(store, project['id']) == before
 
 
-def test_three_candidate_archive_roundtrip_and_old_archive_upgrade(chapter):
+@pytest.mark.parametrize('old_version', [1, 2])
+def test_three_candidate_archive_roundtrip_and_old_archive_upgrade(chapter, old_version):
     store, project, detector, client = chapter
     prepare_detection(store, project, published=True)
     import_json(store, project, client, draft())
@@ -293,7 +324,12 @@ def test_three_candidate_archive_roundtrip_and_old_archive_upgrade(chapter):
     state = store.page(imported['id'], imported['pages'][0]['id'])
     options = next(iter(state['line_break_suggestions'].values()))
     assert [option['line_count'] for option in options['candidates']] == [4, 3, 2]
-    downgrade_to_two_candidates(store, project)
+    old = downgrade_to_two_candidates(store, project)
+    old['line_break_suggestions_version'] = old_version
+    page = store.read(project['id'])['pages'][0]
+    for suggestion in old['line_break_suggestions'].values():
+        suggestion.pop('source_extent_px', None)
+    atomic_json(store.directory(project['id']) / page['state'], old)
     archive = store.export_archive(project['id'])
     imported_old = store.import_archive(archive.read_bytes(), 10_000_000)
     archive.unlink()
@@ -303,7 +339,7 @@ def test_three_candidate_archive_roundtrip_and_old_archive_upgrade(chapter):
     assert options['original_text'] == TEXT
 
 
-@pytest.mark.parametrize('corruption', ['four_options', 'wrong_count', 'duplicate_count', 'changed_text', 'version'])
+@pytest.mark.parametrize('corruption', ['four_options', 'wrong_count', 'duplicate_count', 'changed_text', 'extent', 'version'])
 def test_archive_candidate_validation_rejects_invalid_three_choice_metadata(chapter, corruption):
     from app.prelayout.import_line_breaks import validate_archived_suggestions
     store, project, detector, client = chapter
@@ -320,6 +356,8 @@ def test_archive_candidate_validation_rejects_invalid_three_choice_metadata(chap
         options[1] = copy.deepcopy(options[0])
     elif corruption == 'changed_text':
         options[0]['text'] += '！'
+    elif corruption == 'extent':
+        next(iter(state['line_break_suggestions'].values()))['source_extent_px'] = [1, 'bad']
     else:
         state['line_break_suggestions_version'] = True
     with pytest.raises(ValueError, match='封存斷句'):
