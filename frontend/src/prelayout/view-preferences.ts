@@ -10,6 +10,7 @@ export type ViewPreferences = {
   differenceOpacity: number
   focus: boolean
   showService: boolean
+  showTopControls: boolean
 }
 
 type PreferenceStorage = Pick<Storage, 'getItem' | 'setItem'>
@@ -31,7 +32,7 @@ export const viewPreferencesKey = 'pl-view-preferences'
 const defaults: Readonly<ViewPreferences> = {
   zoom: 1, compare: true, clean: true, backgroundOpacity: 1, showText: true, showMeasure: true,
   difference: false, differenceColor: '#ff288c', differenceOpacity: .4,
-  focus: false, showService: false,
+  focus: false, showService: false, showTopControls: true,
 }
 
 function record(value: unknown): value is Record<string, unknown> {
@@ -40,7 +41,7 @@ function record(value: unknown): value is Record<string, unknown> {
 
 function normalize(value: Record<string, unknown>): ViewPreferences {
   const result = { ...defaults }
-  for (const key of ['compare', 'clean', 'showText', 'showMeasure', 'difference', 'focus', 'showService'] as const) {
+  for (const key of ['compare', 'clean', 'showText', 'showMeasure', 'difference', 'focus', 'showService', 'showTopControls'] as const) {
     if (typeof value[key] === 'boolean') result[key] = value[key]
   }
   if (typeof value.zoom === 'number' && Number.isFinite(value.zoom)) result.zoom = Math.max(.5, Math.min(3, value.zoom))

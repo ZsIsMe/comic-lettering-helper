@@ -52,8 +52,16 @@
 @media(max-width:600px){.pl-replacement-inputs{grid-template-columns:1fr;gap:10px}.pl-text-replacement-modal .ant-modal-footer .ant-space{gap:6px!important}.pl-text-replacement-modal .ant-table-cell{padding:7px!important;font-size:12px}}
 
 /* Separate preparation, editing, display, and navigation in compact rows. */
-:root:has(.pl-compact-workspace:not(.pl-show-service)) .app-statusbar{display:none}
-.pl-compact-workspace:not(.pl-show-service){height:100dvh}
+:root:has(.pl-compact-workspace:not(.pl-show-service), .pl-top-controls-hidden) .app-statusbar{display:none}
+.pl-compact-workspace:not(.pl-show-service),.pl-workspace.pl-top-controls-hidden{height:100dvh}
+.pl-top-controls{flex:none}
+.pl-top-controls-toggle.ant-btn{
+  position:fixed;
+  inset-inline-end:max(12px, env(safe-area-inset-right));
+  inset-block-end:max(12px, env(safe-area-inset-bottom));
+  z-index:20;
+  box-shadow:0 2px 8px #0003;
+}
 .pl-compact-workspace .pl-toolbar{padding:4px 8px;gap:8px;flex:none;flex-wrap:wrap;min-height:32px}
 .pl-compact-workspace .pl-title{gap:6px;white-space:nowrap}
 .pl-compact-workspace .pl-title strong{font-size:13px;max-width:24vw}

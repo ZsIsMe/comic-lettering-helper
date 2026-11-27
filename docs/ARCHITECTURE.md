@@ -688,7 +688,9 @@ WebMCP 在預排版頁註冊檢查、修改、局部對比、撤銷、保存與�
 
 ## 預排版瀏覽器全局顯示偏好
 
-介面偏好（zoom、compare、clean、backgroundOpacity、showText、showMeasure、difference、differenceColor、differenceOpacity、focus、showService）集中保存於版本化的 localStorage 全局記錄 `pl-view-preferences`，不帶項目 ID。Workspace 初始化先讀全局值，UI 及支援相應偏好的 WebMCP 工具經相同狀態更新並寫回；已有有效全局值時不合入其他項目的舊值。缺少有效全局記錄時，僅以當前項目的 `pl-view-<id>` 與既有全局 `pl-difference-style` 初始化，再保存為全局；舊鍵保留但不再寫入。
+介面偏好（zoom、compare、clean、backgroundOpacity、showText、showMeasure、difference、differenceColor、differenceOpacity、focus、showService、showTopControls）集中保存於版本化的 localStorage 全局記錄 `pl-view-preferences`，不帶項目 ID。Workspace 初始化先讀全局值，UI 及支援相應偏好的 WebMCP 工具經相同狀態更新並寫回；已有有效全局值時不合入其他項目的舊值。缺少有效全局記錄時，僅以當前項目的 `pl-view-<id>` 與既有全局 `pl-difference-style` 初始化，再保存為全局；舊鍵保留但不再寫入。
+
+頂部收合偏好獨立於專注模式，切換時保留畫布和側欄的編輯狀態。收起時服務狀態列也隱藏，重新展開後依原服務狀態設定顯示。
 
 底圖透明度預設為 1，在左右預覽共用的畫布範圍以 CSS 套用。每側將原圖、修補層和放大圖塊合成後一起淡化，譯文、偵測框及差異高亮保有各自的顯示設定。
 

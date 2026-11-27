@@ -12,7 +12,7 @@ const { loadViewPreferences, saveViewPreferences, viewPreferencesKey } = moduleV
 const defaults = {
   zoom: 1, compare: true, clean: true, backgroundOpacity: 1, showText: true, showMeasure: true,
   difference: false, differenceColor: '#ff288c', differenceOpacity: .4,
-  focus: false, showService: false,
+  focus: false, showService: false, showTopControls: true,
 }
 function storage(entries = {}) {
   const values = new Map(Object.entries(entries))
@@ -25,7 +25,7 @@ test('latest preferences survive switching, a new project, and reloading includi
   const changed = {
     zoom: 1.5, compare: false, clean: false, backgroundOpacity: .35, showText: false, showMeasure: false,
     difference: true, differenceColor: '#c0ffee', differenceOpacity: 0,
-    focus: true, showService: true,
+    focus: true, showService: true, showTopControls: false,
   }
   saveViewPreferences(changed, target)
   for (const project of ['B', 'new-project', 'A']) assert.deepEqual(loadViewPreferences(project, target), changed)
@@ -70,7 +70,7 @@ test('saved fields require their real types and valid ranges without falling bac
   const target = storage({
     [viewPreferencesKey]: JSON.stringify({
       version: 1, zoom: '2', compare: 'false', clean: 0, showText: null,
-      showMeasure: [], difference: {}, focus: 1, showService: 'true',
+      showMeasure: [], difference: {}, focus: 1, showService: 'true', showTopControls: 'false',
       differenceColor: 'red', differenceOpacity: '0',
     }),
     'pl-view-A': '{"zoom":3,"compare":false}',

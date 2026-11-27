@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties, type ReactNode } from 'react'
-import { MoonOutlined, SunOutlined } from '@ant-design/icons'
+import { DownOutlined, MoonOutlined, SunOutlined, UpOutlined } from '@ant-design/icons'
 import { Alert, Button, Checkbox, ConfigProvider, Empty, Input, InputNumber, Modal, Popover, Select, Space, Spin, Tag, Tooltip, message, theme } from 'antd'
 import { base, body, files, projectPath, request } from './api'
 import { type Availability, type Detection, type Item, type Project, activeDetection, uid } from './types'
@@ -165,6 +165,7 @@ function Workspace({ project: initial, promptDetection, onExit, onReadyToLeave, 
   })
   const [view] = useState(() => loadViewPreferences(initial.id))
   const [focus, setFocus] = useState(view.focus)
+  const [showTopControls, setShowTopControls] = useState(view.showTopControls)
   const [current, setCurrent] = useState(initial.pages[0].id), [zoom, setZoom] = useState(view.zoom), [compare, setCompare] = useState(view.compare), [clean, setClean] = useState(view.clean), [difference, setDifference] = useState(view.difference), [showText, setShowText] = useState(view.showText), [showMeasure, setShowMeasure] = useState(view.showMeasure)
   const [differenceColor, setDifferenceColor] = useState(view.differenceColor), [differenceOpacity, setDifferenceOpacity] = useState(view.differenceOpacity)
   const [backgroundOpacity, setBackgroundOpacity] = useState(view.backgroundOpacity)
@@ -234,7 +235,7 @@ function Workspace({ project: initial, promptDetection, onExit, onReadyToLeave, 
   const errors = [...controller.pages.values()].filter(state => state.error).map(state => `${project.pages.find(page => page.id === state.data.id)?.name || state.data.id}：${state.error}`)
   const saving = [...controller.pages.values()].some(state => state.saving)
   useEffect(() => { try { localStorage.setItem(`pl-review-range-${initial.id}`, JSON.stringify(range)) } catch { /* Optional range preference. */ } }, [initial.id, range])
-  useEffect(() => { saveViewPreferences({ zoom, compare, clean, backgroundOpacity, difference, showText, showMeasure, differenceColor, differenceOpacity, focus, showService }) }, [zoom, compare, clean, backgroundOpacity, difference, showText, showMeasure, differenceColor, differenceOpacity, focus, showService])
+  useEffect(() => { saveViewPreferences({ zoom, compare, clean, backgroundOpacity, difference, showText, showMeasure, differenceColor, differenceOpacity, focus, showService, showTopControls }) }, [zoom, compare, clean, backgroundOpacity, difference, showText, showMeasure, differenceColor, differenceOpacity, focus, showService, showTopControls])
   useEffect(() => { if (!showText) { pointer.current = null; setSelection(value => value.ids.length ? { page: value.page, ids: [] } : value) } }, [showText])
   useEffect(() => {
     void request<Item[]>(`${base}/preferences`).then(setClipboard).catch(e => setError(e.message))
@@ -538,7 +539,7 @@ function Workspace({ project: initial, promptDetection, onExit, onReadyToLeave, 
   }, [controller, first, patch, selection, notices])
   const agent = usePrelayoutAgent({ controller, project, current, busy, fontReady, interacting, range, compare, difference, showText, differenceColor, differenceOpacity, zoom, focus, clean,
     go, setCompare, setClean, setDifference, setShowText, setDifferenceColor, setDifferenceOpacity, setZoom, setFocus, refreshProject: async () => setProject(await request<Project>(projectPath(project.id))) })
-  return <main className={`pl-shell pl-workspace pl-compact-workspace ${showService ? 'pl-show-service' : ''} ${focus ? 'pl-focus-mode' : ''}`}>{modalContext}{noticesContext}{agent.review}
+  return <main className={`pl-shell pl-workspace pl-compact-workspace ${showService ? 'pl-show-service' : ''} ${focus ? 'pl-focus-mode' : ''} ${showTopControls ? '' : 'pl-top-controls-hidden'}`}>{modalContext}{noticesContext}{agent.review}
     <TextReplacementModal open={replacementOpen} project={project} controller={controller} onClose={() => setReplacementOpen(false)}
       onBusyChange={setBusy} onProject={setProject} onReviewPage={go} />
     <QuestionRecordsModal onExportPendingChange={questionPendingChanged} currentPageId={questionsPage} open={questionsOpen} project={project} controller={controller} onClose={() => setQuestionsOpen(false)} />
@@ -611,48 +612,50 @@ function Workspace({ project: initial, promptDetection, onExit, onReadyToLeave, 
       <p>{!availability ? '正在檢查識別環境…' : !availability.methods[method] ? '尚未準備模型，可稍後再識別。' : availability.gpu_owner ? 'GPU 正忙，請稍後開始。' : '識別環境已就緒。'}</p>
       {error && <Alert type="error" message={error} />}
     </Modal>
-    <header className="pl-toolbar"><div className="pl-title"><Button size="small" onClick={() => void execute(async () => { if (await controller.flush()) await onExit() })}>項目列表</Button><strong title={project.name}>{project.name}</strong><Tag color={errors.length ? 'red' : controller.dirty ? 'orange' : 'green'}>{saving ? '保存中' : controller.dirty ? '尚未保存' : '已保存'}</Tag></div>
-      <Space size={4} wrap>
-        <Popover open={moreToolsOpen} onOpenChange={setMoreToolsOpen} trigger="click" placement="bottomRight" title="匯入與準備" content={<div className="pl-more-tools"><Space size={4} wrap>
-            {(['bt', 'labelplus', 'clean'] as const).filter((kind): boolean => kind !== 'clean' || showCleanUpload).map(kind => <Button size="small" key={kind} disabled={busy} onClick={() => { importKind.current = kind; if (fileInput.current) { fileInput.current.accept = kind === 'bt' ? '.json' : kind === 'labelplus' ? '.txt' : '.png,.jpg,.jpeg'; fileInput.current.multiple = kind === 'clean'; fileInput.current.click() } }}>{kind === 'bt' ? '開啟 Meo.json' : kind === 'labelplus' ? '匯入LP.txt' : '上傳去字圖'}</Button>)}
-            <Button size="small" disabled={busy || questionExportPending || inlineQuestionPending || activeDetection(task)} onClick={() => { setMoreToolsOpen(false); exportProject(false) }}>匯出 Meo.json</Button>
-            <Button size="small" onClick={() => { setMoreToolsOpen(false); setDetectionToolsOpen(true) }}>偵測與字級</Button>
-            <Button size="small" href="/downloads/LabelPlus_Ps_Script_ZS-1.8.0.zip" download="LabelPlus_Ps_Script_ZS-1.8.0.zip">配套PS腳本</Button>
-        </Space></div>}><Button size="small">匯入與準備 ▾{activeDetection(task) ? ' · 偵測中' : ''}</Button></Popover>
-        <Button size="small" onClick={() => void execute(async () => { await controller.flush() })}>保存</Button>
-        <Button size="small" onClick={() => setShortcutOpen(true)}>快捷鍵</Button>
-        <Checkbox checked={showService} onChange={e => setShowService(e.target.checked)}>服務狀態</Checkbox>
-      </Space>
-    </header>
-    <div className="pl-tool-row pl-edit-tools"><span className="pl-tool-label">編輯</span><Space size={[6, 4]} wrap>
-      <input hidden ref={fileInput} type="file" onChange={e => { const list = files(e.target.files); e.target.value = ''; void execute(() => importFile(list)) }} />
-      <Button size="small" disabled={!showText} onClick={() => add()}>新增文字</Button>
-      <Button size="small" onClick={() => controller.undo(selection.page)}>撤銷</Button><Button size="small" onClick={() => controller.undo(selection.page, true)}>重做</Button>
-            <Button size="small" onClick={() => void execute(openGroupOrganizer)}>整理分組</Button>
-            <Button size="small" disabled={busy || saving || activeDetection(task)} onClick={() => void execute(async () => {
-              if (!await controller.flush()) throw new Error('文字尚未保存，請先處理保存錯誤或版本衝突。')
-              setReplacementOpen(true)
-            })}>批量替換</Button>
-      <Button size="small" disabled={busy || activeDetection(task)} title="查看、新增與修改疑問記錄" onClick={() => { setQuestionsPage(current); setQuestionsOpen(true) }}>疑問記錄</Button>
-      <Button size="small" disabled={busy || questionExportPending || inlineQuestionPending || activeDetection(task)} title={inlineQuestionPending ? '疑問保存結果尚未確認，請先在右側重試保存' : questionExportPending ? '疑問保存結果尚未確認，請先在疑問記錄中重試保存' : '下載 Markdown：疑問置前，附逐頁全文、原文、註解與概括'} onClick={() => exportProject(true)}>導出疑問記錄</Button>
-    </Space></div>
-    <div className="pl-tool-row pl-display-tools"><span className="pl-tool-label">顯示</span><Space size={[8, 4]} wrap>
-      {themeToggle}
-      <Select size="small" aria-label="縮放" title="相對適合寬度的縮放比例" value={zoom} onChange={setZoom} options={[...new Set([.5, .75, 1, 1.5, 2, 3, zoom])].sort((a, b) => a - b).map(value => ({ value, label: value === 1 ? '適合寬度' : `${Math.round(value * 100)}%` }))} />
-      <Checkbox checked={compare} onChange={e => setCompare(e.target.checked)}>原圖對照</Checkbox><Checkbox checked={clean} onChange={e => setClean(e.target.checked)}>去字底圖</Checkbox><Checkbox checked={showText} onChange={e => setShowText(e.target.checked)}>顯示譯文</Checkbox>
-      <label className="pl-opacity-slider" title="同時調整編輯底圖與對照原圖的顯示濃度">
-        底圖透明度<input type="range" min="0" max="100" step="1" value={Math.round(backgroundOpacity * 100)} onChange={event => setBackgroundOpacity(Number(event.target.value) / 100)} />
-        <output aria-hidden="true">{Math.round(backgroundOpacity * 100)}%</output>
-      </label>
-            <Button size="small" disabled={!agent.hasReview} onClick={() => void agent.openReview().catch(e => setError(e.message))}>局部前後對比</Button>
-            <Checkbox checked={showMeasure} onChange={e => setShowMeasure(e.target.checked)}>偵測框</Checkbox>
-            <Checkbox checked={difference} disabled={!hasClean} title="以自訂顏色顯示原圖與去字圖的像素差異；只在記憶體計算。快捷鍵：H" onChange={e => setDifference(e.target.checked)}>差異高亮（H）</Checkbox>
-            <label className="pl-difference-setting" title="差異高亮顏色">顏色<input aria-label="差異高亮顏色" type="color" value={differenceColor} disabled={!hasClean} onChange={event => setDifferenceColor(event.target.value)} /></label>
-            <label className="pl-opacity-slider" title="差異高亮透明度">高亮透明度<input aria-label="差異高亮透明度" type="range" min="0" max="100" step="1" value={Math.round(differenceOpacity * 100)} disabled={!hasClean} onChange={event => setDifferenceOpacity(Number(event.target.value) / 100)} /><output>{Math.round(differenceOpacity * 100)}%</output></label>
-    </Space></div>
+    <div id="pl-top-controls" className="pl-top-controls" hidden={!showTopControls}>
+      <header className="pl-toolbar"><div className="pl-title"><Button size="small" onClick={() => void execute(async () => { if (await controller.flush()) await onExit() })}>項目列表</Button><strong title={project.name}>{project.name}</strong><Tag color={errors.length ? 'red' : controller.dirty ? 'orange' : 'green'}>{saving ? '保存中' : controller.dirty ? '尚未保存' : '已保存'}</Tag></div>
+        <Space size={4} wrap>
+          <Popover open={moreToolsOpen} onOpenChange={setMoreToolsOpen} trigger="click" placement="bottomRight" title="匯入與準備" content={<div className="pl-more-tools"><Space size={4} wrap>
+              {(['bt', 'labelplus', 'clean'] as const).filter((kind): boolean => kind !== 'clean' || showCleanUpload).map(kind => <Button size="small" key={kind} disabled={busy} onClick={() => { importKind.current = kind; if (fileInput.current) { fileInput.current.accept = kind === 'bt' ? '.json' : kind === 'labelplus' ? '.txt' : '.png,.jpg,.jpeg'; fileInput.current.multiple = kind === 'clean'; fileInput.current.click() } }}>{kind === 'bt' ? '開啟 Meo.json' : kind === 'labelplus' ? '匯入LP.txt' : '上傳去字圖'}</Button>)}
+              <Button size="small" disabled={busy || questionExportPending || inlineQuestionPending || activeDetection(task)} onClick={() => { setMoreToolsOpen(false); exportProject(false) }}>匯出 Meo.json</Button>
+              <Button size="small" onClick={() => { setMoreToolsOpen(false); setDetectionToolsOpen(true) }}>偵測與字級</Button>
+              <Button size="small" href="/downloads/LabelPlus_Ps_Script_ZS-1.8.0.zip" download="LabelPlus_Ps_Script_ZS-1.8.0.zip">配套PS腳本</Button>
+          </Space></div>}><Button size="small">匯入與準備 ▾{activeDetection(task) ? ' · 偵測中' : ''}</Button></Popover>
+          <Button size="small" onClick={() => void execute(async () => { await controller.flush() })}>保存</Button>
+          <Button size="small" onClick={() => setShortcutOpen(true)}>快捷鍵</Button>
+          <Checkbox checked={showService} onChange={e => setShowService(e.target.checked)}>服務狀態</Checkbox>
+        </Space>
+      </header>
+      <div className="pl-tool-row pl-edit-tools"><span className="pl-tool-label">編輯</span><Space size={[6, 4]} wrap>
+        <input hidden ref={fileInput} type="file" onChange={e => { const list = files(e.target.files); e.target.value = ''; void execute(() => importFile(list)) }} />
+        <Button size="small" disabled={!showText} onClick={() => add()}>新增文字</Button>
+        <Button size="small" onClick={() => controller.undo(selection.page)}>撤銷</Button><Button size="small" onClick={() => controller.undo(selection.page, true)}>重做</Button>
+              <Button size="small" onClick={() => void execute(openGroupOrganizer)}>整理分組</Button>
+              <Button size="small" disabled={busy || saving || activeDetection(task)} onClick={() => void execute(async () => {
+                if (!await controller.flush()) throw new Error('文字尚未保存，請先處理保存錯誤或版本衝突。')
+                setReplacementOpen(true)
+              })}>批量替換</Button>
+        <Button size="small" disabled={busy || activeDetection(task)} title="查看、新增與修改疑問記錄" onClick={() => { setQuestionsPage(current); setQuestionsOpen(true) }}>疑問記錄</Button>
+        <Button size="small" disabled={busy || questionExportPending || inlineQuestionPending || activeDetection(task)} title={inlineQuestionPending ? '疑問保存結果尚未確認，請先在右側重試保存' : questionExportPending ? '疑問保存結果尚未確認，請先在疑問記錄中重試保存' : '下載 Markdown：疑問置前，附逐頁全文、原文、註解與概括'} onClick={() => exportProject(true)}>導出疑問記錄</Button>
+      </Space></div>
+      <div className="pl-tool-row pl-display-tools"><span className="pl-tool-label">顯示</span><Space size={[8, 4]} wrap>
+        {themeToggle}
+        <Select size="small" aria-label="縮放" title="相對適合寬度的縮放比例" value={zoom} onChange={setZoom} options={[...new Set([.5, .75, 1, 1.5, 2, 3, zoom])].sort((a, b) => a - b).map(value => ({ value, label: value === 1 ? '適合寬度' : `${Math.round(value * 100)}%` }))} />
+        <Checkbox checked={compare} onChange={e => setCompare(e.target.checked)}>原圖對照</Checkbox><Checkbox checked={clean} onChange={e => setClean(e.target.checked)}>去字底圖</Checkbox><Checkbox checked={showText} onChange={e => setShowText(e.target.checked)}>顯示譯文</Checkbox>
+        <label className="pl-opacity-slider" title="同時調整編輯底圖與對照原圖的顯示濃度">
+          底圖透明度<input type="range" min="0" max="100" step="1" value={Math.round(backgroundOpacity * 100)} onChange={event => setBackgroundOpacity(Number(event.target.value) / 100)} />
+          <output aria-hidden="true">{Math.round(backgroundOpacity * 100)}%</output>
+        </label>
+              <Button size="small" disabled={!agent.hasReview} onClick={() => void agent.openReview().catch(e => setError(e.message))}>局部前後對比</Button>
+              <Checkbox checked={showMeasure} onChange={e => setShowMeasure(e.target.checked)}>偵測框</Checkbox>
+              <Checkbox checked={difference} disabled={!hasClean} title="以自訂顏色顯示原圖與去字圖的像素差異；只在記憶體計算。快捷鍵：H" onChange={e => setDifference(e.target.checked)}>差異高亮（H）</Checkbox>
+              <label className="pl-difference-setting" title="差異高亮顏色">顏色<input aria-label="差異高亮顏色" type="color" value={differenceColor} disabled={!hasClean} onChange={event => setDifferenceColor(event.target.value)} /></label>
+              <label className="pl-opacity-slider" title="差異高亮透明度">高亮透明度<input aria-label="差異高亮透明度" type="range" min="0" max="100" step="1" value={Math.round(differenceOpacity * 100)} disabled={!hasClean} onChange={event => setDifferenceOpacity(Number(event.target.value) / 100)} /><output>{Math.round(differenceOpacity * 100)}%</output></label>
+      </Space></div>
+      <PageNavigation pages={project.pages} current={current} range={range} onRange={setRange} onGo={go} reviewed={isReviewed}
+        onReview={reviewed => void execute(() => setReviewed(reviewed))} onFinishAndNext={() => void execute(finishAndNext)} busy={busy || saving} focus={focus} onFocus={setFocus} />
+    </div>
     {(error || errors.length > 0) && <Alert type="error" message={error || errors[0]} closable onClose={() => setError('')} />}
-    <PageNavigation pages={project.pages} current={current} range={range} onRange={setRange} onGo={go} reviewed={isReviewed}
-      onReview={reviewed => void execute(() => setReviewed(reviewed))} onFinishAndNext={() => void execute(finishAndNext)} busy={busy || saving} focus={focus} onFocus={setFocus} />
     <div className="pl-layout" style={{ '--pl-background-opacity': backgroundOpacity } as CSSProperties}>
       <ContinuousPages project={project} controller={controller} selection={selection} textPreview={activeLineBreakPreview} onSelect={select} onAdjust={adjust} zoom={zoom} onZoom={setZoom} compare={compare} clean={clean} difference={difference} differenceColor={differenceColor} differenceOpacity={differenceOpacity} showText={showText} showMeasure={showMeasure} jump={jump} onCurrent={currentPage} onMeasure={onMeasure} onPointer={pointerChanged} onFontWheel={fontWheel} onInteractionChange={interactionChanged} />
       <aside className="pl-inspector" aria-label="文字編輯">
@@ -681,5 +684,12 @@ function Workspace({ project: initial, promptDetection, onExit, onReadyToLeave, 
         }} />
       </aside>
     </div>
+    <Button className="pl-top-controls-toggle" icon={showTopControls ? <UpOutlined aria-hidden="true" /> : <DownOutlined aria-hidden="true" />}
+      aria-controls="pl-top-controls" aria-expanded={showTopControls} onClick={() => {
+        setMoreToolsOpen(false)
+        setShowTopControls(value => !value)
+      }}>
+      {showTopControls ? '收起頂部' : '顯示頂部'}
+    </Button>
   </main>
 }
