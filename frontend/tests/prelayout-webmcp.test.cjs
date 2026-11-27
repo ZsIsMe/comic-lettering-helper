@@ -60,6 +60,42 @@ test('text edits change line breaks only', () => {
   for (const text of ['甲乙丙戊', '甲 乙丙丁', '甲乙\r\n丙丁']) {
     assert.throws(() => applyPagePatches(page, [{ item_id: 'stable-a', set: { text } }]), /只能修改換行/)
   }
+  const legacy = fixture(); legacy.items[0].text = '甲乙\r\n丙丁'
+  assert.equal(applyPagePatches(legacy, [{ item_id: 'stable-a', set: { text: '甲\n乙丙丁' } }]).items[0].text, '甲\n乙丙丁')
+})
+
+test('line-break reads reuse verified candidates, preserve raw text and return LF texts ready for the patch path', () => {
+  const { pageLineBreakOptions, applyPagePatches } = moduleUnderTest()
+  const page = fixture(), original = '甲 乙，\r\n丙丁😀'
+  page.items[0].text = original
+  page.line_break_suggestions = { 'stable-a': { original_text: original, source_line_count: 2, candidates: [
+    { line_count: 2, text: '甲 乙，\n丙丁😀' }, { line_count: 3, text: '甲 \n乙，\n丙丁😀' },
+    { line_count: 1, text: '甲乙，丙丁😀' }, { line_count: 1, text: '甲 乙,丙丁😀' },
+  ] } }
+  const before = structuredClone(page)
+  const [first, missing] = pageLineBreakOptions(page, ['stable-a', 'stable-b'])
+  assert.deepEqual(first, { item_id: 'stable-a', current_text: original, original_text: original, source_line_count: 2, options: [
+    { label: '匯入原文 · 2列版', text: '甲 乙，\n丙丁😀', is_current: true },
+    { label: '3列版', text: '甲 \n乙，\n丙丁😀', is_current: false },
+  ], notice: '已列出目前提供的版本；相同斷句會合併顯示。' })
+  for (const option of first.options) assert.equal(applyPagePatches(page, [{ item_id: first.item_id, set: { text: option.text } }]).items[0].text, option.text)
+  assert.equal(missing.current_text, '另一項'); assert.deepEqual(missing.options, [])
+  assert.equal(missing.source_line_count, null); assert.equal('original_text' in missing, false)
+  assert.match(missing.notice, /缺少.*精確 CTD/)
+  assert.deepEqual(page, before)
+  page.items[0].text = '文字改動'
+  const [stale] = pageLineBreakOptions(page, ['stable-a'])
+  assert.deepEqual(stale.options, []); assert.equal('original_text' in stale, false)
+  assert.match(stale.notice, /文字已改動/)
+})
+
+test('line-break reads reject invalid batches and ambiguous identities without mutation', () => {
+  const { pageLineBreakOptions } = moduleUnderTest()
+  const page = fixture(), before = structuredClone(page)
+  for (const ids of [undefined, [], Array(21).fill('stable-a'), ['stable-a', 'stable-a'], ['missing'], [''], [4]]) assert.throws(() => pageLineBreakOptions(page, ids))
+  const duplicate = { ...page, items: [...page.items, { ...page.items[0] }] }
+  assert.throws(() => pageLineBreakOptions(duplicate, ['stable-a']), /不存在或 ID 重複/)
+  assert.deepEqual(page, before)
 })
 
 test('candidate groups branch from one draft and preserve its contents and revision', () => {
@@ -175,14 +211,14 @@ test('split expands a UTF-16 selection to complete surrogate pairs', () => {
 
 test('tool schemas are strict, unsupported context is harmless, and writes proxy only to host', async () => {
   const calls = []
-  const host = Object.fromEntries(['inspect', 'patch', 'split', 'compare', 'previewCandidates', 'undo', 'save', 'navigate', 'setView'].map(method => [method, async args => { calls.push([method, args]); return { method } }]))
+  const host = Object.fromEntries(['inspect', 'getLineBreakOptions', 'patch', 'split', 'compare', 'previewCandidates', 'undo', 'save', 'navigate', 'setView'].map(method => [method, async args => { calls.push([method, args]); return { method } }]))
   const absent = moduleUnderTest()
   assert.doesNotThrow(() => absent.registerPrelayoutTools(host)())
   const registered = new Map(), removed = []
   const modelContext = { registerTool(tool) { registered.set(tool.name, tool) }, unregisterTool(name) { removed.push(name) } }
   const { registerPrelayoutTools } = moduleUnderTest({ document: { modelContext } })
   const dispose = registerPrelayoutTools(host)
-  assert.equal(registered.size, 9)
+  assert.equal(registered.size, 10)
   for (const tool of registered.values()) {
     assert.equal(tool.inputSchema.additionalProperties, false)
     assert.equal(tool.inputSchema.type, 'object')
@@ -195,6 +231,16 @@ test('tool schemas are strict, unsupported context is harmless, and writes proxy
   const request = { token: 'current-token', patches: [{ item_id: 'stable-a', set: { text: '甲乙丙丁' } }] }
   assert.deepEqual(await patch.execute(request), { content: [{ type: 'text', text: '{"method":"patch"}' }] })
   assert.deepEqual(calls, [['patch', request]])
+  const lineBreaks = registered.get('prelayout_get_line_break_options')
+  assert.equal(lineBreaks.annotations.readOnlyHint, true)
+  assert.deepEqual(lineBreaks.inputSchema.required, ['token', 'item_ids'])
+  assert.equal(lineBreaks.inputSchema.properties.item_ids.minItems, 1)
+  assert.equal(lineBreaks.inputSchema.properties.item_ids.maxItems, 20)
+  assert.equal(lineBreaks.inputSchema.properties.item_ids.uniqueItems, true)
+  assert.equal(lineBreaks.inputSchema.properties.item_ids.items.minLength, 1)
+  const lineBreakRequest = { token: 'current-token', item_ids: ['stable-a'] }
+  assert.deepEqual(await lineBreaks.execute(lineBreakRequest), { content: [{ type: 'text', text: '{"method":"getLineBreakOptions"}' }] })
+  assert.deepEqual(calls.at(-1), ['getLineBreakOptions', lineBreakRequest])
   const preview = registered.get('prelayout_preview_candidates')
   assert.equal(preview.annotations.readOnlyHint, true)
   assert.deepEqual(preview.inputSchema.required, ['token', 'groups'])
@@ -230,5 +276,5 @@ test('tool schemas are strict, unsupported context is harmless, and writes proxy
   assert.deepEqual(calls.at(-1), ['setView', viewRequest])
   await Promise.resolve()
   dispose()
-  assert.equal(new Set(removed).size, 9)
+  assert.equal(new Set(removed).size, 10)
 })

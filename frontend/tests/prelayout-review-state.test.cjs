@@ -69,6 +69,34 @@ function harness(fetch, withHost = false, measure = async () => ({ risks: [], re
 }
 const response = data => ({ ok: true, json: async () => data })
 
+test('line-break tool reads the current draft without changing editor, preview, undo, completion or saves', async () => {
+  const { controller, state, timers, host } = harness(() => assert.fail('Read must not fetch'), true)
+  state.data.line_break_suggestions = { 'text-a': { original_text: '甲乙', source_line_count: 2, candidates: [{ line_count: 2, text: '甲\n乙' }] } }
+  const before = structuredClone(state), inspected = await host.inspect()
+  const result = await host.getLineBreakOptions({ token: inspected.token, item_ids: ['text-a'] })
+  assert.equal(result.token, inspected.token); assert.equal(result.project_id, 'review-test'); assert.equal(result.page_id, 'page-a')
+  assert.deepEqual(result.items[0].options, [{ label: '匯入原文', text: '甲乙', is_current: true }, { label: '2列版', text: '甲\n乙', is_current: false }])
+  assert.deepEqual(state, before); assert.equal(timers.size, 0)
+  assert.equal((await host.inspect()).token, inspected.token)
+  assert.deepEqual(controller.saveStatus.pending_saves, [])
+  controller.dispose()
+})
+
+test('line-break tool rejects stale pages and active text drafts rather than finishing edits', async () => {
+  const { controller, state, host, options } = harness(() => assert.fail('Read must not fetch'), true)
+  const token = (await host.inspect()).token
+  options.current = 'page-b'
+  await assert.rejects(host.getLineBreakOptions({ token, item_ids: ['text-a'] }), /頁面已變更/)
+  options.current = 'page-a'
+  controller.edit('page-a', [{ ...state.data.items[0], x: .6 }])
+  await assert.rejects(host.getLineBreakOptions({ token, item_ids: ['text-a'] }), /頁面已變更/)
+  const current = (await host.inspect()).token, before = structuredClone(state)
+  controller.beginTextDraft('page-a', () => assert.fail('Read must not finish draft'))
+  await assert.rejects(host.getLineBreakOptions({ token: current, item_ids: ['text-a'] }), /完成目前的編輯/)
+  assert.deepEqual(state, before)
+  controller.dispose()
+})
+
 test('batch candidate preview leaves editor data, completion, undo, saves, and token intact', async () => {
   const { controller, state, host } = harness(() => assert.fail('Preview must not write'), true)
   const before = structuredClone(state)

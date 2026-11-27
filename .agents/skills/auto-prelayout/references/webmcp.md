@@ -5,6 +5,7 @@
 依 Browser Use 文件連上 IAB 工作台，取得 WebMCP 工具並讀實際 schema；以下只記易錯處。頁面重載、工具變更或 handle 失效才重新取得。UI 用 cua_repl；DOM evaluate 僅唯讀，不注入 editor state、私有函式或 HTTP 寫入。
 
 - `prelayout_inspect_page`：保留完整結果，確認項目、頁面、範圍、修訂、保存狀態及穩定 `_id`。寫入與導航使用最新 token，不用陣列位置代替 ID。
+- `prelayout_get_line_break_options` 以當頁 `token` 和 `item_ids` 讀取最多 20 框的現況、可用匯入原文與斷句候選。只查需要改換行的框，避開與現況重複的版本。若候選會拆詞組或孤立助詞、語氣詞或標點，先淘汰。把符合語意的候選原樣放入 `prelayout_preview_candidates` 的 `set.text`，和其他已規劃的排版欄位一起試排；用 `prelayout_patch_page` 套用選中的版本。候選都不合適或工具回報沒有候選時，按語意規則手動換行。
 - `prelayout_patch_page`：同頁原子批次修改。`center` 是原圖像素，不能與 x/y 混用；text 只允許換行。套用共用人工撤銷與自動保存，不自動開對比。
 - `prelayout_preview_candidates`：一次提交當頁最新 `token` 和 `groups`，最多四組，每組最多四個候選。每組有 `label` 和 `candidates`，每個候選有 `label` 與現有 patch 形狀的 `patches`。同一方案可含多框，獨立區域各成一組。各方案從同一草稿獨立渲染，接觸表同時顯示原圖、現況與全部候選，不建立編輯或保存。原氣泡或附近線條超出文字框時，傳該組的 `region: [x1,y1,x2,y2]`（原圖像素）納入上下文。同組各格使用相同裁切及倍率。
 - `prelayout_split_item`：選取範圍以當前文字的 UTF-16 偏移表示，起點含、終點不含。保留拆前文字，以回傳的 `split.reading_order` 還原各段並核對字元（僅忽略換行）；以 `split.original_item_id`、`split.new_item_id` 和最新 token 定位。中段選取可使原框同時保留前後兩段，不能把文字框陣列順序當作原閱讀順序。若 `applied` 為真但缺 token 或有 warning，先 inspect，不重複拆框。

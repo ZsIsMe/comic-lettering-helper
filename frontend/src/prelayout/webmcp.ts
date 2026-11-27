@@ -1,4 +1,6 @@
 import { moved } from './geometry'
+import { lineBreakOptions, normalizeLineBreaks, sameCharacters } from './line-breaks'
+import { sourceLineCount } from './source-line-count'
 import { splitTextItem, splitTextParts } from './split-text'
 import type { Item, PageData } from './types'
 
@@ -10,6 +12,7 @@ export type PrelayoutCandidateGroup = { label: string; region?: [number, number,
 export type PrelayoutPreview = { token: string; groups: PrelayoutCandidateGroup[]; padding?: number }
 export type PrelayoutHost = {
   inspect: () => Promise<unknown>
+  getLineBreakOptions: (args: { token: string; item_ids: string[] }) => Promise<unknown>
   patch: (args: { token: string; patches: PrelayoutPatch[] }) => Promise<unknown>
   split: (args: PrelayoutSplit) => Promise<unknown>
   compare: (args: { token: string; view: 'edited' | 'original' | 'before' | 'detail'; region?: number; includeOriginal?: boolean; padding?: number }) => Promise<unknown>
@@ -29,6 +32,10 @@ type ModelContext = { registerTool: (tool: Tool) => void | Promise<void>; unregi
 
 const object = (properties: Record<string, Schema>, required: string[] = []): Schema => ({ type: 'object', properties, required, additionalProperties: false })
 const token = { type: 'string', minLength: 1, description: 'Exact current-page token returned by prelayout_inspect_page or the latest tool result. The page host rejects stale tokens.' }
+const lineBreakOptionsSchema = object({
+  token,
+  item_ids: { type: 'array', minItems: 1, maxItems: 20, uniqueItems: true, items: { type: 'string', minLength: 1 }, description: 'Stable current-page _id values from prelayout_inspect_page. Never use list positions or source block indices.' },
+}, ['token', 'item_ids'])
 const patchSetSchema = object({
   text: { type: 'string' }, x: { type: 'number', minimum: 0, maximum: 1 }, y: { type: 'number', minimum: 0, maximum: 1 },
   'font-size': { type: 'number', exclusiveMinimum: 0, maximum: 999 }, orientation: { type: 'string', enum: ['vertical', 'horizontal'] },
@@ -72,6 +79,28 @@ const validColor = (value: unknown, label: string): string => {
   return value
 }
 
+/** Read only the same verified versions offered by the adjustment panel. */
+export function pageLineBreakOptions(page: PageData, itemIds: string[]) {
+  if (!Array.isArray(itemIds) || itemIds.length < 1 || itemIds.length > 20 || itemIds.some(id => typeof id !== 'string' || !id)) throw new Error('請提供 1 至 20 個目前頁面的文字項目 ID。')
+  if (new Set(itemIds).size !== itemIds.length) throw new Error('文字項目 ID 不可重複。')
+  return itemIds.map(id => {
+    const matches = page.items.filter(item => item._id === id)
+    if (matches.length !== 1) throw new Error(`文字項目 ${id} 不存在或 ID 重複，請重新檢查頁面。`)
+    const item = matches[0], { options, notice } = lineBreakOptions(item, page)
+    const suggestions = page.line_break_suggestions?.[id]
+    const original = suggestions && options.some(option => option.text === suggestions.original_text) ? suggestions.original_text : undefined
+    const measured = sourceLineCount(item, page)
+    const count = original !== undefined ? suggestions?.source_line_count : null
+    return {
+      item_id: id, current_text: item.text,
+      ...(original !== undefined ? { original_text: original } : {}),
+      source_line_count: typeof count === 'number' && Number.isInteger(count) && count > 0 ? count
+        : measured.source_line_count_source === 'ctd_lines' ? measured.source_line_count : null,
+      options: options.map(option => ({ ...option, text: normalizeLineBreaks(option.text), is_current: normalizeLineBreaks(option.text) === normalizeLineBreaks(item.text) })), notice,
+    }
+  })
+}
+
 /** Validate a whole batch before returning a new page; the supplied page is never mutated. */
 export function applyPagePatches(page: PageData, patches: PrelayoutPatch[]): PageData {
   if (!page || !Array.isArray(page.items)) throw new Error('頁面缺少文字項目。')
@@ -110,7 +139,7 @@ export function applyPagePatches(page: PageData, patches: PrelayoutPatch[]): Pag
       ? moved(original, dx, dy, width, height)
       : { ...original }
     if (own(set, 'text')) {
-      if (typeof set.text !== 'string' || set.text.replaceAll('\n', '') !== original.text.replaceAll('\n', '')) throw new Error(`文字項目 ${patch.item_id} 只能修改換行，不能更改譯文。`)
+      if (typeof set.text !== 'string' || set.text.includes('\r') || !sameCharacters(original.text, set.text)) throw new Error(`文字項目 ${patch.item_id} 只能修改換行，不能更改譯文。`)
       updated = { ...updated, text: set.text }
     }
     if (own(set, 'font-size')) updated = { ...updated, 'font-size': finite(set['font-size'], Number.MIN_VALUE, 999, 'font-size') }
@@ -186,6 +215,7 @@ export function applyPageSplit(page: PageData, itemId: string, start: number, en
 export function prelayoutToolDefinitions(host: PrelayoutHost): Tool[] {
   const entries: [string, string, Schema, keyof PrelayoutHost, boolean][] = [
     ['prelayout_inspect_page', 'Read the current draft page, stable item IDs, geometry, saved status, and concurrency token.', object({}, []), 'inspect', true],
+    ['prelayout_get_line_break_options', 'Read verified existing line-break versions for 1–20 current-page stable item IDs without changing content, selection, preview, undo, completion, or saves. Returns current_text, available original_text, source_line_count or null, options with label/text/is_current, and availability notices. Missing suggestions return no options. Preview returned texts with prelayout_preview_candidates and apply chosen text with prelayout_patch_page using this token.', lineBreakOptionsSchema, 'getLineBreakOptions', true],
     ['prelayout_patch_page', 'Atomically edit current draft items by stable ID. Text may change line breaks only. The host validates the current token and saves through its normal editor state.', object({ token, patches: { type: 'array', items: patchSchema, minItems: 1 } }, ['token', 'patches']), 'patch', false],
     ['prelayout_split_item', 'Split a nonempty UTF-16 selection into a new text box using the editor split operation. Preserves all text characters and returns the actual reading-order segments.', splitSchema, 'split', false],
     ['prelayout_compare_page', 'Show the edited, original, before, or latest local before/after detail view for visual review.', object({ token, view: { type: 'string', enum: ['edited', 'original', 'before', 'detail'] }, region: { type: 'integer', minimum: 0 }, includeOriginal: { type: 'boolean' }, padding: { type: 'number', minimum: 16, maximum: 300 } }, ['token', 'view']), 'compare', false],

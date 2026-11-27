@@ -2,7 +2,7 @@ import { sourceLineCount } from './source-line-count'
 import { useEffect, useLayoutEffect, useRef, useState, type RefObject } from 'react'
 import type { EditorState } from './editor-state'
 import type { PageData, Project } from './types'
-import { applyPagePatches, applyPageSplit, preparePreviewCandidates, registerPrelayoutTools, type PrelayoutHost } from './webmcp'
+import { applyPagePatches, applyPageSplit, pageLineBreakOptions, preparePreviewCandidates, registerPrelayoutTools, type PrelayoutHost } from './webmcp'
 import { candidateRegion, cropRegions, measurePage } from './layout-review'
 import { CandidateReview, LayoutReview, type CandidateReviewData } from './LayoutReview'
 import { currentViewMode, resolveViewChange, type ViewState } from './view-modes'
@@ -150,6 +150,10 @@ export function usePrelayoutAgent(options: Options) {
     }
     const host: PrelayoutHost = {
       inspect,
+      getLineBreakOptions: async args => {
+        const { id, state } = await checked(args.token)
+        return { token: args.token, project_id: latest.current.project.id, page_id: id, items: pageLineBreakOptions(state.data, args.item_ids) }
+      },
       patch: async args => {
         const { id, state } = await checked(args.token, true)
         const before = structuredClone(state.data), after = applyPagePatches(before, args.patches)
