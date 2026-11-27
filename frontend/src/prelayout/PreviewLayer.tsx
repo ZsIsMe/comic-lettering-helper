@@ -11,8 +11,8 @@ export const PreviewLayer = memo(function PreviewLayer({ project, page, edge, sc
   // fixed through a gesture, just as text geometry does.
   const snapshot = useRef({ options: baseLayerOptions(page, edge, !!region), tiles: layerTiles(page, scale, region, detailed, devicePixelRatio) })
   if (!interacting) snapshot.current = { options: baseLayerOptions(page, edge, !!region), tiles: layerTiles(page, scale, region, detailed, devicePixelRatio) }
-  return <>
+  return <div className="pl-preview-background">
     <LayeredImage project={project} page={page} clean={clean} options={snapshot.current.options} interacting={interacting} errorScale={1 / scale} />
     {snapshot.current.tiles.map(tile => <LayeredImage key={`${tile.x}:${tile.y}:${tile.width}:${tile.height}`} project={project} page={page} clean={clean} options={tile.options} interacting={interacting} className="pl-detail-tile" tile errorScale={1 / scale} style={{ left: tile.x, top: tile.y, width: tile.width, height: tile.height }} />)}
-  </>
+  </div>
 })

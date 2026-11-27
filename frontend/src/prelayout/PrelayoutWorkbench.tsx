@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react'
-import { Alert, Button, Checkbox, Empty, Input, InputNumber, Modal, Popover, Select, Space, Spin, Tag, Tooltip, message } from 'antd'
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore, type CSSProperties, type ReactNode } from 'react'
+import { MoonOutlined, SunOutlined } from '@ant-design/icons'
+import { Alert, Button, Checkbox, ConfigProvider, Empty, Input, InputNumber, Modal, Popover, Select, Space, Spin, Tag, Tooltip, message, theme } from 'antd'
 import { base, body, files, projectPath, request } from './api'
 import { type Availability, type Detection, type Item, type Project, activeDetection, uid } from './types'
 import { EditorState } from './editor-state'
@@ -30,7 +31,7 @@ import type { GroupImportResult } from './group-import'
 import { AlignmentControls } from './AlignmentControls'
 import { LineBreakControls } from './LineBreakControls'
 import { lineBreakPreviewMatches, type LineBreakPreview } from './line-breaks'
-import { loadViewPreferences, saveViewPreferences } from './view-preferences'
+import { loadPrelayoutTheme, loadViewPreferences, savePrelayoutTheme, saveViewPreferences } from './view-preferences'
 import { ProjectLibrary } from './ProjectLibrary'
 import { loadRecentProjectIds, recentProjectsKey, rememberProjectOpen } from './recent-projects'
 import './styles.css'
@@ -42,7 +43,36 @@ const detectionMethodOptions = [
   { value: 'fixed', label: '固定字體大小' },
 ]
 
-export default function PrelayoutWorkbench({ onExit, onReadyToLeave }: { onExit: () => void; onReadyToLeave?: (handler: () => Promise<boolean>) => void }) {
+const lightTheme = { algorithm: theme.defaultAlgorithm }
+const darkTheme = {
+  algorithm: theme.darkAlgorithm,
+  token: {
+    colorPrimary: '#a95434', colorPrimaryHover: '#b25735',
+    colorText: '#e8eaf0', colorBgBase: '#262b33',
+    colorBgContainer: '#2e3540', colorBgElevated: '#343c48',
+    colorBorder: '#4b5564', colorBorderSecondary: '#434c5a',
+  },
+}
+
+type WorkbenchProps = { onExit: () => void; onReadyToLeave?: (handler: () => Promise<boolean>) => void }
+
+export default function PrelayoutWorkbench(props: WorkbenchProps) {
+  const [colorTheme, setColorTheme] = useState(loadPrelayoutTheme)
+  const dark = colorTheme === 'dark'
+  useEffect(() => { savePrelayoutTheme(colorTheme) }, [colorTheme])
+
+  const themeToggle = <Button size="small" aria-label={dark ? '切換為淺色主題' : '切換為深色主題'}
+    icon={dark ? <SunOutlined /> : <MoonOutlined />} onClick={() => setColorTheme(value => value === 'dark' ? 'light' : 'dark')}>
+    {dark ? '淺色主題' : '深色主題'}
+  </Button>
+  return <ConfigProvider theme={dark ? darkTheme : lightTheme}>
+    <div className="pl-theme" data-theme={colorTheme}>
+      <PrelayoutContent {...props} themeToggle={themeToggle} />
+    </div>
+  </ConfigProvider>
+}
+
+function PrelayoutContent({ onExit, onReadyToLeave, themeToggle }: WorkbenchProps & { themeToggle: ReactNode }) {
   const [modal, modalContext] = Modal.useModal()
   const [projects, setProjects] = useState<Project[]>([]), [current, setCurrent] = useState<Project | null>(null)
   const [recentProjectIds, setRecentProjectIds] = useState(() => loadRecentProjectIds())
@@ -85,12 +115,13 @@ export default function PrelayoutWorkbench({ onExit, onReadyToLeave }: { onExit:
     setBusy(true); setError('')
     try { await fn() } catch (e) { setError((e as Error).message) } finally { setBusy(false) }
   }
-  if (current) return <Workspace key={current.id} project={current} promptDetection={newProjectId === current.id} onReadyToLeave={onReadyToLeave} onExit={async () => {
+  if (current) return <Workspace key={current.id} project={current} themeToggle={themeToggle} promptDetection={newProjectId === current.id} onReadyToLeave={onReadyToLeave} onExit={async () => {
     try { localStorage.removeItem('pl-last-project') } catch { /* Optional resume preference. */ }
     setNewProjectId(null); setCurrent(null); await reload()
   }} />
   return <main className="pl-shell pl-home pl-home--list">{modalContext}
     <header className="pl-home-header"><div><span className="pl-kicker">LETTERING STUDIO</span><h1>漫畫預排版</h1><p>匯入譯文，在連續漫畫頁上調整文字與樣式。</p></div><Space wrap>
+      {themeToggle}
       <Button onClick={onExit}>返回圖片修復</Button>
       <Button href="/downloads/LabelPlus_Ps_Script_ZS-1.8.0.zip" download="LabelPlus_Ps_Script_ZS-1.8.0.zip">配套PS腳本</Button>
       <label className="pl-file">匯入預排版項目<input type="file" accept=".zip" disabled={busy} onChange={e => {
@@ -117,7 +148,7 @@ export default function PrelayoutWorkbench({ onExit, onReadyToLeave }: { onExit:
   </main>
 }
 
-function Workspace({ project: initial, promptDetection, onExit, onReadyToLeave }: { project: Project; promptDetection: boolean; onExit: () => Promise<void>; onReadyToLeave?: (handler: () => Promise<boolean>) => void }) {
+function Workspace({ project: initial, promptDetection, onExit, onReadyToLeave, themeToggle }: { project: Project; promptDetection: boolean; onExit: () => Promise<void>; onReadyToLeave?: (handler: () => Promise<boolean>) => void; themeToggle: ReactNode }) {
   const [modal, modalContext] = Modal.useModal()
   const [notices, noticesContext] = message.useMessage()
   const [project, setProject] = useState(initial)
@@ -136,6 +167,7 @@ function Workspace({ project: initial, promptDetection, onExit, onReadyToLeave }
   const [focus, setFocus] = useState(view.focus)
   const [current, setCurrent] = useState(initial.pages[0].id), [zoom, setZoom] = useState(view.zoom), [compare, setCompare] = useState(view.compare), [clean, setClean] = useState(view.clean), [difference, setDifference] = useState(view.difference), [showText, setShowText] = useState(view.showText), [showMeasure, setShowMeasure] = useState(view.showMeasure)
   const [differenceColor, setDifferenceColor] = useState(view.differenceColor), [differenceOpacity, setDifferenceOpacity] = useState(view.differenceOpacity)
+  const [backgroundOpacity, setBackgroundOpacity] = useState(view.backgroundOpacity)
   const [jump, setJump] = useState<{ id: string; version: number; x?: number; y?: number } | null>(null), [error, setError] = useState(''), [busy, setBusy] = useState(false)
   const [pendingOnly, setPendingOnly] = useState(false)
   const [availability, setAvailability] = useState<Availability | null>(null), [task, setTask] = useState<Detection | null>(null)
@@ -202,7 +234,7 @@ function Workspace({ project: initial, promptDetection, onExit, onReadyToLeave }
   const errors = [...controller.pages.values()].filter(state => state.error).map(state => `${project.pages.find(page => page.id === state.data.id)?.name || state.data.id}：${state.error}`)
   const saving = [...controller.pages.values()].some(state => state.saving)
   useEffect(() => { try { localStorage.setItem(`pl-review-range-${initial.id}`, JSON.stringify(range)) } catch { /* Optional range preference. */ } }, [initial.id, range])
-  useEffect(() => { saveViewPreferences({ zoom, compare, clean, difference, showText, showMeasure, differenceColor, differenceOpacity, focus, showService }) }, [zoom, compare, clean, difference, showText, showMeasure, differenceColor, differenceOpacity, focus, showService])
+  useEffect(() => { saveViewPreferences({ zoom, compare, clean, backgroundOpacity, difference, showText, showMeasure, differenceColor, differenceOpacity, focus, showService }) }, [zoom, compare, clean, backgroundOpacity, difference, showText, showMeasure, differenceColor, differenceOpacity, focus, showService])
   useEffect(() => { if (!showText) { pointer.current = null; setSelection(value => value.ids.length ? { page: value.page, ids: [] } : value) } }, [showText])
   useEffect(() => {
     void request<Item[]>(`${base}/preferences`).then(setClipboard).catch(e => setError(e.message))
@@ -605,18 +637,23 @@ function Workspace({ project: initial, promptDetection, onExit, onReadyToLeave }
       <Button size="small" disabled={busy || questionExportPending || inlineQuestionPending || activeDetection(task)} title={inlineQuestionPending ? '疑問保存結果尚未確認，請先在右側重試保存' : questionExportPending ? '疑問保存結果尚未確認，請先在疑問記錄中重試保存' : '下載 Markdown：疑問置前，附逐頁全文、原文、註解與概括'} onClick={() => exportProject(true)}>導出疑問記錄</Button>
     </Space></div>
     <div className="pl-tool-row pl-display-tools"><span className="pl-tool-label">顯示</span><Space size={[8, 4]} wrap>
+      {themeToggle}
       <Select size="small" aria-label="縮放" title="相對適合寬度的縮放比例" value={zoom} onChange={setZoom} options={[...new Set([.5, .75, 1, 1.5, 2, 3, zoom])].sort((a, b) => a - b).map(value => ({ value, label: value === 1 ? '適合寬度' : `${Math.round(value * 100)}%` }))} />
       <Checkbox checked={compare} onChange={e => setCompare(e.target.checked)}>原圖對照</Checkbox><Checkbox checked={clean} onChange={e => setClean(e.target.checked)}>去字底圖</Checkbox><Checkbox checked={showText} onChange={e => setShowText(e.target.checked)}>顯示譯文</Checkbox>
+      <label className="pl-opacity-slider" title="同時調整編輯底圖與對照原圖的顯示濃度">
+        底圖透明度<input type="range" min="0" max="100" step="1" value={Math.round(backgroundOpacity * 100)} onChange={event => setBackgroundOpacity(Number(event.target.value) / 100)} />
+        <output aria-hidden="true">{Math.round(backgroundOpacity * 100)}%</output>
+      </label>
             <Button size="small" disabled={!agent.hasReview} onClick={() => void agent.openReview().catch(e => setError(e.message))}>局部前後對比</Button>
             <Checkbox checked={showMeasure} onChange={e => setShowMeasure(e.target.checked)}>偵測框</Checkbox>
             <Checkbox checked={difference} disabled={!hasClean} title="以自訂顏色顯示原圖與去字圖的像素差異；只在記憶體計算。快捷鍵：H" onChange={e => setDifference(e.target.checked)}>差異高亮（H）</Checkbox>
             <label className="pl-difference-setting" title="差異高亮顏色">顏色<input aria-label="差異高亮顏色" type="color" value={differenceColor} disabled={!hasClean} onChange={event => setDifferenceColor(event.target.value)} /></label>
-            <label className="pl-difference-setting pl-difference-opacity" title="差異高亮透明度">透明度<input aria-label="差異高亮透明度" type="range" min="0" max="100" step="1" value={Math.round(differenceOpacity * 100)} disabled={!hasClean} onChange={event => setDifferenceOpacity(Number(event.target.value) / 100)} /><output>{Math.round(differenceOpacity * 100)}%</output></label>
+            <label className="pl-opacity-slider" title="差異高亮透明度">高亮透明度<input aria-label="差異高亮透明度" type="range" min="0" max="100" step="1" value={Math.round(differenceOpacity * 100)} disabled={!hasClean} onChange={event => setDifferenceOpacity(Number(event.target.value) / 100)} /><output>{Math.round(differenceOpacity * 100)}%</output></label>
     </Space></div>
     {(error || errors.length > 0) && <Alert type="error" message={error || errors[0]} closable onClose={() => setError('')} />}
     <PageNavigation pages={project.pages} current={current} range={range} onRange={setRange} onGo={go} reviewed={isReviewed}
       onReview={reviewed => void execute(() => setReviewed(reviewed))} onFinishAndNext={() => void execute(finishAndNext)} busy={busy || saving} focus={focus} onFocus={setFocus} />
-    <div className="pl-layout">
+    <div className="pl-layout" style={{ '--pl-background-opacity': backgroundOpacity } as CSSProperties}>
       <ContinuousPages project={project} controller={controller} selection={selection} textPreview={activeLineBreakPreview} onSelect={select} onAdjust={adjust} zoom={zoom} onZoom={setZoom} compare={compare} clean={clean} difference={difference} differenceColor={differenceColor} differenceOpacity={differenceOpacity} showText={showText} showMeasure={showMeasure} jump={jump} onCurrent={currentPage} onMeasure={onMeasure} onPointer={pointerChanged} onFontWheel={fontWheel} onInteractionChange={interactionChanged} />
       <aside className="pl-inspector" aria-label="文字編輯">
         <div className="pl-inspector-title"><h2>文字編輯</h2><Tooltip title="雙擊頁面文字可原位編輯；Mac 也可用 ⌘＋單擊，並支援直排。Enter 換行；⌘／Ctrl＋Enter 完成；Esc 保存並結束編輯。"><button type="button" className="pl-help" aria-label="文字編輯說明">?</button></Tooltip></div>{state?.conflict && <Space wrap><Button onClick={() => void execute(() => controller.resolve(selection.page, true))}>保留我的草稿</Button><Button onClick={() => void execute(() => controller.resolve(selection.page, false))}>載入伺服器版</Button></Space>}

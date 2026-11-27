@@ -688,7 +688,13 @@ WebMCP 在預排版頁註冊檢查、修改、局部對比、撤銷、保存與�
 
 ## 預排版瀏覽器全局顯示偏好
 
-十項介面偏好（zoom、compare、clean、showText、showMeasure、difference、differenceColor、differenceOpacity、focus、showService）集中保存於版本化的 localStorage 全局記錄 `pl-view-preferences`，不帶項目 ID。Workspace 初始化先讀全局值，UI 及 WebMCP 經相同狀態更新並寫回；已有有效全局值時不合入其他項目的舊值。缺少有效全局記錄時，僅以當前項目的 `pl-view-<id>` 與既有全局 `pl-difference-style` 初始化，再保存為全局；舊鍵保留但不再寫入。
+介面偏好（zoom、compare、clean、backgroundOpacity、showText、showMeasure、difference、differenceColor、differenceOpacity、focus、showService）集中保存於版本化的 localStorage 全局記錄 `pl-view-preferences`，不帶項目 ID。Workspace 初始化先讀全局值，UI 及支援相應偏好的 WebMCP 工具經相同狀態更新並寫回；已有有效全局值時不合入其他項目的舊值。缺少有效全局記錄時，僅以當前項目的 `pl-view-<id>` 與既有全局 `pl-difference-style` 初始化，再保存為全局；舊鍵保留但不再寫入。
+
+底圖透明度預設為 1，在左右預覽共用的畫布範圍以 CSS 套用。每側將原圖、修補層和放大圖塊合成後一起淡化，譯文、偵測框及差異高亮保有各自的顯示設定。
+
+預排版主題用獨立的 `pl-color-theme` 瀏覽器偏好，項目列表與編輯頁共用。Ant Design 主題由預排版自己的 ConfigProvider 設定，自訂面板與彈窗使用對應的 CSS 色彩。深色主題的左右畫布使用灰色作為圖層背後的預覽底色，淺色主題使用白底。底色透過圖層透明處可見，圖像與文字依既有預覽設定渲染。
+
+深色主題在底圖上繪製黑字框的矩形襯底，再疊加差異高亮與譯文。襯底跟隨實際文字框的尺寸和位置，不透明度為 `1 - backgroundOpacity`，僅用於編輯預覽。
 
 讀取驗證物件形狀、布林值、有限縮放範圍、十六進位顏色及透明度；localStorage 無法使用時安全回退。無去字底圖不清除使用者的高亮偏好，專注模式的 Esc 行為保留。頁碼範圍 `pl-review-range-<id>` 與閱讀位置 `pl-position-<id>` 仍按項目管理；不新增後端資料、不修改排版內容或完成標記。
 

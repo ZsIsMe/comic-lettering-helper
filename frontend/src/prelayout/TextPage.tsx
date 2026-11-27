@@ -1,11 +1,11 @@
-import { memo, useEffect, useRef, useState, useSyncExternalStore } from 'react'
+import { memo, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore } from 'react'
 import type { PointerEvent as ReactPointer } from 'react'
 import { type Item, type Page, type CharacterBox, uid } from './types'
 import { EditorState } from './editor-state'
 import { PreviewLayer } from './PreviewLayer'
 import { textStyle } from './layout-review'
 import { selectionIds, selectTextItem, moved, resized, transform, type Selection, type PagePointer, type VisibleRegion } from './geometry'
-import { adjustedItems, type TextAdjustment } from './shortcuts'
+import { adjustedItems, isBlack, type TextAdjustment } from './shortcuts'
 import { CharacterOverlay, type CharacterOverlayHandle } from './CharacterOverlay'
 import { InlineTextEditor } from './InlineTextEditor'
 import { fontLabel, quickControlLabel, textInfoLabel, type QuickControlKind } from './text-control-labels'
@@ -42,6 +42,7 @@ export const TextPage = memo(function TextPage({ project, page, scale, edge, cle
   const [error, setError] = useState('')
   const [editing, setEditing] = useState<{ id: string; x: number; y: number } | null>(null)
   const state = controller.pages.get(page.id)
+  const visibleItems = !readonly && showText ? state?.data.items : undefined
   const scene = useRef<HTMLDivElement>(null)
   const characterOverlay = useRef<CharacterOverlayHandle>(null)
   const dragging = useRef<{ pointer: number; start: number[]; mode: string; items: Item[]; originals: Item[]; center: number[]; selected: string[]; angle: number; scale: number } | null>(null)
@@ -49,6 +50,29 @@ export const TextPage = memo(function TextPage({ project, page, scale, edge, cle
   const latest = useRef<number[]>([])
   useEffect(() => { controller.load(page.id).catch(e => setError(String(e))) }, [controller, page.id])
   useEffect(() => () => cancelAnimationFrame(frame.current), [])
+  useLayoutEffect(() => {
+    const root = scene.current
+    if (!root || !visibleItems?.length) return
+    const backdrops = new Map(Array.from(root.querySelectorAll<HTMLElement>('[data-text-backdrop]'), node => [node.dataset.textBackdrop, node]))
+    const observer = new ResizeObserver(entries => {
+      for (const { target, contentRect } of entries) {
+        const backdrop = backdrops.get((target as HTMLElement).dataset.item)
+        if (!backdrop) continue
+        backdrop.style.width = `${contentRect.width}px`
+        backdrop.style.height = `${contentRect.height}px`
+      }
+    })
+    for (const node of root.querySelectorAll<HTMLElement>('.pl-text[data-item]')) {
+      if (backdrops.has(node.dataset.item)) observer.observe(node)
+    }
+    return () => observer.disconnect()
+  }, [visibleItems])
+
+  function setFrameTransform(node: HTMLElement, itemId: string, value: string) {
+    node.style.transform = value
+    const backdrop = scene.current?.querySelector<HTMLElement>(`[data-text-backdrop="${CSS.escape(itemId)}"]`)
+    if (backdrop) backdrop.style.transform = value
+  }
 
   function paint() {
     const drag = dragging.current
@@ -66,7 +90,7 @@ export const TextPage = memo(function TextPage({ project, page, scale, edge, cle
       const node = scene.current?.querySelector<HTMLElement>(`[data-item="${item._id}"]`)
       if (node) {
         const original = drag.originals.find(value => value._id === item._id)!
-        node.style.transform = `translate(${(item.x - original.x) * page.width}px, ${(item.y - original.y) * page.height}px) ${transform(item)}`
+        setFrameTransform(node, item._id, `translate(${(item.x - original.x) * page.width}px, ${(item.y - original.y) * page.height}px) ${transform(item)}`)
         const box = node.querySelector<HTMLElement>('.pl-source-box')
         if (box && item.xyxy_pixel) { box.style.width = `${item.xyxy_pixel[2] - item.xyxy_pixel[0]}px`; box.style.height = `${item.xyxy_pixel[3] - item.xyxy_pixel[1]}px` }
       }
@@ -111,7 +135,7 @@ export const TextPage = memo(function TextPage({ project, page, scale, edge, cle
     for (const item of drag.items) {
       const node = scene.current?.querySelector<HTMLElement>(`[data-item="${item._id}"]`)
       if (node) {
-        node.style.transform = transform(item); node.style.willChange = ''
+        setFrameTransform(node, item._id, transform(item)); node.style.willChange = ''
         const box = node.querySelector<HTMLElement>('.pl-source-box')
         if (box) { box.style.width = `${item.xyxy_pixel ? item.xyxy_pixel[2] - item.xyxy_pixel[0] : 60}px`; box.style.height = `${item.xyxy_pixel ? item.xyxy_pixel[3] - item.xyxy_pixel[1] : 60}px` }
       }
@@ -160,8 +184,10 @@ export const TextPage = memo(function TextPage({ project, page, scale, edge, cle
       if (!event.shiftKey) onSelect({ page: page.id, ids: [] })
     }}>
       <PreviewLayer project={project} page={page} edge={edge} scale={scale} clean={clean && !!page.clean} region={region} detailed={detailed} interacting={interacting} />
+      {visibleItems?.filter(item => isBlack(item.color)).map(item => <div key={item._id} className="pl-text-backdrop" data-text-backdrop={item._id} aria-hidden="true"
+        style={{ left: item.x * page.width, top: item.y * page.height, transform: transform(item) }} />)}
       {difference && !!page.clean && !readonly && !!region && <DifferenceOverlay project={project} page={page} edge={edge} interacting={interacting} color={differenceColor} opacity={differenceOpacity} />}
-      {!readonly && showText && state?.data.items.map(item => <div key={item._id} data-item={item._id} className={`pl-text ${selected.includes(item._id) ? 'selected' : ''} ${editing?.id === item._id ? 'editing' : ''}`} style={{ ...textStyle(item, page), outlineWidth: selected.includes(item._id) ? 1.5 / scale : 0 }}
+      {visibleItems?.map(item => <div key={item._id} data-item={item._id} className={`pl-text ${selected.includes(item._id) ? 'selected' : ''} ${editing?.id === item._id ? 'editing' : ''}`} style={{ ...textStyle(item, page), outlineWidth: selected.includes(item._id) ? 1.5 / scale : 0 }}
         onPointerDown={event => {
           if (event.button === 0 && event.metaKey) {
             if (beginInlineEdit(event, item)) event.preventDefault()

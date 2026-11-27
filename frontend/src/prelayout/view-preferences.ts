@@ -2,6 +2,7 @@ export type ViewPreferences = {
   zoom: number
   compare: boolean
   clean: boolean
+  backgroundOpacity: number
   showText: boolean
   showMeasure: boolean
   difference: boolean
@@ -13,9 +14,22 @@ export type ViewPreferences = {
 
 type PreferenceStorage = Pick<Storage, 'getItem' | 'setItem'>
 
+type PrelayoutTheme = 'light' | 'dark'
+const themeKey = 'pl-color-theme'
+
+export function loadPrelayoutTheme(storage?: PreferenceStorage): PrelayoutTheme {
+  try {
+    return (storage ?? localStorage).getItem(themeKey) === 'dark' ? 'dark' : 'light'
+  } catch { return 'light' }
+}
+
+export function savePrelayoutTheme(theme: PrelayoutTheme, storage?: PreferenceStorage): void {
+  try { (storage ?? localStorage).setItem(themeKey, theme) } catch { /* The selected theme still works for this session. */ }
+}
+
 export const viewPreferencesKey = 'pl-view-preferences'
 const defaults: Readonly<ViewPreferences> = {
-  zoom: 1, compare: true, clean: true, showText: true, showMeasure: true,
+  zoom: 1, compare: true, clean: true, backgroundOpacity: 1, showText: true, showMeasure: true,
   difference: false, differenceColor: '#ff288c', differenceOpacity: .4,
   focus: false, showService: false,
 }
@@ -31,7 +45,10 @@ function normalize(value: Record<string, unknown>): ViewPreferences {
   }
   if (typeof value.zoom === 'number' && Number.isFinite(value.zoom)) result.zoom = Math.max(.5, Math.min(3, value.zoom))
   if (typeof value.differenceColor === 'string' && /^#[0-9a-f]{6}$/i.test(value.differenceColor)) result.differenceColor = value.differenceColor.toLowerCase()
-  if (typeof value.differenceOpacity === 'number' && Number.isFinite(value.differenceOpacity) && value.differenceOpacity >= 0 && value.differenceOpacity <= 1) result.differenceOpacity = value.differenceOpacity
+  for (const key of ['backgroundOpacity', 'differenceOpacity'] as const) {
+    const opacity = value[key]
+    if (typeof opacity === 'number' && opacity >= 0 && opacity <= 1) result[key] = opacity
+  }
   return result
 }
 

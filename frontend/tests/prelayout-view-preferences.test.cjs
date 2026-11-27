@@ -10,7 +10,7 @@ const moduleValue = { exports: {} }
 new Function('module', 'exports', code)(moduleValue, moduleValue.exports)
 const { loadViewPreferences, saveViewPreferences, viewPreferencesKey } = moduleValue.exports
 const defaults = {
-  zoom: 1, compare: true, clean: true, showText: true, showMeasure: true,
+  zoom: 1, compare: true, clean: true, backgroundOpacity: 1, showText: true, showMeasure: true,
   difference: false, differenceColor: '#ff288c', differenceOpacity: .4,
   focus: false, showService: false,
 }
@@ -23,13 +23,13 @@ test('latest preferences survive switching, a new project, and reloading includi
   const target = storage()
   assert.deepEqual(loadViewPreferences('A', target), defaults)
   const changed = {
-    zoom: 1.5, compare: false, clean: false, showText: false, showMeasure: false,
+    zoom: 1.5, compare: false, clean: false, backgroundOpacity: .35, showText: false, showMeasure: false,
     difference: true, differenceColor: '#c0ffee', differenceOpacity: 0,
     focus: true, showService: true,
   }
   saveViewPreferences(changed, target)
   for (const project of ['B', 'new-project', 'A']) assert.deepEqual(loadViewPreferences(project, target), changed)
-  const latest = { ...changed, zoom: 2, focus: false }
+  const latest = { ...changed, zoom: 2, backgroundOpacity: 0, focus: false }
   saveViewPreferences(latest, target)
   assert.deepEqual(loadViewPreferences('B', target), latest)
   assert.deepEqual(JSON.parse(target.values.get(viewPreferencesKey)), { version: 1, ...latest })
@@ -82,8 +82,9 @@ test('saved fields require their real types and valid ranges without falling bac
     assert.equal(loadViewPreferences('A', target).zoom, expected)
   }
   for (const differenceOpacity of [-1, 2, null]) {
-    target.setItem(viewPreferencesKey, JSON.stringify({ version: 1, differenceOpacity }))
+    target.setItem(viewPreferencesKey, JSON.stringify({ version: 1, differenceOpacity, backgroundOpacity: differenceOpacity }))
     assert.equal(loadViewPreferences('A', target).differenceOpacity, .4)
+    assert.equal(loadViewPreferences('A', target).backgroundOpacity, 1)
   }
   target.setItem(viewPreferencesKey, '{"version":1,"zoom":1e400,"differenceOpacity":1e400}')
   assert.deepEqual(loadViewPreferences('A', target), defaults)
