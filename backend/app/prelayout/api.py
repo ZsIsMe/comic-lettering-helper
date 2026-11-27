@@ -195,14 +195,16 @@ def router(store, detector, max_bytes):
         return call(store.review_page, pid, page_id, data.get('expected_revision'), data.get('reviewed'))
 
     @api.post('/projects/{pid}/imports')
-    async def import_data(pid: str, kind: str = Form(...), expected_revision: int = Form(...), apply: bool = Form(False), files: list[UploadFile] = File(...)):
+    async def import_data(pid: str, kind: str = Form(...), expected_revision: int = Form(...), apply: bool = Form(False),
+                          apply_ctd_breaks: bool = Form(False), files: list[UploadFile] = File(...)):
         async with upload_slots:
             data = await uploads(files)
             if kind == 'clean':
                 return await run_in_threadpool(call, store.clean_images, pid, data, expected_revision)
             if kind not in ('bt', 'labelplus') or len(data) != 1:
                 raise HTTPException(400, '請選擇一份 BT 或 LabelPlus 文件')
-            return await run_in_threadpool(call, store.import_translation, pid, data[0][1], kind, expected_revision, apply)
+            return await run_in_threadpool(call, store.import_translation, pid, data[0][1], kind, expected_revision,
+                                           apply, apply_ctd_breaks)
 
     @api.get('/projects/{pid}/pages/{page_id}/layers/{kind}')
     def image_layer(pid: str, page_id: str, kind: str, edge: int | None = None,

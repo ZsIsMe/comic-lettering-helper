@@ -23,6 +23,7 @@ class FakeAPI:
         self.calls, self.task = [], None
         self.interrupt_wait = self.lose_create = self.corrupt_export = False
         self.complete = True
+        self.source_line_count = None
         monkeypatch.setattr('app.prelayout.store.match_translation', self.match)
 
     @staticmethod
@@ -30,7 +31,7 @@ class FakeAPI:
         data = copy.deepcopy(data)
         for items in data['transMap'].values():
             for item in items:
-                item.update(x=.4, y=.4, match_status='auto')
+                item.update(x=.4, y=.4, match_status='auto', match_source_block_index=0)
         return data
 
     @property
@@ -61,16 +62,28 @@ class FakeAPI:
                     project['detection_id'] = self.task['id']
                     project['revision'] += 1
                     self.store.write(project)
-                    atomic_json(self.store.directory(pid) / 'detections' / self.task['id'] / 'output/measure.json', {})
+                    output = self.store.directory(pid) / 'detections' / self.task['id'] / 'output'
+                    entry = {'xyxy_pixel': [0, 0, 80, 100], 'source_block_index': 0,
+                             'orientation': 'vertical', 'font_size': 24}
+                    if self.source_line_count is not None:
+                        entry['source_line_count'] = self.source_line_count
+                    measures = {}
+                    for page in project['pages']:
+                        measures[page['name']] = [entry]
+                        atomic_json(output / 'page-measures' / (page['id'] + '.json'), [entry])
+                        atomic_json(output / 'page-characters' / (page['id'] + '.json'), [])
+                    atomic_json(output / 'measure.json', {'pages': measures})
                     self.task['state'] = 'completed'
             return copy.deepcopy(self.task)
         if path.endswith('/imports'):
             fields = kwargs['fields']
-            return self.store.import_translation(pid, kwargs['files'][0][2], fields['kind'], fields['expected_revision'], fields['apply'] == 'true')
+            return self.store.import_translation(pid, kwargs['files'][0][2], fields['kind'], fields['expected_revision'], fields['apply'] == 'true', fields.get('apply_ctd_breaks') == 'true')
         if path.endswith('/matches/apply'):
             return self.store.apply_matches(pid, kwargs['data']['expected_revision'], kwargs['data']['manual'])
         if path.endswith('/matches'):
             return self.store.matches(pid)
+        if '/pages/' in path:
+            return self.store.page(pid, path.rsplit('/', 1)[-1])
         if path.endswith('/export/bt'):
             result = self.store.translation(pid)
             if self.corrupt_export:
@@ -452,3 +465,102 @@ def test_mutation_interrupt_prints_pending_operation_and_known_project(setup, mo
     with pytest.raises(ValueError, match='結果不明.*禁止自動重送'):
         cli.run(args, api)
     assert not api.calls
+
+@pytest.mark.parametrize('kind,body,opt_in', [
+    ('txt', '我們決定明天下午一起出發，大家準備好了嗎？', True),
+    ('txt', ' 我們決定明天下午一起出發，大家準備好了嗎？　 ', True),
+    ('json', '我們決定明天下午一起出發，大家準備好了嗎？', True),
+])
+def test_ctd_default_is_sent_for_native_lp_bridge_and_opted_in_json(setup, kind, body, opt_in):
+    folder, args, api = setup
+    api.source_line_count = 3
+    args.apply_ctd_breaks = opt_in
+    if kind == 'txt':
+        raw = ('1, 0\n-\n群組\n-\n備註\n>>>>>>>>[2.jpg]<<<<<<<<\n'
+               '----------------[1]----------------[0.2,0.3,1]\n' + body + '\n').encode()
+    else:
+        raw = json.dumps({'transMap': {'2.png': [{'text': body, 'x': .2, 'y': .3}]}}, ensure_ascii=False).encode()
+    translation(folder, args, kind, raw)
+    report = cli.run(args, api)
+    assert report['apply_ctd_breaks'] is True
+    applied = [call for call in api.calls if call[1].endswith('/imports') and call[2]['fields']['apply'] == 'true']
+    assert applied[0][2]['fields']['apply_ctd_breaks'] == 'true'
+    actual = api.store.translation(report['project_id'])['transMap']['2.png'][0]['text']
+    assert actual.count('\n') == 2
+    assert actual.replace('\n', '') == body
+    api.calls.clear()
+    assert cli.run(args, api) == report
+    assert all(method == 'GET' for method, _, _ in api.calls)
+
+
+@pytest.mark.parametrize('kind,body', [
+    ('txt', '我們決定明天下午一起出發，大家準備好了嗎？'),
+    ('txt', ' 我們決定明天下午一起出發，大家準備好了嗎？　 '),
+    ('json', '我們決定明天下午一起出發，大家準備好了嗎？'),
+])
+def test_both_formats_default_to_candidates_and_preserve_original(setup, kind, body):
+    folder, args, api = setup
+    api.source_line_count = 3
+    if kind == 'txt':
+        raw = ('1, 0\n-\n群組\n-\n備註\n>>>>>>>>[2.jpg]<<<<<<<<\n'
+               '----------------[1]----------------[0.2,0.3,1]\n' + body + '\n').encode()
+    else:
+        raw = json.dumps({'transMap': {'2.png': [{'text': body}]}}, ensure_ascii=False).encode()
+    translation(folder, args, kind, raw)
+    report = cli.run(args, api)
+    assert report['apply_ctd_breaks'] is False
+    applied = [call for call in api.calls if call[1].endswith('/imports') and call[2]['fields']['apply'] == 'true']
+    assert applied[0][2]['fields']['apply_ctd_breaks'] == 'false'
+    assert api.store.translation(report['project_id'])['transMap']['2.png'][0]['text'] == body
+    p = api.store.read(report['project_id'])
+    assert api.store.page(p['id'], p['pages'][0]['id'])['line_break_suggestions']
+
+
+@pytest.mark.parametrize('extension', ['json', 'txt'])
+def test_switching_ctd_option_rejects_checkpoint_before_api(setup, extension):
+    folder, args, api = setup
+    raw = None if extension == 'json' else ('1, 0\n-\n群組\n-\n備註\n>>>>>>>>[2.jpg]<<<<<<<<\n'
+                                             '----------------[1]----------------[0.2,0.3,1]\n文字\n').encode()
+    translation(folder, args, extension, raw)
+    cli.run(args, api)
+    args.apply_ctd_breaks = True
+    api.calls.clear()
+    with pytest.raises(ValueError, match='checkpoint 不一致'):
+        cli.run(args, api)
+    assert not api.calls
+
+
+def test_old_lp_preserve_text_checkpoint_remains_compatible(setup):
+    folder, args, api = setup
+    translation(folder, args, 'txt', ('1, 0\n-\n群組\n-\n備註\n>>>>>>>>[2.jpg]<<<<<<<<\n'
+                                    '----------------[1]----------------[0.2,0.3,1]\n文字\n').encode())
+    prepared = cli.prepare(args)
+    assert 'apply_ctd_breaks' not in prepared['manifest']
+    fingerprint = cli.digest(json.dumps(prepared['manifest'], ensure_ascii=False, sort_keys=True).encode())
+    assert prepared['fingerprint'] == fingerprint
+    original = cli.run(args, api)
+    api.calls.clear()
+    assert cli.run(args, api) == original
+    assert all(method == 'GET' for method, _, _ in api.calls)
+
+
+def test_only_exact_n_is_accepted_during_ctd_default_verification(setup):
+    folder, args, api = setup
+    api.source_line_count = 3
+    args.apply_ctd_breaks = True
+    body = '我們決定明天下午一起出發，大家準備好了嗎？'
+    translation(folder, args, raw=json.dumps({'transMap': {'2.png': [{'text': body}]}}, ensure_ascii=False).encode())
+    original = api.request
+
+    def wrong_count(method, path, **kwargs):
+        result = original(method, path, **kwargs)
+        if '/pages/' in path:
+            item = result['items'][0]
+            candidates = result['line_break_suggestions'][item['_id']]['candidates']
+            item['text'] = next(c['text'] for c in candidates if c['line_count'] == 2)
+        return result
+
+    api.request = wrong_count
+    with pytest.raises(ValueError, match='未採用指定 CTD 行數'):
+        cli.run(args, api)
+    assert not any(path.endswith('/matches/apply') for _, path, _ in api.calls)

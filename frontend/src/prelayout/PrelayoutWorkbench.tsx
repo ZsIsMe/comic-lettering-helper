@@ -472,15 +472,21 @@ function Workspace({ project: initial, promptDetection, onExit, onReadyToLeave }
     return () => { window.removeEventListener('keydown', key); window.removeEventListener('keyup', end); window.removeEventListener('blur', end) }
   })
   async function importFile(list: File[]) {
+    const kind = importKind.current
     if (!list.length || !await controller.flush()) return
     const fresh = await request<Project>(projectPath(project.id))
-    const form = new FormData(); form.append('kind', importKind.current); form.append('expected_revision', String(fresh.revision)); list.forEach(file => form.append('files', file, file.name))
-    if (importKind.current === 'clean') {
+    const form = new FormData(); form.append('kind', kind); form.append('expected_revision', String(fresh.revision)); list.forEach(file => form.append('files', file, file.name))
+    if (kind === 'clean') {
       const result = await request<Project>(`${projectPath(project.id)}/imports`, { method: 'POST', body: form })
       await controller.reload(); setProject(result); return
     }
     const summary = await request<{ pages: number; items: number; groups: { name: string }[] }>(`${projectPath(project.id)}/imports`, { method: 'POST', body: form })
-    modal.confirm({ title: '確認匯入譯稿', okText: '匯入', cancelText: '取消', content: <><p>{summary.pages} 頁，共 {summary.items} 條文字。對應頁面會替換為本次譯稿。</p><p>來源已有的原文、概括與註釋會保留；同頁同編號文本缺少的附加資訊沿用既有內容。來源明確填寫的內容優先。</p><p>分組：{summary.groups.length ? summary.groups.map((group, index) => <span key={`${index}-${group.name}`}><GroupName name={group.name} index={index} />{index < summary.groups.length - 1 ? '、' : ''}</span>) : '無分組'}；所有分組均保留。</p></>, onOk: () => execute(async () => {
+    let applyCtdBreaks = false
+    modal.confirm({ title: '確認匯入譯稿', okText: '匯入', cancelText: '取消', content: <><p>{summary.pages} 頁，共 {summary.items} 條文字。對應頁面會替換為本次譯稿。</p><p>來源已有的原文、概括與註釋會保留；同頁同編號文本缺少的附加資訊沿用既有內容。來源明確填寫的內容優先。</p><p>分組：{summary.groups.length ? summary.groups.map((group, index) => <span key={`${index}-${group.name}`}><GroupName name={group.name} index={index} />{index < summary.groups.length - 1 ? '、' : ''}</span>) : '無分組'}；所有分組均保留。</p>
+      <Checkbox onChange={event => { applyCtdBreaks = event.target.checked }}>是否匹配斷句</Checkbox>
+      <p className="pl-muted">預設保留原稿換行。勾選後採用與 CTD 原文行數相同的候選。兩種選擇都可在「調整斷句」比較各版本。</p>
+    </>, onOk: () => execute(async () => {
+      form.set('apply_ctd_breaks', String(applyCtdBreaks))
       form.set('apply', 'true'); const result = await request<Project>(`${projectPath(project.id)}/imports`, { method: 'POST', body: form })
       await controller.reload(); setProject(result); setSelection({ page: current, ids: [] }); setJump({ id: current, version: Date.now() })
       await Promise.all(result.pages.filter(page => page.id === current).map(page => controller.load(page.id)))

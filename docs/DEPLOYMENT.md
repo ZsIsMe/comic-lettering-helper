@@ -12,6 +12,8 @@ CUDA 環境以 `--device cuda --ocr-device cuda --require-cuda` 驗證，並執�
 
 ## 單框斷句功能的部署
 
+匯入格式與斷句預設由 6008 後端處理，LP.txt 和 Meo.json 的套用選項位於前端確認視窗。部署時同步更新兩者。
+
 在 6008 的 Web Python 環境按 `backend/requirements.txt` 安裝 `jieba==0.42.1` 與 `opencc-python-reimplemented==0.1.7`，同步後端與新建置的前端，並在服務空閒時重啟 6008。同步更新 CTD worker，讓新量測保存原文行數。詞典隨 Web 套件安裝，在首次產生候選時載入。舊鏡像的線上更新器會核對 requirements 雜湊，發行更新包時需搭配含此依賴的相容執行環境。
 
 # 預排版字色修正（未部署）

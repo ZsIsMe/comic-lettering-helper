@@ -228,6 +228,52 @@ def test_numeric_classifier_and_noun_are_preferred_as_one_short_phrase():
     ]
 
 
+@pytest.mark.parametrize('orientation', ['vertical', 'horizontal'])
+@pytest.mark.parametrize('capacity', [None, 2, 4])
+@pytest.mark.parametrize('text,count', [
+    ('這是我們的比賽。', 3),
+    ('他是最厲害的投手。', 4),
+    ('毒島先生這次可是認真的，北畠少年', 5),
+    ('如果做不到的話就回去吧！', 4),
+    ('這是我們 \t的比賽。', 3),
+    ('這是我\r\n的。', 3),
+    ('這是『認真』的表情。', 4),
+    ('這是「認真」的表情。', 4),
+    ('這是（認真）的表情。', 4),
+    ('這是【認真】 \t的表情。', 4),
+    ('我★的書。', 3),
+])
+def test_grammatical_de_never_starts_a_generated_line(text, count, orientation, capacity):
+    results = line_break_candidates(text, count, orientation, line_capacity=capacity)
+    assert results
+    assert_contract(text, count, results)
+    assert all(not line.lstrip().startswith('的')
+               for result in results for line in result['text'].split('\n')[1:])
+
+
+def test_unavailable_count_is_omitted_instead_of_orphaning_de():
+    assert line_break_candidates('我的', 2) == [{'line_count': 1, 'text': '我的'}]
+    assert line_break_candidates('我的', 3) == []
+
+
+def test_original_leading_spaces_do_not_create_a_line_before_initial_de():
+    text = ' \t的表情看起來很認真。'
+    results = line_break_candidates(text, 3)
+    assert results
+    assert_contract(text, 3, results)
+    assert all(result['text'].startswith(' \t的') for result in results)
+    assert all(not line.lstrip().startswith('的')
+               for result in results for line in result['text'].split('\n')[1:])
+
+
+@pytest.mark.parametrize('text,word', [('他說的確沒有問題。', '的確'), ('我們搭的士去車站。', '的士')])
+def test_lexical_words_starting_with_de_can_begin_a_line(text, word):
+    results = line_break_candidates(text, 3)
+    assert_contract(text, 3, results)
+    assert all(word in result['text'] for result in results)
+    assert any('\n' + word in result['text'] for result in results)
+
+
 @pytest.mark.parametrize('converted', ['繁體分析會變長', '', None])
 def test_length_changing_or_unmappable_conversion_falls_back_to_original(uncached_analysis, monkeypatch, converted):
     module = uncached_analysis

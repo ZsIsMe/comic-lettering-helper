@@ -58,7 +58,7 @@ def _parse_lp(lines: list[str]) -> dict:
     line_count = len(lines)
     ptr = [0]  # 使用list讓巢狀函數可修改
 
-    def parse_text(*stop_marks: str) -> str:
+    def parse_text(*stop_marks: str, preserve_line_breaks=False) -> str:
         """從當前行逐行讀取文字，遇到任一stop_mark前綴時停止。"""
         buf = []
         while ptr[0] < line_count:
@@ -68,8 +68,7 @@ def _parse_lp(lines: list[str]) -> dict:
             buf.append(line)
             ptr[0] += 1
         text = "\n".join(buf)
-        text = re.sub(r"\n+", "\n", text).strip()
-        return text
+        return text.strip() if preserve_line_breaks else re.sub(r"\n+", "\n", text).strip()
 
     def parse_label(index: int) -> dict:
         """解析一個標籤行及其後的文字內容。"""
@@ -84,7 +83,7 @@ def _parse_lp(lines: list[str]) -> dict:
         group_id = int(props[2]) - 1  # LP存1-based，MEO用0-based
 
         ptr[0] += 1
-        text = parse_text(PIC_START, LABEL_START)
+        text = parse_text(PIC_START, LABEL_START, preserve_line_breaks=True)
 
         return {"index": index, "groupId": group_id, "x": x, "y": y, "text": text}
 

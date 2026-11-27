@@ -8,11 +8,34 @@ from prelayout_core.data import validate_items
 from .line_breaks import line_break_candidates
 
 
-LINE_BREAK_SUGGESTIONS_VERSION = 3
+LINE_BREAK_SUGGESTIONS_VERSION = 4
 
 
 def imported_sources(items):
     return {item['_id']: {key: item[key] for key in ('text', 'x', 'y')} for item in items}
+
+
+def apply_ctd_defaults(items, suggestions, eligible_ids):
+    """Use the exact CTD line count only for explicitly eligible imported items."""
+    eligible = set(eligible_ids)
+    for item in items:
+        suggestion = suggestions.get(item['_id'])
+        if item['_id'] not in eligible or not suggestion or item['text'] != suggestion['original_text']:
+            continue
+        option = next((option for option in suggestion['candidates']
+                       if option['line_count'] == suggestion['source_line_count']), None)
+        if option is not None:
+            item['text'] = option['text']
+
+
+def cancel_changed_pending_defaults(state, items):
+    """A user's change permanently opts that item out of a deferred import default."""
+    pending = state.get('line_break_pending_ids')
+    if pending:
+        previous = {item['_id']: item for item in state['items']}
+        current = {item['_id']: item for item in items}
+        state['line_break_pending_ids'] = [item_id for item_id in pending
+                                           if item_id in current and current[item_id] == previous.get(item_id)]
 
 
 def _extent(box):
@@ -82,7 +105,8 @@ def upgrade_saved_suggestions(state):
         if not isinstance(original, str) or len(original) > 50000 or type(count) is not int or count < 1:
             continue
         item = items.get(item_id, {})
-        suggestion = _suggestion(original, count, item, _extent(item.get('xyxy_pixel')))
+        extent = old.get('source_extent_px') or _extent(item.get('xyxy_pixel'))
+        suggestion = _suggestion(original, count, item, extent)
         if suggestion:
             suggestions[item_id] = suggestion
     return {**state, 'line_break_suggestions': suggestions,
@@ -116,8 +140,12 @@ def validate_archived_suggestions(state, page):
     suggestions = state.get('line_break_suggestions', {})
     if not isinstance(sources, dict) or not isinstance(suggestions, dict):
         raise ValueError('封存斷句資料格式錯誤')
+    pending = state.get('line_break_pending_ids', [])
+    if (not isinstance(pending, list) or any(not isinstance(item_id, str) for item_id in pending)
+            or len(pending) != len(set(pending)) or not set(pending).issubset(sources)):
+        raise ValueError('封存待套用斷句格式錯誤')
     version = state.get('line_break_suggestions_version', 1)
-    if type(version) is not int or version not in (1, 2, LINE_BREAK_SUGGESTIONS_VERSION):
+    if type(version) is not int or not 1 <= version <= LINE_BREAK_SUGGESTIONS_VERSION:
         raise ValueError('封存斷句版本無效')
     anchors = []
     for item_id, source in sources.items():

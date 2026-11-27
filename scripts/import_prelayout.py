@@ -235,10 +235,15 @@ def prepare(args):
     manifest = {'base_url': args.base_url.rstrip('/'), 'image_dir': str(folder), 'name': name,
                 'translation_path': translation_path, 'translation_sha256': translation_hash,
                 'sources': [{k: v for k, v in source.items() if k != 'payload'} for source in sources]}
+    apply_ctd_breaks = bool(getattr(args, 'apply_ctd_breaks', False))
+    if apply_ctd_breaks:
+        # Preserve earlier preserve-text checkpoint identities for both input formats.
+        # Explicit opt-in is part of the identity and must also be present on resume.
+        manifest['apply_ctd_breaks'] = True
     fingerprint = digest(json.dumps(manifest, ensure_ascii=False, sort_keys=True).encode())
     identity = {k: manifest[k] for k in ('base_url', 'image_dir', 'name', 'translation_path')}
     return {'sources': sources, 'translation': translation, 'mapping': mapping, 'upload': upload, 'kind': kind,
-            'translation_format': format_name, 'manifest': manifest, 'identity': identity, 'fingerprint': fingerprint,
+            'translation_format': format_name, 'apply_ctd_breaks': apply_ctd_breaks, 'manifest': manifest, 'identity': identity, 'fingerprint': fingerprint,
             'missing_translation_pages': [s['name'] for s in sources if s['name'] not in mapping]}
 
 
@@ -261,7 +266,44 @@ def check_project(project, prepared, revision=None):
     return project
 
 
-def verify_export(exported, prepared):
+def default_texts(api, prefix, project, prepared):
+    """Record exactly the import-time N choice before later geometry rematching."""
+    texts = {}
+    for page in project['pages']:
+        wanted = prepared['mapping'].get(page['name'], [])
+        if not wanted:
+            texts[page['name']] = []
+            continue
+        detail = api.request('GET', prefix + '/pages/' + page['id'])
+        items = detail.get('items', [])
+        if len(items) != len(wanted):
+            raise ImportErrorSafe(f'斷句核驗文字數不一致：{page["name"]}')
+        options = detail.get('line_break_suggestions', {})
+        selected = []
+        for before, item in zip(wanted, items):
+            original = before['text']
+            suggestion = options.get(item['_id'])
+            expected = original
+            if suggestion is not None:
+                count = suggestion.get('source_line_count')
+                if suggestion.get('original_text') != original or type(count) is not int or count < 1:
+                    raise ImportErrorSafe(f'斷句核驗原稿／行數不一致：{page["name"]}')
+                candidate = next((candidate for candidate in suggestion['candidates']
+                                  if candidate.get('line_count') == count), None)
+                if candidate is not None:
+                    expected = candidate.get('text')
+                    if (not isinstance(expected, str) or expected.count('\n') + 1 != count
+                            or expected.replace('\n', '') != original.replace('\r', '').replace('\n', '')
+                            or not all(line.strip() for line in expected.split('\n'))):
+                        raise ImportErrorSafe(f'斷句核驗候選不一致：{page["name"]}')
+            if item.get('text') != expected:
+                raise ImportErrorSafe(f'BT 匯出文字／計數不一致（未採用指定 CTD 行數）：{page["name"]}')
+            selected.append(expected)
+        texts[page['name']] = selected
+    return texts
+
+
+def verify_export(exported, prepared, expected_texts=None):
     trans_map = exported.get('transMap')
     if not isinstance(trans_map, dict) or set(trans_map) != {s['name'] for s in prepared['sources']}:
         raise ImportErrorSafe('BT 匯出頁面不完整')
@@ -273,11 +315,12 @@ def verify_export(exported, prepared):
     for source in prepared['sources']:
         name = source['name']
         wanted, actual = prepared['mapping'].get(name, []), trans_map[name]
-        if not isinstance(actual, list) or [i.get('text') for i in actual] != [i['text'] for i in wanted]:
+        expected = expected_texts[name] if expected_texts is not None else [i['text'] for i in wanted]
+        if not isinstance(actual, list) or [i.get('text') for i in actual] != expected:
             raise ImportErrorSafe(f'BT 匯出文字／計數不一致（包含換行與空白）：{name}')
         for before, after in zip(wanted, actual):
             for key, value in before.items():
-                if key not in layout_fields and not key.startswith('match_') and after.get(key) != value:
+                if key not in layout_fields | {'text'} and not key.startswith('match_') and after.get(key) != value:
                     raise ImportErrorSafe(f'BT 匯出 metadata 不一致：{name}/{key}')
             statuses[after.get('match_status', 'unmatched')] += 1
     if prepared['translation']:
@@ -295,6 +338,7 @@ def run(args, api=None):
     report = {'checkpoint': str(path), 'fingerprint': prepared['fingerprint'],
               'page_count': len(prepared['sources']), 'item_count': sum(map(len, prepared['mapping'].values())),
               'translation_format': prepared['translation_format'], 'import_kind': prepared['kind'],
+              'apply_ctd_breaks': prepared['apply_ctd_breaks'],
               'missing_translation_pages': prepared['missing_translation_pages']}
     if args.check_only:
         require_available(api)
@@ -373,7 +417,8 @@ def run(args, api=None):
                     time.sleep(min(1, max(0, deadline - time.monotonic())))
             if state['stage'] == 'detected' and prepared['translation'] is not None:
                 current()
-                fields = {'kind': prepared['kind'], 'expected_revision': state['revision'], 'apply': 'false'}
+                fields = {'kind': prepared['kind'], 'expected_revision': state['revision'], 'apply': 'false',
+                          'apply_ctd_breaks': str(prepared['apply_ctd_breaks']).lower()}
                 files = [('files', 'translation.json' if prepared['kind'] == 'bt' else 'translation.txt', prepared['upload'])]
                 preview = api.request('POST', prefix + '/imports', fields=fields, files=files)
                 if (preview.get('project_revision') != state['revision'] or preview.get('pages') != len(prepared['mapping'])
@@ -384,11 +429,15 @@ def run(args, api=None):
                 check_project(project, prepared, state['revision'] + 1)
                 save(stage='imported', revision=project['revision'], pending=None)
             if state['stage'] == 'imported':
-                current()
+                project = current()
+                if prepared['apply_ctd_breaks'] and 'expected_texts' not in state:
+                    texts = default_texts(api, prefix, project, prepared)
+                    current()
+                    save(expected_texts=texts)
                 preview = api.request('POST', prefix + '/matches')
                 if preview.get('project_revision') != state['revision']:
                     raise ImportErrorSafe('匹配預覽 revision 已過期')
-                verify_export(preview['data'], prepared)
+                verify_export(preview['data'], prepared, state.get('expected_texts'))
                 current()
                 project = mutate('match', prefix + '/matches/apply', data={'expected_revision': state['revision'], 'manual': {}})
                 check_project(project, prepared, state['revision'] + 1)
@@ -398,7 +447,7 @@ def run(args, api=None):
             project = current()
             if project.get('detection_id') != state['detection_id']:
                 raise ImportErrorSafe('最終項目 detection_id 不一致')
-            counts = verify_export(api.request('GET', prefix + '/export/bt'), prepared)
+            counts = verify_export(api.request('GET', prefix + '/export/bt'), prepared, state.get('expected_texts'))
             current()  # Reject edits concurrent with export verification.
             save(stage='completed')
             return {**report, 'stage': 'completed', 'project_id': state['project_id'],
@@ -415,6 +464,7 @@ def parser():
     result = argparse.ArgumentParser(description=__doc__)
     result.add_argument('image_dir', help='只讀第一層 PNG/JPG/JPEG 原圖資料夾')
     result.add_argument('--translation', help='可選 BT JSON 或 LabelPlus TXT')
+    result.add_argument('--apply-ctd-breaks', action='store_true', help='匯入 Meo JSON 或 LabelPlus TXT 時採用 CTD 原文行數斷句；預設保留原稿換行')
     result.add_argument('--name', help='項目名稱，預設原圖資料夾名稱')
     result.add_argument('--base-url', default='http://127.0.0.1:6008')
     result.add_argument('--state-file', help='自訂 checkpoint 路徑')

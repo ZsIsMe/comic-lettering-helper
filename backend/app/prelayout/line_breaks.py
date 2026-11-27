@@ -122,6 +122,21 @@ def _tokens(text: str):
     yield from (word for word, _ in _token_analysis(text))
 
 
+def _attached_particle_boundaries(text: str) -> set[int]:
+    """Keep grammatical 的 with preceding content, including markers and spaces."""
+    protected = set()
+    offset, previous_end, previous = 0, 0, ''
+    for word, flag in _token_analysis(text):
+        # This also covers 的話 (u). Lexical words such as 的確 (d) and 的士
+        # (n) can begin a line. These constraints survive phrase/capacity fallback.
+        if word.startswith('的') and flag.startswith('u') and previous:
+            protected.update(range(previous_end, offset + 1))
+        offset += len(word)
+        if not word.isspace():
+            previous, previous_end = word, offset
+    return protected
+
+
 def _phrase_break_penalties(text: str) -> dict[int, float]:
     """Local POS preferences, never unconditional concatenation or punctuation rewriting.
 
@@ -184,7 +199,7 @@ def _original_tokens(text):
 
 
 def _positions(text: str, orientation: str = 'vertical', *, tokens=None) -> tuple[list[int], list[float], list[str]]:
-    protected = _protected_boundaries(text)
+    protected = _protected_boundaries(text) | _attached_particle_boundaries(text)
     advances = cumulative_widths(text, orientation)
     right = [''] * (len(text) + 1)
     visible = ''

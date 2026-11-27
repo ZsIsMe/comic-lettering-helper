@@ -535,7 +535,7 @@ class PrelayoutDetection:
                 project['detection_id'] = did
                 project['revision'] += 1
                 self.store.write(project)
-            self.update(pid, did, state='completed', message='偵測完成，可預覽匹配並選擇套用；原有文字未更動')
+            self.update(pid, did, state='completed', message='偵測完成，可預覽匹配並選擇套用')
             if cleanup:
                 self.cleanup_input(pid, did)
 
