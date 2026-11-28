@@ -25,7 +25,7 @@ import { loadLocalFont } from './local-fonts'
 import { getFontCatalogue, refreshFontCatalogue, subscribeFontCatalogue } from './font-catalogue'
 import { groupFontChanges } from './group-fonts'
 import { GroupImportModal } from './GroupImportModal'
-import { downloadDiscussion, downloadMeo as downloadMeoFile } from './download-discussion'
+import { downloadDiscussion, downloadMeo as downloadMeoFile, downloadOfflineProject } from './download-discussion'
 import { ProjectExportGuard } from './export-guard'
 import type { GroupImportResult } from './group-import'
 import { AlignmentControls } from './AlignmentControls'
@@ -525,9 +525,10 @@ function Workspace({ project: initial, promptDetection, onExit, onReadyToLeave, 
       await Promise.all(result.pages.filter(page => page.id === current).map(page => controller.load(page.id)))
     }) })
   }
-  function exportProject(markdown: boolean) {
+  function exportProject(format: 'meo' | 'offline' | 'discussion') {
     if (operationCount.current || busy || activeDetection(task)) return
-    void execute(() => markdown ? downloadDiscussion(project, () => controller.flush(), exportGuard) : downloadMeoFile(project, () => controller.flush(), exportGuard))
+    const download = { meo: downloadMeoFile, offline: downloadOfflineProject, discussion: downloadDiscussion }[format]
+    void execute(() => download(project, () => controller.flush(), exportGuard))
   }
   const onMeasure = useCallback((index: number, pageId: string) => {
     const state = controller.pages.get(pageId)
@@ -617,7 +618,8 @@ function Workspace({ project: initial, promptDetection, onExit, onReadyToLeave, 
         <Space size={4} wrap>
           <Popover open={moreToolsOpen} onOpenChange={setMoreToolsOpen} trigger="click" placement="bottomRight" title="匯入與準備" content={<div className="pl-more-tools"><Space size={4} wrap>
               {(['bt', 'labelplus', 'clean'] as const).filter((kind): boolean => kind !== 'clean' || showCleanUpload).map(kind => <Button size="small" key={kind} disabled={busy} onClick={() => { importKind.current = kind; if (fileInput.current) { fileInput.current.accept = kind === 'bt' ? '.json' : kind === 'labelplus' ? '.txt' : '.png,.jpg,.jpeg'; fileInput.current.multiple = kind === 'clean'; fileInput.current.click() } }}>{kind === 'bt' ? '開啟 Meo.json' : kind === 'labelplus' ? '匯入LP.txt' : '上傳去字圖'}</Button>)}
-              <Button size="small" disabled={busy || questionExportPending || inlineQuestionPending || activeDetection(task)} onClick={() => { setMoreToolsOpen(false); exportProject(false) }}>匯出 Meo.json</Button>
+              <Button size="small" disabled={busy || questionExportPending || inlineQuestionPending || activeDetection(task)} onClick={() => { setMoreToolsOpen(false); exportProject('meo') }}>匯出 Meo.json</Button>
+              <Button size="small" disabled={busy || questionExportPending || inlineQuestionPending || activeDetection(task)} onClick={() => { setMoreToolsOpen(false); exportProject('offline') }}>匯出離線編輯包</Button>
               <Button size="small" onClick={() => { setMoreToolsOpen(false); setDetectionToolsOpen(true) }}>偵測與字級</Button>
               <Button size="small" href="/downloads/LabelPlus_Ps_Script_ZS-1.8.0.zip" download="LabelPlus_Ps_Script_ZS-1.8.0.zip">配套PS腳本</Button>
           </Space></div>}><Button size="small">匯入與準備 ▾{activeDetection(task) ? ' · 偵測中' : ''}</Button></Popover>
@@ -636,7 +638,7 @@ function Workspace({ project: initial, promptDetection, onExit, onReadyToLeave, 
                 setReplacementOpen(true)
               })}>批量替換</Button>
         <Button size="small" disabled={busy || activeDetection(task)} title="查看、新增與修改疑問記錄" onClick={() => { setQuestionsPage(current); setQuestionsOpen(true) }}>疑問記錄</Button>
-        <Button size="small" disabled={busy || questionExportPending || inlineQuestionPending || activeDetection(task)} title={inlineQuestionPending ? '疑問保存結果尚未確認，請先在右側重試保存' : questionExportPending ? '疑問保存結果尚未確認，請先在疑問記錄中重試保存' : '下載 Markdown：疑問置前，附逐頁全文、原文、註解與概括'} onClick={() => exportProject(true)}>導出疑問記錄</Button>
+        <Button size="small" disabled={busy || questionExportPending || inlineQuestionPending || activeDetection(task)} title={inlineQuestionPending ? '疑問保存結果尚未確認，請先在右側重試保存' : questionExportPending ? '疑問保存結果尚未確認，請先在疑問記錄中重試保存' : '下載 Markdown：疑問置前，附逐頁全文、原文、註解與概括'} onClick={() => exportProject('discussion')}>導出疑問記錄</Button>
       </Space></div>
       <div className="pl-tool-row pl-display-tools"><span className="pl-tool-label">顯示</span><Space size={[8, 4]} wrap>
         {themeToggle}

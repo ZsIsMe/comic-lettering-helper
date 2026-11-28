@@ -45,11 +45,12 @@ export function subscribeFontCatalogue(listener: () => void) {
   listeners.add(listener)
   return () => { listeners.delete(listener); if (!listeners.size) window.removeEventListener('storage', storageChanged) }
 }
-export function refreshFontCatalogue(): Promise<void> {
+export function refreshFontCatalogue(browserOnly = false): Promise<void> {
   if (pending) return pending
   pending = (async () => {
     let fonts: LocalFont[] | null = null
     try {
+      if (browserOnly) throw new Error('Use local browser fonts')
       const result = await request<{ available: boolean; fonts: LocalFont[] }>(`${base}/local-fonts?refresh=true`)
       if (result.available) fonts = result.fonts
     } catch { /* An older or remote server can still use browser permission. */ }

@@ -4,10 +4,10 @@ import type { Page } from './types'
 
 export type PageRange = [number, number]
 
-export function PageNavigation({ pages, current, range, onRange, onGo, reviewed, onReview, onFinishAndNext, busy, focus, onFocus }: {
+export function PageNavigation({ pages, current, range, onRange, onGo, reviewed, onReview, onFinishAndNext, busy, focus, onFocus, reviewControls = true }: {
   pages: Page[]; current: string; range: PageRange; onRange: (range: PageRange) => void; onGo: (id: string) => void;
   reviewed: (page: Page) => boolean; onReview: (reviewed: boolean) => void; onFinishAndNext: () => void;
-  busy: boolean; focus: boolean; onFocus: (value: boolean) => void;
+  busy: boolean; reviewControls?: boolean; focus: boolean; onFocus: (value: boolean) => void;
 }) {
   const [expanded, setExpanded] = useState(false)
   const [search, setSearch] = useState('')
@@ -49,9 +49,9 @@ export function PageNavigation({ pages, current, range, onRange, onGo, reviewed,
         <Button size="small" aria-label="下一頁" disabled={nextNumber > range[1]} title="下一頁" onClick={() => adjacent(1)}>›</Button>
         <span className="pl-page-nav-name" title={currentPage?.name}>{currentPage?.name}</span>
       </div>
-      <div className="pl-page-nav-actions"><span className="pl-page-nav-progress" title={`範圍 ${range[0]}–${range[1]}`}>完成 {complete}/{within.length}<span className="pl-page-nav-scope"> · 範圍 {range[0]}–{range[1]}</span></span>
-        <Button size="small" disabled={busy || !currentPage || !currentInRange} onClick={() => onReview(!currentReviewed)}>{currentReviewed ? '取消完成' : '標記完成'}</Button>
-        <Button size="small" type="primary" disabled={busy || !currentPage} onClick={onFinishAndNext}>保存並下一未完成</Button>
+      <div className="pl-page-nav-actions">{reviewControls && <span className="pl-page-nav-progress" title={`範圍 ${range[0]}–${range[1]}`}>完成 {complete}/{within.length}<span className="pl-page-nav-scope"> · 範圍 {range[0]}–{range[1]}</span></span>}
+        {reviewControls && <><Button size="small" disabled={busy || !currentPage || !currentInRange} onClick={() => onReview(!currentReviewed)}>{currentReviewed ? '取消完成' : '標記完成'}</Button>
+        <Button size="small" type="primary" disabled={busy || !currentPage} onClick={onFinishAndNext}>保存並下一未完成</Button></>}
         <Button size="small" aria-expanded={expanded} onClick={() => setExpanded(value => !value)}>{expanded ? '收起頁碼' : '頁碼與範圍'}</Button>
         <Button size="small" aria-pressed={focus} onClick={() => onFocus(!focus)}>{focus ? '退出專注' : '專注模式'}</Button>
       </div>
@@ -66,7 +66,7 @@ export function PageNavigation({ pages, current, range, onRange, onGo, reviewed,
         <Input className="pl-page-nav-search" aria-label="搜尋頁碼或檔名" placeholder="搜尋頁碼或檔名" allowClear value={search} onChange={event => setSearch(event.target.value)} />
       </div>
       <div className="pl-page-nav-list">
-        {visible.map(({ page, number }) => <button type="button" key={page.id} className={`${current === page.id ? 'active' : ''} ${reviewed(page) ? 'reviewed' : ''}`} aria-current={current === page.id ? 'page' : undefined} title={page.name} onClick={() => onGo(page.id)}><span>{String(number).padStart(2, '0')}</span><span>{page.name}</span><span aria-label={reviewed(page) ? '已完成' : '未完成'}>{reviewed(page) ? '✓' : '·'}</span></button>)}
+        {visible.map(({ page, number }) => <button type="button" key={page.id} className={`${current === page.id ? 'active' : ''} ${reviewControls && reviewed(page) ? 'reviewed' : ''}`} aria-current={current === page.id ? 'page' : undefined} title={page.name} onClick={() => onGo(page.id)}><span>{String(number).padStart(2, '0')}</span><span>{page.name}</span>{reviewControls && <span aria-label={reviewed(page) ? '已完成' : '未完成'}>{reviewed(page) ? '✓' : '·'}</span>}</button>)}
         {!visible.length && <span className="pl-muted">沒有符合的頁面</span>}
       </div>
     </div>}

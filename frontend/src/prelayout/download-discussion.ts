@@ -10,7 +10,7 @@ export function discussionFilename(name: string): string {
   return `${safeProjectName(name)}_疑問記錄.md`
 }
 
-async function downloadProject(projectId: string, endpoint: string, filename: string, flush: () => Promise<boolean>, guard: ProjectExportGuard, markdown: boolean): Promise<void> {
+async function downloadProject(projectId: string, endpoint: string, filename: string, flush: () => Promise<boolean>, guard: ProjectExportGuard, mediaPattern: RegExp, format: string): Promise<void> {
   await guard.run(flush, async assertCurrent => {
     const response = await fetch(`${projectPath(projectId)}/export/${endpoint}`, { cache: 'no-store' })
     if (!response.ok) {
@@ -18,7 +18,7 @@ async function downloadProject(projectId: string, endpoint: string, filename: st
       throw new Error(typeof error.detail === 'string' ? error.detail : `導出失敗（${response.status}）`)
     }
     const media = response.headers.get('Content-Type') || ''
-    if (markdown ? !/^text\/(markdown|plain)(;|$)/i.test(media) : !/^application\/json(;|$)/i.test(media)) throw new Error(`伺服器未返回 ${markdown ? 'Markdown' : 'JSON'} 文件，請確認應用版本已更新。`)
+    if (!mediaPattern.test(media)) throw new Error(`伺服器未返回 ${format} 文件，請確認應用版本已更新。`)
     const file = await response.blob()
     assertCurrent()
     const url = URL.createObjectURL(file)
@@ -30,10 +30,14 @@ async function downloadProject(projectId: string, endpoint: string, filename: st
 }
 
 export function downloadDiscussion(project: { id: string; name: string }, flush: () => Promise<boolean>, guard = new ProjectExportGuard()): Promise<void> {
-  return downloadProject(project.id, 'discussion', discussionFilename(project.name), flush, guard, true)
+  return downloadProject(project.id, 'discussion', discussionFilename(project.name), flush, guard, /^text\/(markdown|plain)(;|$)/i, 'Markdown')
 }
 
 export function downloadMeo(project: { id: string; name: string }, flush: () => Promise<boolean>, guard: ProjectExportGuard): Promise<void> {
   const filename = `${safeProjectName(project.name)}_Meo.json`
-  return downloadProject(project.id, 'bt', filename, flush, guard, false)
+  return downloadProject(project.id, 'bt', filename, flush, guard, /^application\/json(;|$)/i, 'JSON')
+}
+
+export function downloadOfflineProject(project: { id: string; name: string }, flush: () => Promise<boolean>, guard: ProjectExportGuard): Promise<void> {
+  return downloadProject(project.id, 'offline', `${safeProjectName(project.name)}_離線編輯.zip`, flush, guard, /^application\/zip(;|$)/i, 'ZIP')
 }

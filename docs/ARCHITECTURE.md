@@ -140,6 +140,8 @@ worker 在輸出完整的正式 `measure.json`、逐頁量測、精簡單字框�
 
 預排版透過 `/export/bt` 匯出 Meo JSON；工作台下載名為 `項目名_Meo.json`，JSON 結構與 API 路徑保持相容。前端「導出項目」與 `/export/archive` 已移除。項目資料保存在伺服器，關閉頁面後可重開。既有預排版封存仍可匯入：驗證路徑、尺寸、雜湊及修訂，重新分配項目／偵測 ID，清除 PID／重試操作，從已驗證的 measure 重建逐頁快取。worker 日誌由獨立診斷下載端點提供，下載持有 reader 直至完成或客戶端斷線，期間拒絕刪除。
 
+可編輯的離線 ZIP 走 `GET /api/prelayout/projects/{pid}/export/offline`。匯出時凍結同一個項目修訂的文字和資產引用，將透明塗白層轉成原尺寸 PNG。接收端從本機選取資料夾取得圖片 Blob，沿用預排版畫布、文字編輯元件和像素差異算法，在瀏覽器內完成排版並保存 Meo JSON。項目內的字體名稱隨譯稿保存。
+
 ## 項目工作台與三部分邊界
 
 首頁由 `frontend/src/ProjectWorkbench.tsx` 提供項目列表、新建／重開、重命名、用量、封存匯入／導出及確認刪除；「舊版批次與歷史」繼續開啟 `App.tsx` 的原有介面。旧任務仍保留在 jobs，不強制遷移。

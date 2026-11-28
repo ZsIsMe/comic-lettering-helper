@@ -175,3 +175,38 @@ test('local review reuses native layers and requests bounded native-coordinate c
     }
   }
 })
+
+test('offline layer sources use only selected local files for clean and original views', () => {
+  const calls = []
+  const hooks = load('layered-preview.ts', {
+    './api': { layerUrl() { assert.fail('Offline images must not request server assets') } },
+    './preview-cache': { usePreview(key, frozen, local) { calls.push(local); return ready(key) } },
+  })
+  const sources = { original: 'blob:offline-original', overlay: 'blob:offline-uploaded-clean' }
+  const clean = hooks.useLayeredPreview('offline', page, true, {}, false, 0, sources)
+  assert.deepEqual(calls.map(value => value.url), [sources.original, sources.overlay]); assert.equal(clean.ready, true)
+  calls.length = 0
+  const original = hooks.useLayeredPreview('offline', page, false, {}, false, 0, sources)
+  assert.deepEqual(calls.map(value => value.url), [sources.original, sources.original]); assert.equal(original.hasOverlay, false)
+})
+
+
+test('large offline layers have bounded local previews and native-coordinate detail crops', () => {
+  const calls = []
+  const hooks = load('layered-preview.ts', {
+    './api': { layerUrl() { assert.fail('Offline images must not request server assets') } },
+    './preview-cache': { usePreview(key, frozen, local) { calls.push({ key, local }); return ready(key) } },
+  })
+  const large = { ...page, width: 8000, height: 16000 }
+  const sources = { original: 'blob:large-original', overlay: 'blob:large-repair' }
+  hooks.useLayeredPreview('offline', large, true, planning.baseLayerOptions(large, 1536), false, 0, sources)
+  assert.equal(calls[0].local.edge, 1536)
+  assert.equal(calls[0].local.width, 8000)
+  const originalKey = calls[0].key
+  calls.length = 0
+  const tile = planning.layerTiles(large, 1, { x: 1000, y: 2000, width: 1000, height: 1000 }, true, 1)[0]
+  hooks.useLayeredPreview('offline', large, true, tile.options, false, 0, sources)
+  assert.deepEqual(calls[0].local.region, tile.options.region)
+  assert.notEqual(calls[0].key, originalKey, 'Crops cannot collide with a base preview in the cache')
+  assert.equal(calls[0].local.edge, 768)
+})

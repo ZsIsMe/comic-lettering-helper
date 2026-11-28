@@ -12,6 +12,7 @@ from starlette.concurrency import run_in_threadpool
 
 from .store import Conflict
 from .local_fonts import local_fonts
+from .offline_export import OfflineAssetsUnavailable
 
 
 class ReplacementPreview(BaseModel):
@@ -40,8 +41,8 @@ class ReplacementUndo(BaseModel):
 
 
 class ArchiveResponse(FileResponse):
-    def __init__(self, path, lease, filename='prelayout.zip', remove=True):
-        super().__init__(path, filename=filename)
+    def __init__(self, path, lease, filename='prelayout.zip', remove=True, media_type=None):
+        super().__init__(path, filename=filename, media_type=media_type)
         self.lease = lease
         self.remove = remove
 
@@ -239,6 +240,22 @@ def router(store, detector, max_bytes):
                         headers={'Content-Disposition': 'attachment; filename="discussion.md"; '
                                  f"filename*=UTF-8''{quote(filename, safe='')}",
                                  'Cache-Control': 'no-store'})
+
+    @api.get('/projects/{pid}/export/offline')
+    def export_offline(pid: str):
+        lease = store.reader(pid)
+        call(lease.__enter__)
+        try:
+            path = call(store.export_offline, pid)
+            response = ArchiveResponse(path, lease, filename='prelayout-offline.zip', media_type='application/zip')
+            response.headers['Cache-Control'] = 'no-store'
+            return response
+        except OfflineAssetsUnavailable as exc:
+            lease.__exit__(None, None, None)
+            raise HTTPException(503, str(exc)) from exc
+        except BaseException:
+            lease.__exit__(None, None, None)
+            raise
 
     @api.post('/projects/{pid}/matches')
     def matches(pid: str):

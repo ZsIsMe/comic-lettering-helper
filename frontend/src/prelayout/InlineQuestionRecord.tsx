@@ -11,9 +11,12 @@ type PendingWrite = { kind: 'add'; record: QuestionRecord; selection: Selection 
   | { kind: 'update'; original: QuestionRecord; note: string; updatedAt: string }
   | { kind: 'delete'; original: QuestionRecord }
 
-export function InlineQuestionRecord({ project, controller, selection, onSaved, onExportPendingChange, onNavigate, refreshKey }: {
-  project: Project; controller: EditorState; selection: Selection; onSaved: (selection: Selection) => void;
-  onExportPendingChange?: (pending: boolean) => void; onNavigate?: (reference: TextReference) => void | Promise<void>; refreshKey?: unknown;
+const remoteRecords = { readQuestionRecords, appendQuestionRecord, updateQuestionRecord, deleteQuestionRecord }
+export type QuestionStore = typeof remoteRecords
+
+export function InlineQuestionRecord({ project, controller, selection, onSaved, onExportPendingChange, onNavigate, refreshKey, onDraftChange, store = remoteRecords }: {
+  project: Pick<Project, 'pages' | 'template' | 'id'>; store?: QuestionStore; controller: EditorState; selection: Selection; onSaved: (selection: Selection) => void;
+  onDraftChange?: (pending: boolean) => void; onExportPendingChange?: (pending: boolean) => void; onNavigate?: (reference: TextReference) => void | Promise<void>; refreshKey?: unknown;
 }) {
   const [records, setRecords] = useState<QuestionRecord[]>([])
   const [loading, setLoading] = useState(false), [loadError, setLoadError] = useState(''), [loadAttempt, setLoadAttempt] = useState(0)
@@ -21,6 +24,7 @@ export function InlineQuestionRecord({ project, controller, selection, onSaved, 
   const [saving, setSaving] = useState(false), [error, setError] = useState(''), [retry, setRetry] = useState(false)
   const active = useRef(false), pending = useRef<PendingWrite | null>(null), readGeneration = useRef(0)
   const live = useRef(true), navigation = useRef(0), reportPending = useRef(onExportPendingChange)
+  useEffect(() => { onDraftChange?.(retry || saving || note.trim() !== (editing?.note.trim() || '')) }, [note, editing, saving, retry, onDraftChange])
   useEffect(() => { reportPending.current = onExportPendingChange }, [onExportPendingChange])
   useEffect(() => {
     live.current = true
@@ -30,12 +34,12 @@ export function InlineQuestionRecord({ project, controller, selection, onSaved, 
     let current = true
     const generation = ++readGeneration.current
     setLoading(true); setLoadError('')
-    void readQuestionRecords(project.id).then(value => {
+    void store.readQuestionRecords(project.id).then(value => {
       if (current && generation === readGeneration.current) setRecords(value.records)
     }).catch(error => { if (current && generation === readGeneration.current) setLoadError((error as Error).message) })
       .finally(() => { if (current && generation === readGeneration.current) setLoading(false) })
     return () => { current = false }
-  }, [project.id, refreshKey, loadAttempt])
+  }, [project.id, refreshKey, loadAttempt, store])
 
   async function submit(write?: PendingWrite) {
     if (active.current) return
@@ -46,9 +50,9 @@ export function InlineQuestionRecord({ project, controller, selection, onSaved, 
     // An older list read must not replace the result of this write.
     readGeneration.current += 1; setLoading(false)
     try {
-      const value = operation.kind === 'add' ? await appendQuestionRecord(project.id, operation.record)
-        : operation.kind === 'update' ? await updateQuestionRecord(project.id, operation.original, operation.note, operation.updatedAt)
-          : await deleteQuestionRecord(project.id, operation.original)
+      const value = operation.kind === 'add' ? await store.appendQuestionRecord(project.id, operation.record)
+        : operation.kind === 'update' ? await store.updateQuestionRecord(project.id, operation.original, operation.note, operation.updatedAt)
+          : await store.deleteQuestionRecord(project.id, operation.original)
       if (!live.current) return
       readGeneration.current += 1; setLoading(false)
       setRecords(value.records); setLoadError(''); pending.current = null; setRetry(false)

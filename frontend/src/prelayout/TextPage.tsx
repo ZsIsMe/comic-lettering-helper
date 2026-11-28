@@ -11,6 +11,7 @@ import { InlineTextEditor } from './InlineTextEditor'
 import { fontLabel, quickControlLabel, textInfoLabel, type QuickControlKind } from './text-control-labels'
 import { GroupName } from './GroupName'
 import { DifferenceOverlay } from './DifferenceOverlay'
+import type { LayerSources } from './layered-preview'
 import { DisplayText } from './DisplayText'
 import { lineBreakPreviewMatches, type LineBreakPreview } from './line-breaks'
 
@@ -28,7 +29,7 @@ const quickControls = [
   { kind: 'orientation' },
 ] as const satisfies readonly { kind: QuickControlKind }[]
 
-export const TextPage = memo(function TextPage({ project, page, scale, edge, clean, difference, differenceColor, differenceOpacity, showText = true, readonly, controller, selection, textPreview, onSelect, onInteracting, showMeasure, onMeasure, region, detailed, interacting, onPointer, onAdjust, groupNames = [] }: {
+export const TextPage = memo(function TextPage({ project, page, scale, edge, clean, difference, differenceColor, differenceOpacity, showText = true, readonly, controller, selection, textPreview, onSelect, onInteracting, showMeasure, onMeasure, region, detailed, interacting, onPointer, onAdjust, groupNames = [], sources }: {
   project: string; page: Page; scale: number; edge: number; clean: boolean; readonly?: boolean;
   difference: boolean; differenceColor: string; differenceOpacity: number; showText?: boolean;
   controller: EditorState; selection: Selection; onSelect: (selection: Selection) => void; onInteracting: (id: string | null) => void;
@@ -37,6 +38,7 @@ export const TextPage = memo(function TextPage({ project, page, scale, edge, cle
   onAdjust?: (adjustment: TextAdjustment) => boolean;
   groupNames?: readonly string[];
   textPreview?: LineBreakPreview | null;
+  sources?: LayerSources;
 }) {
   useSyncExternalStore(callback => controller.subscribe(page.id, callback), () => controller.tick(page.id))
   const [error, setError] = useState('')
@@ -183,10 +185,10 @@ export const TextPage = memo(function TextPage({ project, page, scale, edge, cle
       scene.current?.closest<HTMLElement>('.pl-viewport')?.focus({ preventScroll: true })
       if (!event.shiftKey) onSelect({ page: page.id, ids: [] })
     }}>
-      <PreviewLayer project={project} page={page} edge={edge} scale={scale} clean={clean && !!page.clean} region={region} detailed={detailed} interacting={interacting} />
+      <PreviewLayer sources={sources} project={project} page={page} edge={edge} scale={scale} clean={clean && !!page.clean} region={region} detailed={detailed} interacting={interacting} />
       {visibleItems?.filter(item => isBlack(item.color)).map(item => <div key={item._id} className="pl-text-backdrop" data-text-backdrop={item._id} aria-hidden="true"
         style={{ left: item.x * page.width, top: item.y * page.height, transform: transform(item) }} />)}
-      {difference && !!page.clean && !readonly && !!region && <DifferenceOverlay project={project} page={page} edge={edge} interacting={interacting} color={differenceColor} opacity={differenceOpacity} />}
+      {difference && !!page.clean && !readonly && !!region && <DifferenceOverlay sources={sources} project={project} page={page} edge={edge} interacting={interacting} color={differenceColor} opacity={differenceOpacity} />}
       {visibleItems?.map(item => <div key={item._id} data-item={item._id} className={`pl-text ${selected.includes(item._id) ? 'selected' : ''} ${editing?.id === item._id ? 'editing' : ''}`} style={{ ...textStyle(item, page), outlineWidth: selected.includes(item._id) ? 1.5 / scale : 0 }}
         onPointerDown={event => {
           if (event.button === 0 && event.metaKey) {

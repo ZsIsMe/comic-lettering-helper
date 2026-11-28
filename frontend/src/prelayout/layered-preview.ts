@@ -25,16 +25,22 @@ export function layerTiles(page: Pick<Page, 'width' | 'height'>, scale: number, 
   return tiles
 }
 
-export function useLayeredPreview(project: string, page: Page, clean: boolean, options: LayerOptions, frozen = false, retry = 0) {
+export type LayerSources = { original: string; overlay?: string }
+
+export function useLayeredPreview(project: string, page: Page, clean: boolean, options: LayerOptions, frozen = false, retry = 0, sources?: LayerSources) {
   const hasOverlay = clean && !!page.clean
   const suffix = retry ? `&retry=${retry}` : ''
-  const sourceUrl = layerUrl(project, page, 'original', options) + suffix
-  const overlayUrl = hasOverlay ? layerUrl(project, page, 'overlay', options) + suffix : sourceUrl
-  const source = usePreview(sourceUrl, frozen), overlay = usePreview(overlayUrl, frozen)
-  const sourceReady = source.key === sourceUrl && !!source.image
-  const overlayReady = overlay.key === overlayUrl && !!overlay.image
+  const sourceUrl = sources ? sources.original : layerUrl(project, page, 'original', options) + suffix
+  const overlayUrl = hasOverlay ? sources ? sources.overlay || sourceUrl : layerUrl(project, page, 'overlay', options) + suffix : sourceUrl
+  const localOptions = sources ? { width: page.width, height: page.height, ...options } : undefined
+  const sourceKey = localOptions ? `local:${JSON.stringify([sourceUrl, localOptions, retry])}` : sourceUrl
+  const overlayKey = localOptions ? `local:${JSON.stringify([overlayUrl, localOptions, retry])}` : overlayUrl
+  const source = usePreview(sourceKey, frozen, localOptions ? { url: sourceUrl, ...localOptions } : undefined)
+  const overlay = usePreview(overlayKey, frozen, localOptions ? { url: overlayUrl, ...localOptions } : undefined)
+  const sourceReady = source.key === sourceKey && !!source.image
+  const overlayReady = overlay.key === overlayKey && !!overlay.image
   const sizesMatch = source.image?.naturalWidth === overlay.image?.naturalWidth && source.image?.naturalHeight === overlay.image?.naturalHeight
   return { source, overlay, sourceUrl, overlayUrl, hasOverlay,
-    key: `${sourceUrl}|${overlayUrl}`, ready: sourceReady && overlayReady && sizesMatch,
+    key: `${sourceKey}|${overlayKey}`, ready: sourceReady && overlayReady && sizesMatch,
     error: source.error || (hasOverlay ? overlay.error : '') || (sourceReady && overlayReady && !sizesMatch ? '圖片圖層尺寸不一致。' : '') }
 }

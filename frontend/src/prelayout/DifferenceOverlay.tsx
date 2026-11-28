@@ -1,5 +1,5 @@
 import { memo, useEffect, useRef, useState } from 'react'
-import { baseLayerOptions, useLayeredPreview } from './layered-preview'
+import { baseLayerOptions, useLayeredPreview, type LayerSources } from './layered-preview'
 import { paintDifferencePixels } from './difference-mask'
 import type { Page } from './types'
 
@@ -14,15 +14,15 @@ function drawMask(target: HTMLCanvasElement, mask: HTMLCanvasElement, color: str
   output.globalCompositeOperation = 'source-over'
 }
 
-export const DifferenceOverlay = memo(function DifferenceOverlay({ project, page, edge, interacting, color, opacity }: {
-  project: string; page: Page; edge: number; interacting: boolean; color: string; opacity: number;
+export const DifferenceOverlay = memo(function DifferenceOverlay({ project, page, edge, interacting, color, opacity, sources }: {
+  project: string; page: Page; edge: number; interacting: boolean; color: string; opacity: number; sources?: LayerSources;
 }) {
   const canvas = useRef<HTMLCanvasElement>(null)
   const completedMask = useRef<HTMLCanvasElement | null>(null)
   const completedMaskKey = useRef('')
   const [painted, setPainted] = useState({ key: '', color: '' })
   const latestColor = useRef(color); latestColor.current = color
-  const layers = useLayeredPreview(project, page, true, baseLayerOptions(page, edge), interacting)
+  const layers = useLayeredPreview(project, page, true, baseLayerOptions(page, edge), interacting, 0, sources)
   const { source, overlay, key } = layers
 
   useEffect(() => {

@@ -1,0 +1,7 @@
+.pl-offline-workspace.pl-workspace{height:100dvh}
+.pl-offline-home{max-width:840px;margin:auto;padding-top:15vh}
+.pl-offline-home .ant-alert{margin-top:24px}
+.pl-offline-fields{border:0;padding:0;margin:0;min-width:0}
+.pl-offline .pl-page-navigation .pl-page-nav-actions{flex-wrap:wrap}
+.pl-offline-fields:disabled{opacity:.65}
+.pl-offline .pl-top-controls-toggle{font-size:12px}

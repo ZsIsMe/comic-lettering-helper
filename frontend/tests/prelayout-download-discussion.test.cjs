@@ -112,3 +112,17 @@ for (const markdown of [true, false]) {
     assert.equal(api.downloads[0].name, markdown ? '選秀王_疑問記錄.md' : '選秀王_Meo.json')
   })
 }
+
+test('offline export downloads the ZIP snapshot only after successful saves', async () => {
+  let saved = false
+  const zip = new Blob(['offline package'])
+  const api = exporter(async (url, options) => {
+    assert(saved)
+    assert.equal(url, '/api/prelayout/projects/p1/export/offline')
+    assert.equal(options.cache, 'no-store')
+    return { ok: true, headers: new Headers({ 'Content-Type': 'application/zip' }), blob: async () => zip }
+  })
+  await api.downloadOfflineProject(project, async () => { saved = true; return true }, new api.ProjectExportGuard())
+  assert.equal(api.urls[0], zip)
+  assert.equal(api.downloads[0].name, '選秀王_離線編輯.zip')
+})

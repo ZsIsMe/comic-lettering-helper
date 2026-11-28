@@ -7,14 +7,17 @@ type SaveTask = { page_id: string; version: number; reviewed?: boolean; status: 
 type State = { data: PageData; undo: Item[][]; redo: Item[][]; dirty: boolean; version: number; error: string; saving: boolean; conflict: boolean;
   pending?: { revision: number; items: Item[]; operation_id: string; version: number }; server?: PageData }
 const copy = <T,>(value: T): T => structuredClone(value)
-const draftsDB = new Promise<IDBDatabase>((resolve, reject) => {
-  const open = indexedDB.open('comic-prelayout-drafts', 1)
-  open.onupgradeneeded = () => open.result.createObjectStore('pages')
-  open.onsuccess = () => resolve(open.result)
-  open.onerror = () => reject(open.error)
-})
+let draftsDB: Promise<IDBDatabase> | undefined
+function openDraftsDB() {
+  return draftsDB ||= new Promise<IDBDatabase>((resolve, reject) => {
+    const open = indexedDB.open('comic-prelayout-drafts', 1)
+    open.onupgradeneeded = () => open.result.createObjectStore('pages')
+    open.onsuccess = () => resolve(open.result)
+    open.onerror = () => reject(open.error)
+  })
+}
 async function draft(key: string, value?: Draft | null): Promise<Draft | undefined> {
-  const db = await draftsDB
+  const db = await openDraftsDB()
   return new Promise((resolve, reject) => {
     const tx = db.transaction('pages', value === undefined ? 'readonly' : 'readwrite')
     const store = tx.objectStore('pages')
@@ -38,7 +41,18 @@ export class EditorState {
   // transaction metadata only for snapshots that belong to a cross-page edit.
   private batches = new WeakMap<Item[], Batch>()
   private textDraft: { page: string; finish: () => void; changed: boolean } | null = null
-  constructor(readonly project: string) {}
+  constructor(readonly project: string, private localPages?: PageData[]) {
+    for (const data of localPages || []) this.pages.set(data.id, { data: copy(data), undo: [], redo: [], dirty: false, version: 0, error: '', saving: false, conflict: false })
+  }
+  /** A local file write acknowledges only the item versions included in that file. */
+  acknowledgeLocalSave(versions: ReadonlyMap<string, number>) {
+    if (!this.localPages) return
+    for (const [id, version] of versions) {
+      const state = this.pages.get(id)
+      if (state && state.version === version) { state.dirty = false; this.emit(id) }
+    }
+  }
+  localSave?: () => Promise<boolean>
   finishTextDraft() { this.textDraft?.finish() }
   beginTextDraft(page: string, finish: () => void) {
     this.textDraft?.finish()
@@ -70,6 +84,7 @@ export class EditorState {
   async load(id: string) {
     const cached = this.pages.get(id)
     if (cached) return cached
+    if (this.localPages) throw new Error('離線資料中找不到此頁面。')
     const loading = this.loads.get(id)
     if (loading) return loading
     const promise = (async () => {
@@ -179,6 +194,7 @@ export class EditorState {
     }
   }
   private persist(id: string, clear = false) {
+    if (this.localPages) return
     const state = this.pages.get(id)
     if (!state) return
     const value = clear ? null : { revision: state.data.revision, items: copy(state.data.items) }
@@ -187,10 +203,12 @@ export class EditorState {
     this.persistence.set(id, chain)
   }
   private schedule(id: string) {
+    if (this.localPages) return
     clearTimeout(this.timers.get(id))
     this.timers.set(id, setTimeout(() => { void this.save(id) }, 700))
   }
   async save(id: string): Promise<boolean> {
+    if (this.localPages) return !this.pages.get(id)?.dirty
     clearTimeout(this.timers.get(id))
     const running = this.inflight.get(id)
     if (running) { if (!await running) return false; return this.save(id) }
@@ -263,8 +281,9 @@ export class EditorState {
       this.startSave(id, task.reviewed)
     }
   }
-  async flush() {
+  async flush(options?: { localWrite?: boolean }) {
     this.textDraft?.finish()
+    if (this.localPages) return options?.localWrite && this.localSave ? this.localSave() : !this.dirty
     this.retryFailedSaves()
     // Re-scan after every await: edits and other-page background saves can arrive during I/O.
     while (true) {

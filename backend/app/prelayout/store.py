@@ -28,6 +28,7 @@ from .import_line_breaks import (LINE_BREAK_SUGGESTIONS_VERSION, imported_source
                                 apply_ctd_defaults, cancel_changed_pending_defaults, refresh_changed_layouts,
                                 upgrade_saved_suggestions, validate_archived_suggestions)
 from .discussion_export import render_discussion
+from .offline_export import export_offline
 
 
 class Conflict(ValueError):
@@ -596,6 +597,9 @@ class PrelayoutStore:
             data = self.translation(pid)
         safe_name = re.sub(r'[\\/\x00-\x1f\x7f]', '_', title).strip(' .') or '項目'
         return f'{safe_name}_疑問記錄.md', render_discussion(data, title)
+
+    def export_offline(self, pid):
+        return export_offline(self, pid)
 
     def import_translation(self, pid, raw, kind, expected_revision, apply=False, apply_ctd_breaks=False):
         if type(apply_ctd_breaks) is not bool:

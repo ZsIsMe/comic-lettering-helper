@@ -137,7 +137,7 @@ export function InlineTextEditor({ item, page, controller, point, onFinish, page
       }
       if (event.key === 'Escape' || ((event.metaKey || event.ctrlKey) && (event.key === 'Enter' || event.key.toLowerCase() === 's'))) {
         event.preventDefault(); finish.current(false, true)
-        void controller.flush()
+        void controller.flush({ localWrite: (event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 's' })
       }
     }} />
     <button type="button" className="pl-split-text" disabled={!canSplit} aria-label="分割" style={{

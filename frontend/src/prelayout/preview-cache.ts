@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { localPreviewBlob, type LocalPreview } from './local-preview'
 type Entry = { refs: number; size: number; used: number; url: string; image?: HTMLImageElement; abort: AbortController; ready: boolean; promise: Promise<string> }
 const entries = new Map<string, Entry>()
 const budget = 256 * 1024 * 1024
@@ -15,16 +16,17 @@ function trim() {
     bytes -= entry.size; dispose(key, entry)
   }
 }
-function acquire(key: string) {
+function acquire(key: string, local?: LocalPreview) {
   let entry = entries.get(key)
   if (!entry) {
     const abort = new AbortController()
     entry = { refs: 0, size: 0, used: performance.now(), url: '', abort, ready: false, promise: Promise.resolve('') }
     const current = entry
     current.promise = (async () => {
-      const response = await fetch(key, { signal: abort.signal })
+      const response = await fetch(local?.url || key, { signal: abort.signal })
       if (!response.ok) throw new Error('圖片載入失敗')
-      const blob = await response.blob()
+      const original = await response.blob()
+      const blob = local ? await localPreviewBlob(original, local, abort.signal) : original
       if (abort.signal.aborted) throw new Error('cancelled')
       current.url = URL.createObjectURL(blob)
       const image = new Image(); current.image = image; image.src = current.url
@@ -46,12 +48,14 @@ function release(key: string, entry: Entry) {
   if (!entry.refs && !entry.ready) dispose(key, entry)
   trim()
 }
-export function usePreview(key: string, frozen = false) {
+export function usePreview(key: string, frozen = false, local?: LocalPreview) {
   const [value, setValue] = useState<{ key?: string; url: string; error: string; image?: HTMLImageElement }>({ url: '', error: '' })
   const displayed = useRef<{ key: string; entry: Entry } | null>(null)
+  // Source and geometry are encoded in key; keep the corresponding loader current.
+  const localSource = useRef(local); localSource.current = local
   useEffect(() => {
     let live = true
-    const entry = acquire(key)
+    const entry = acquire(key, localSource.current)
     entry.promise.then(url => {
       if (!live || (frozen && displayed.current && displayed.current.entry !== entry)) return
       const old = displayed.current

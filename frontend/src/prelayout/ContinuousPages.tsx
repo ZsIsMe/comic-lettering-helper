@@ -4,14 +4,16 @@ import { EditorState } from './editor-state'
 import { TextPage } from './TextPage'
 import type { TextAdjustment } from './shortcuts'
 import type { PagePointer, Selection, VisibleRegion } from './geometry'
+import type { LayerSources } from './layered-preview'
 import type { LineBreakPreview } from './line-breaks'
 type Row = { page: Page; top: number; height: number; scale: number }
 type Anchor = { id: string; offset: number; x: number; side: number; viewX: number; viewY: number }
 
-export function ContinuousPages({ project, controller, selection, textPreview, onSelect, onAdjust, zoom, compare, clean, difference, differenceColor, differenceOpacity, showText, showMeasure, jump, onCurrent, onMeasure, onZoom, onPointer, onFontWheel, onInteractionChange }: {
+export function ContinuousPages({ project, controller, selection, textPreview, onSelect, onAdjust, zoom, compare, clean, difference, differenceColor, differenceOpacity, showText, showMeasure, jump, onCurrent, onMeasure, onZoom, onPointer, onFontWheel, onInteractionChange, imageSources }: {
   project: Project; controller: EditorState; selection: Selection; onSelect: (value: Selection) => void;
   onAdjust?: (adjustment: TextAdjustment) => boolean;
   textPreview?: LineBreakPreview | null;
+  imageSources?: (page: Page) => LayerSources;
   zoom: number; compare: boolean; clean: boolean; difference: boolean; differenceColor: string; differenceOpacity: number; showText: boolean; showMeasure: boolean; jump: { id: string; version: number; x?: number; y?: number } | null;
   onCurrent: (id: string) => void; onMeasure: (index: number, page: string) => void; onZoom: (value: number) => void;
   onPointer: (pointer: PagePointer | null) => void;
@@ -155,9 +157,9 @@ export function ContinuousPages({ project, controller, selection, textPreview, o
           const right = Math.min(row.page.width, (area.left + area.width - left - side * (width + 20)) / row.scale), bottom = Math.min(row.page.height, (area.top + area.height - row.top - 28) / row.scale)
           return right > x && bottom > y ? { x, y, width: right - x, height: bottom - y } : null
         }
-        const common = { project: project.id, page: row.page, scale: row.scale, edge, controller, selection, onSelect, onAdjust, onInteracting: interactionChanged, onMeasure, onPointer, detailed: settled, interacting: !!interacting, groupNames, differenceColor, differenceOpacity }
+        const common = { sources: imageSources?.(row.page), project: project.id, page: row.page, scale: row.scale, edge, controller, selection, onSelect, onAdjust, onInteracting: interactionChanged, onMeasure, onPointer, detailed: settled, interacting: !!interacting, groupNames, differenceColor, differenceOpacity }
         return <section className="pl-page-row" key={row.page.id} style={{ top: row.top, height: row.height, width: wide }}>
-          <div className="pl-page-caption">{row.page.name}{compare ? ' · 左：預排版　右：原圖與偵測框' : clean && !row.page.clean ? ' · 原圖（尚無去字預覽）' : clean && row.page.clean_kind === 'inpainted' ? ' · inpainted 預覽' : clean ? ' · 去字圖' : ' · 原圖'}</div>
+          <div className="pl-page-caption">{row.page.name}{compare ? ` · 左：預排版\u3000右：${showMeasure && controller.pages.get(row.page.id)?.data.measure.length ? '原圖與偵測框' : '原圖'}` : clean && !row.page.clean ? ' · 原圖（尚無去字預覽）' : clean && row.page.clean_kind === 'inpainted' ? ' · inpainted 預覽' : clean ? ' · 去字圖' : ' · 原圖'}</div>
           <div className="pl-page-pair">
             <TextPage key="editor" {...common} textPreview={textPreview?.page === row.page.id ? textPreview : null} clean={clean} difference={difference} showText={showText} showMeasure={!compare && showMeasure} region={region(0)} />
             {compare && <TextPage key="source" {...common} clean={false} difference={false} readonly showMeasure={showMeasure} region={region(1)} />}

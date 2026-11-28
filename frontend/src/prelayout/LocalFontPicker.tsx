@@ -3,7 +3,7 @@ import { Button, Select } from 'antd'
 import { getFontCatalogue, refreshFontCatalogue, subscribeFontCatalogue } from './font-catalogue'
 import { fontName, loadLocalFont, fontFamilies, fontStyleLabel, selectedFontFamily, familyFace } from './local-fonts'
 
-export function LocalFontPicker({ value, mixed, values, selectionKey, onChange, disabled = false, onLoadingChange, compact = false }: { value: unknown; mixed: boolean; values: unknown[]; selectionKey: string; disabled?: boolean; compact?: boolean; onLoadingChange?: (loading: boolean) => void; onChange: (name: string) => void }) {
+export function LocalFontPicker({ value, mixed, values, selectionKey, onChange, disabled = false, onLoadingChange, compact = false, browserOnly = false }: { value: unknown; mixed: boolean; values: unknown[]; selectionKey: string; disabled?: boolean; compact?: boolean; browserOnly?: boolean; onLoadingChange?: (loading: boolean) => void; onChange: (name: string) => void }) {
   const catalogue = useSyncExternalStore(subscribeFontCatalogue, getFontCatalogue)
   const fonts = catalogue.fonts
   const [busy, setBusy] = useState(false)
@@ -26,7 +26,7 @@ export function LocalFontPicker({ value, mixed, values, selectionKey, onChange, 
   async function list() {
     setBusy(true); setError('')
     try {
-      await refreshFontCatalogue()
+      await refreshFontCatalogue(browserOnly)
     } catch (e) { setError(e instanceof Error ? e.message : '無法讀取本機字體。') }
     finally { setBusy(false) }
   }

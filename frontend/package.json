@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "tsc -b && vite build",
+    "build": "tsc -b && vite build && vite build --config vite.offline.config.ts",
     "preview": "vite preview",
     "preview:rounds": "vite --config vite.rounds-preview.config.ts",
     "lint": "eslint .",
